@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-text antialiased;
+    font-family: "SF Pro Display", "Segoe UI", "Helvetica Neue", sans-serif;
+    margin: 0;
+    padding: 0;
+    background:
+      radial-gradient(circle at top center, rgba(34, 199, 255, 0.16), transparent 34%),
+      radial-gradient(circle at 18% 18%, rgba(34, 199, 255, 0.08), transparent 24%),
+      linear-gradient(180deg, #08101c 0%, #050913 48%, #04070f 100%);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-surface;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded hover:bg-muted/50;
+}
+
+.glass-panel {
+  background: rgba(11, 18, 32, 0.78);
+  backdrop-filter: blur(18px);
+}
+
+.grid-sheen {
+  background-image:
+    linear-gradient(rgba(128, 147, 177, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(128, 147, 177, 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
