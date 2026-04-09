@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface ResultGridProps {
@@ -8,6 +8,20 @@ interface ResultGridProps {
 
 export default function ResultGrid({ columns, rows }: ResultGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [activeResize, setActiveResize] = useState<{
+    column: string;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+
+  const resolvedWidths = useMemo(
+    () =>
+      Object.fromEntries(
+        columns.map((column) => [column, Math.max(columnWidths[column] ?? estimateColumnWidth(column, rows), 120)]),
+      ),
+    [columnWidths, columns, rows],
+  );
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -15,6 +29,32 @@ export default function ResultGrid({ columns, rows }: ResultGridProps) {
     estimateSize: () => 28, // height per row
     overscan: 20,
   });
+
+  useEffect(() => {
+    if (!activeResize) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const delta = event.clientX - activeResize.startX;
+      setColumnWidths((current) => ({
+        ...current,
+        [activeResize.column]: Math.max(activeResize.startWidth + delta, 120),
+      }));
+    };
+
+    const handlePointerUp = () => {
+      setActiveResize(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [activeResize]);
 
   return (
     <div ref={parentRef} className="h-full w-full overflow-auto bg-transparent relative">
@@ -35,8 +75,30 @@ export default function ResultGrid({ columns, rows }: ResultGridProps) {
             #
           </div>
           {columns.map((col, idx) => (
-            <div key={idx} className="px-3 py-2 whitespace-nowrap overflow-hidden text-ellipsis min-w-[150px] border-r border-border/50 text-[11px] uppercase tracking-[0.04em]">
-              {col}
+            <div
+              key={idx}
+              className="relative border-r border-border/50 text-[11px] uppercase tracking-[0.04em]"
+              style={{ width: `${resolvedWidths[col]}px`, minWidth: `${resolvedWidths[col]}px` }}
+            >
+              <div className="px-3 py-2 whitespace-nowrap overflow-hidden text-ellipsis">
+                {col}
+              </div>
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={`Resize ${col} column`}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  setActiveResize({
+                    column: col,
+                    startX: event.clientX,
+                    startWidth: resolvedWidths[col],
+                  });
+                }}
+                className={`absolute right-0 top-0 h-full w-1 cursor-col-resize transition-colors ${
+                  activeResize?.column === col ? 'bg-primary/40' : 'hover:bg-primary/25'
+                }`}
+              />
             </div>
           ))}
         </div>
@@ -62,7 +124,8 @@ export default function ResultGrid({ columns, rows }: ResultGridProps) {
                   return (
                     <div 
                       key={cIdx} 
-                      className="px-3 flex items-center whitespace-nowrap overflow-hidden text-ellipsis border-r border-border/20 font-mono text-text min-w-[150px]"
+                      className="px-3 flex items-center whitespace-nowrap overflow-hidden text-ellipsis border-r border-border/20 font-mono text-text"
+                      style={{ width: `${resolvedWidths[col]}px`, minWidth: `${resolvedWidths[col]}px` }}
                     >
                       {val === null ? <span className="text-muted/50 italic">null</span> : String(val)}
                     </div>
@@ -75,4 +138,14 @@ export default function ResultGrid({ columns, rows }: ResultGridProps) {
       </div>
     </div>
   );
+}
+
+function estimateColumnWidth(column: string, rows: any[]) {
+  const headerWidth = Math.max(column.length * 10 + 32, 140);
+  const sampleWidth = rows.slice(0, 20).reduce((max, row) => {
+    const cellLength = String(row?.[column] ?? '').length;
+    return Math.max(max, Math.min(cellLength * 8 + 28, 420));
+  }, 0);
+
+  return Math.max(headerWidth, sampleWidth, 140);
 }

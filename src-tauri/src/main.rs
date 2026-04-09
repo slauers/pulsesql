@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    tmpapp_lib::run()
+    blacktable_lib::run()
 }

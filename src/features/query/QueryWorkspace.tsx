@@ -49,6 +49,8 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
   const [result, setResult] = useState<QueryResult | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [quickFilter, setQuickFilter] = useState('');
+  const [resultsHeight, setResultsHeight] = useState(34);
+  const [resultsResizing, setResultsResizing] = useState(false);
   const executeQueryRef = useRef<() => void>(() => {});
 
   const runQuery = useCallback(async (queryText: string, connectionId: string) => {
@@ -119,6 +121,30 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
       void executeQuery();
     };
   }, [executeQuery]);
+
+  useEffect(() => {
+    if (!resultsResizing) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const viewportHeight = window.innerHeight || 1;
+      const nextHeight = ((viewportHeight - event.clientY) / viewportHeight) * 100;
+      setResultsHeight(Math.min(Math.max(nextHeight, 22), 58));
+    };
+
+    const handlePointerUp = () => {
+      setResultsResizing(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [resultsResizing]);
 
   const filteredRows = result
     ? applyQuickFilter(result.rows, result.columns, quickFilter)
@@ -252,7 +278,22 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
         )}
       </div>
 
-      <div className="h-[34%] min-h-[190px] max-h-[58%] border-t border-border glass-panel flex flex-col shrink-0 flex-grow-0 relative max-[720px]:h-[40%]">
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize results panel"
+        onPointerDown={() => setResultsResizing(true)}
+        className={`h-1 shrink-0 cursor-row-resize bg-transparent transition-colors ${
+          resultsResizing ? 'bg-primary/40' : 'hover:bg-primary/25'
+        }`}
+      >
+        <div className="mx-auto h-full w-24 rounded-full bg-border/70" />
+      </div>
+
+      <div
+        className="min-h-[190px] max-h-[58%] border-t border-border glass-panel flex flex-col shrink-0 flex-grow-0 relative max-[720px]:h-[40%]"
+        style={{ height: `${resultsHeight}%` }}
+      >
         <div className="p-2 border-b border-border text-sm font-medium text-muted flex justify-between items-center bg-background/42">
           <div className="flex gap-4 px-2 shrink-0">
             <button className="text-text border-b-2 border-primary pb-1">Result Grid</button>

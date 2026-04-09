@@ -1,4 +1,5 @@
 import { Clock3, RefreshCcw, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import type { ConnectionConfig } from '../../../store/connections';
 import { useQueryHistory } from '../hooks/useQueryHistory';
 import type { QueryHistoryItem } from '../types';
@@ -22,6 +23,8 @@ export default function QueryHistoryDrawer({
 }) {
   const { items, loading, error, filter, updateFilter, refresh, removeItem, clearAll, setStatus } =
     useQueryHistory(open);
+  const [drawerWidth, setDrawerWidth] = useState(430);
+  const [resizing, setResizing] = useState(false);
 
   const handleCopySql = async (item: QueryHistoryItem) => {
     await navigator.clipboard.writeText(item.queryText);
@@ -39,6 +42,29 @@ export default function QueryHistoryDrawer({
     await clearAll();
   };
 
+  useEffect(() => {
+    if (!resizing) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const nextWidth = Math.min(Math.max(window.innerWidth - event.clientX, 320), 680);
+      setDrawerWidth(nextWidth);
+    };
+
+    const handlePointerUp = () => {
+      setResizing(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [resizing]);
+
   return (
     <>
       {open ? <div className="absolute inset-0 z-20 bg-[#02050B]/60" onClick={onClose} /> : null}
@@ -46,7 +72,17 @@ export default function QueryHistoryDrawer({
         className={`absolute right-0 top-0 z-30 h-full w-full max-w-[430px] border-l border-border/70 bg-surface/96 backdrop-blur-xl transition-transform duration-200 ${
           open ? 'translate-x-0' : 'translate-x-full'
         }`}
+        style={{ maxWidth: `${drawerWidth}px` }}
       >
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize history panel"
+          onPointerDown={() => setResizing(true)}
+          className={`absolute left-0 top-0 h-full w-1 -translate-x-1/2 cursor-col-resize transition-colors ${
+            resizing ? 'bg-primary/40' : 'hover:bg-primary/25'
+          }`}
+        />
         <div className="flex items-center justify-between border-b border-border/70 px-4 py-4">
           <div className="flex items-center gap-2">
             <Clock3 size={16} className="text-primary" />

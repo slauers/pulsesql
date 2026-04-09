@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   CheckCircle,
@@ -38,6 +38,8 @@ export default function ConnectionManager() {
   const [testStatus, setTestStatus] = useState<Record<string, TestStatus>>({});
   const [runtimeStatus, setRuntimeStatus] = useState<Record<string, RuntimeConnectionState>>({});
   const [connectionLogs, setConnectionLogs] = useState<Record<string, string[]>>({});
+  const [sidebarWidth, setSidebarWidth] = useState(290);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
@@ -202,9 +204,35 @@ export default function ConnectionManager() {
     }
   };
 
+  useEffect(() => {
+    if (!sidebarResizing) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const nextWidth = Math.min(Math.max(event.clientX, 220), 520);
+      setSidebarWidth(nextWidth);
+    };
+
+    const handlePointerUp = () => {
+      setSidebarResizing(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [sidebarResizing]);
+
   return (
     <div className="flex h-full w-full max-[900px]:flex-col">
-      <div className="w-[290px] shrink-0 border-r border-border/70 bg-surface/58 backdrop-blur-xl flex flex-col max-[900px]:w-full max-[900px]:max-h-[42vh] max-[900px]:border-r-0 max-[900px]:border-b">
+      <div
+        className="shrink-0 border-r border-border/70 bg-surface/58 backdrop-blur-xl flex flex-col max-[900px]:w-full max-[900px]:max-h-[42vh] max-[900px]:border-r-0 max-[900px]:border-b"
+        style={{ width: `${sidebarWidth}px` }}
+      >
         <div className="p-4 border-b border-border/70 flex justify-between items-center sticky top-0 bg-surface/72 backdrop-blur-xl">
           <h2 className="font-semibold text-text/90 flex items-center gap-2">
             <Server size={18} /> Connections
@@ -406,6 +434,18 @@ export default function ConnectionManager() {
             })
           )}
         </div>
+      </div>
+
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize connections panel"
+        onPointerDown={() => setSidebarResizing(true)}
+        className={`relative w-1 shrink-0 cursor-col-resize bg-transparent transition-colors max-[900px]:hidden ${
+          sidebarResizing ? 'bg-primary/40' : 'hover:bg-primary/25'
+        }`}
+      >
+        <div className="absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-border/70" />
       </div>
 
       <div className="flex-1 bg-transparent flex flex-col min-w-0 min-h-0">

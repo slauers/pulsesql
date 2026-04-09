@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "app:dev": "npm run tauri dev",
-    "app:build": "OPENSSL_NO_VENDOR=1 OPENSSL_DIR=/opt/homebrew/opt/openssl@3 CARGO_BUILD_JOBS=1 npm run tauri build"
+    "app:build": "npm run tauri build",
+    "app:dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-tauri-dev.ps1",
+    "app:build:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-tauri-build.ps1"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
