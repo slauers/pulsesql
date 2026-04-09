@@ -52,6 +52,8 @@ pub fn create_handle(
     host: &str,
     port: u16,
 ) -> Result<OracleConnectionHandle, String> {
+    let timeout_millis = config.connect_timeout_seconds() * 1000;
+
     Ok(OracleConnectionHandle {
         host: host.to_string(),
         port,
@@ -62,7 +64,13 @@ pub fn create_handle(
             .unwrap_or(OracleConnectionType::ServiceName),
         user: config.user.clone(),
         password: config.password.clone().unwrap_or_default(),
-        driver_properties: config.oracle_driver_properties.clone(),
+        driver_properties: Some(merge_driver_properties(
+            config.oracle_driver_properties.as_deref(),
+            &[
+                ("oracle.net.CONNECT_TIMEOUT", timeout_millis.to_string()),
+                ("oracle.jdbc.ReadTimeout", (timeout_millis * 3).to_string()),
+            ],
+        )),
     })
 }
 
@@ -298,6 +306,35 @@ fn ensure_oracle_driver(sidecar_root: &Path) -> Result<(), String> {
 
 fn build_classpath(classes_dir: &Path, jar_path: &Path) -> String {
     format!("{}:{}", classes_dir.display(), jar_path.display())
+}
+
+fn merge_driver_properties(
+    user_properties: Option<&str>,
+    defaults: &[(&str, String)],
+) -> String {
+    let mut lines = vec![];
+
+    for (key, value) in defaults {
+        let user_overrode = user_properties.is_some_and(|properties| {
+            properties
+                .lines()
+                .map(str::trim)
+                .any(|line| line.starts_with(&format!("{key}=")))
+        });
+
+        if !user_overrode {
+            lines.push(format!("{key}={value}"));
+        }
+    }
+
+    if let Some(user_properties) = user_properties {
+        let trimmed = user_properties.trim();
+        if !trimmed.is_empty() {
+            lines.push(trimmed.to_string());
+        }
+    }
+
+    lines.join("\n")
 }
 
 fn oracle_sidecar_root() -> Result<PathBuf, String> {

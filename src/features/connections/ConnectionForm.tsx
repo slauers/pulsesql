@@ -57,6 +57,8 @@ export default function ConnectionForm({
       database: current.database && current.engine === engine ? current.database : defaults.database,
       host: current.host || defaults.host,
       user: defaults.user,
+      connectTimeoutSeconds: current.connectTimeoutSeconds ?? defaults.connectTimeoutSeconds,
+      autoReconnect: current.autoReconnect ?? defaults.autoReconnect,
       oracleConnectionType: engine === 'oracle' ? current.oracleConnectionType ?? defaults.oracleConnectionType : undefined,
       oracleDriverProperties: engine === 'oracle'
         ? current.oracleDriverProperties ?? defaults.oracleDriverProperties
@@ -104,6 +106,8 @@ export default function ConnectionForm({
       user: formData.user,
       password: formData.password || undefined,
       database: formData.database,
+      connectTimeoutSeconds: Math.min(120, Math.max(3, Number(formData.connectTimeoutSeconds ?? 10))),
+      autoReconnect: Boolean(formData.autoReconnect ?? true),
       oracleConnectionType: formData.engine === 'oracle' ? formData.oracleConnectionType ?? 'serviceName' : undefined,
       oracleDriverProperties:
         formData.engine === 'oracle' ? formData.oracleDriverProperties?.trim() || undefined : undefined,
@@ -254,6 +258,31 @@ export default function ConnectionForm({
               onChange={(event) => updateField('password', event.target.value)}
               className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
             />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm text-muted mb-1">Connect Timeout (seconds)</label>
+            <input
+              type="number"
+              min={3}
+              max={120}
+              value={formData.connectTimeoutSeconds ?? 10}
+              onChange={(event) => updateField('connectTimeoutSeconds', Number(event.target.value))}
+              className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div className="flex items-end">
+            <label className="flex items-center gap-2 cursor-pointer select-none rounded border border-border/70 bg-background/40 px-3 py-2.5">
+              <input
+                type="checkbox"
+                checked={Boolean(formData.autoReconnect ?? true)}
+                onChange={(event) => updateField('autoReconnect', event.target.checked)}
+                className="accent-primary"
+              />
+              <span className="text-sm text-text">Auto-reconnect on open failure</span>
+            </label>
           </div>
         </div>
 

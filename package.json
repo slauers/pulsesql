@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "app:dev": "npm run tauri dev",
+    "app:build": "OPENSSL_NO_VENDOR=1 OPENSSL_DIR=/opt/homebrew/opt/openssl@3 CARGO_BUILD_JOBS=1 npm run tauri build"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

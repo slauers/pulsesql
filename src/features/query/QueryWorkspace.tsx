@@ -37,7 +37,7 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
       });
       setResult(res);
     } catch (e: any) {
-      setError(e.toString());
+      setError(formatQueryError(e));
     } finally {
       setLoading(false);
     }
@@ -78,13 +78,13 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
         <button 
           onClick={executeQuery}
           disabled={loading || !activeTab}
-          className="flex items-center gap-1.5 bg-emerald-500/12 text-emerald-300 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-500/20"
+          className="flex items-center gap-1.5 bg-emerald-400/18 text-emerald-200 hover:bg-emerald-400/26 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-400/35 shadow-[0_0_18px_rgba(16,185,129,0.18)] hover:shadow-[0_0_24px_rgba(16,185,129,0.28)]"
         >
           {loading ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} className="fill-green-400/50" />} 
           Run
         </button>
         <div className="mx-2 h-4 w-px bg-border/50"></div>
-        <span className="text-xs text-muted">Press Cmd+Enter to execute</span>
+        <span className="text-xs text-muted">Cmd+Enter to run</span>
         {connectionLabel && engine && (
           <>
             <div className="mx-2 h-4 w-px bg-border/50"></div>
@@ -165,7 +165,7 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
       </div>
 
       <div className="h-[34%] min-h-[190px] max-h-[58%] border-t border-border glass-panel flex flex-col shrink-0 flex-grow-0 relative max-[720px]:h-[40%]">
-        <div className="p-2 border-b border-border text-sm font-medium text-muted flex justify-between items-center bg-background/30">
+        <div className="p-2 border-b border-border text-sm font-medium text-muted flex justify-between items-center bg-background/42">
           <div className="flex gap-4 px-2">
             <button className="text-text border-b-2 border-primary pb-1">Result Grid</button>
           </div>
@@ -177,7 +177,16 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
         </div>
         
         <div className="flex-1 overflow-auto bg-background/10">
-          {error ? (
+          {loading ? (
+            <div className="h-full flex items-center justify-center text-muted">
+              <div className="flex items-center gap-3">
+                <LoaderCircle size={16} className="animate-spin text-primary" />
+                <span className="text-[10px] uppercase tracking-[0.14em] text-primary/70">
+                  Retrieving data...
+                </span>
+              </div>
+            </div>
+          ) : error ? (
             <div className="p-4 flex items-start gap-3 text-red-400">
               <AlertCircle size={18} className="mt-0.5 shrink-0" />
               <div className="text-sm font-mono whitespace-pre-wrap">{error}</div>
@@ -193,4 +202,56 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
       </div>
     </div>
   );
+}
+
+function formatQueryError(error: unknown): string {
+  const raw = extractErrorMessage(error).trim();
+  const lower = raw.toLowerCase();
+
+  if (lower.includes('connection not found')) {
+    return 'A conexao ativa nao esta disponivel. Abra ou reconecte a conexao antes de executar a query.';
+  }
+
+  if (lower.includes('timed out')) {
+    return 'A query excedeu o tempo limite configurado.';
+  }
+
+  if (lower.includes('ora-00933')) {
+    return 'Oracle: comando SQL nao encerrado adequadamente.';
+  }
+
+  if (lower.includes('ora-00942')) {
+    return 'Oracle: tabela ou view nao existe.';
+  }
+
+  if (lower.includes('ora-01017')) {
+    return 'Oracle: usuario ou senha invalidos.';
+  }
+
+  if (lower.includes('permission denied') || lower.includes('not authorized')) {
+    return 'Permissao insuficiente para executar esta operacao.';
+  }
+
+  return raw;
+}
+
+function extractErrorMessage(error: unknown): string {
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  if (error && typeof error === 'object') {
+    if ('message' in error && typeof error.message === 'string') {
+      return error.message;
+    }
+
+    if ('toString' in error && typeof error.toString === 'function') {
+      const asString = error.toString();
+      if (asString && asString !== '[object Object]') {
+        return asString;
+      }
+    }
+  }
+
+  return 'Erro desconhecido ao executar a query.';
 }

@@ -184,6 +184,7 @@ public class OracleJdbcRunner {
 
   private static String toJsonValue(ResultSet resultSet, ResultSetMetaData metaData, int index) throws Exception {
     int jdbcType = metaData.getColumnType(index);
+    String columnTypeName = metaData.getColumnTypeName(index).toUpperCase(Locale.ROOT);
 
     if (jdbcType == Types.DATE) {
       Date value = resultSet.getDate(index);
@@ -218,14 +219,124 @@ public class OracleJdbcRunner {
       }
     }
 
+    if (columnTypeName.contains("TIMESTAMP")) {
+      String timestampValue = timestampAsString(resultSet, index);
+      if (timestampValue != null) {
+        return quote(timestampValue);
+      }
+    }
+
+    if ("DATE".equals(columnTypeName)) {
+      String dateValue = dateAsString(resultSet, index);
+      if (dateValue != null) {
+        return quote(dateValue);
+      }
+    }
+
     Object value = resultSet.getObject(index);
     if (value == null) {
       return "null";
+    }
+    if (isOracleTemporalValue(value)) {
+      String temporalValue = temporalObjectAsString(resultSet, value, index);
+      if (temporalValue != null) {
+        return quote(temporalValue);
+      }
     }
     if (value instanceof Number || value instanceof Boolean) {
       return value.toString();
     }
     return quote(String.valueOf(value));
+  }
+
+  private static boolean isOracleTemporalValue(Object value) {
+    String className = value.getClass().getName();
+    return className.startsWith("oracle.sql.TIMESTAMP")
+        || className.startsWith("oracle.sql.DATE")
+        || className.startsWith("oracle.sql.TIME");
+  }
+
+  private static String temporalObjectAsString(ResultSet resultSet, Object value, int index) throws Exception {
+    String className = value.getClass().getName();
+
+    if (className.startsWith("oracle.sql.TIMESTAMP")) {
+      String timestampValue = timestampAsString(resultSet, index);
+      if (timestampValue != null) {
+        return timestampValue;
+      }
+    }
+
+    if (className.startsWith("oracle.sql.DATE")) {
+      String dateValue = dateAsString(resultSet, index);
+      if (dateValue != null) {
+        return dateValue;
+      }
+    }
+
+    String stringValue = resultSet.getString(index);
+    if (stringValue != null && !stringValue.startsWith("oracle.sql.")) {
+      return stringValue;
+    }
+
+    return null;
+  }
+
+  private static String timestampAsString(ResultSet resultSet, int index) throws Exception {
+    try {
+      Timestamp value = resultSet.getTimestamp(index);
+      if (value != null) {
+        return value.toLocalDateTime().toString();
+      }
+    } catch (Exception ignored) {
+    }
+
+    try {
+      OffsetDateTime value = resultSet.getObject(index, OffsetDateTime.class);
+      if (value != null) {
+        return value.toString();
+      }
+    } catch (Exception ignored) {
+    }
+
+    try {
+      ZonedDateTime value = resultSet.getObject(index, ZonedDateTime.class);
+      if (value != null) {
+        return value.toString();
+      }
+    } catch (Exception ignored) {
+    }
+
+    String stringValue = resultSet.getString(index);
+    if (stringValue != null && !stringValue.startsWith("oracle.sql.")) {
+      return stringValue;
+    }
+
+    return null;
+  }
+
+  private static String dateAsString(ResultSet resultSet, int index) throws Exception {
+    try {
+      Timestamp value = resultSet.getTimestamp(index);
+      if (value != null) {
+        return value.toLocalDateTime().toString();
+      }
+    } catch (Exception ignored) {
+    }
+
+    try {
+      Date value = resultSet.getDate(index);
+      if (value != null) {
+        return value.toLocalDate().toString();
+      }
+    } catch (Exception ignored) {
+    }
+
+    String stringValue = resultSet.getString(index);
+    if (stringValue != null && !stringValue.startsWith("oracle.sql.")) {
+      return stringValue;
+    }
+
+    return null;
   }
 
   private static String quote(String value) {

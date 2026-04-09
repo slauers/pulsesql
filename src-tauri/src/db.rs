@@ -112,15 +112,16 @@ pub async fn test_ssh_tunnel(config: ConnectionConfig) -> Result<String, String>
 #[tauri::command]
 pub async fn test_connection(config: ConnectionConfig) -> Result<String, String> {
     let (host, port, tunnel) = resolve_runtime_target(&config)?;
+    let timeout_seconds = config.connect_timeout_seconds();
 
     let result = match config.engine {
         DatabaseEngine::Postgres => {
             let url = build_connection_url(&config, &host, port)?;
-            postgres::test_connection(&url).await
+            postgres::test_connection(&url, timeout_seconds).await
         }
         DatabaseEngine::Mysql => {
             let url = build_connection_url(&config, &host, port)?;
-            mysql::test_connection(&url).await
+            mysql::test_connection(&url, timeout_seconds).await
         }
         DatabaseEngine::Oracle => {
             let oracle_handle = oracle::create_handle(&config, &host, port)?;
@@ -141,15 +142,16 @@ pub async fn open_connection(
     config: ConnectionConfig,
 ) -> Result<String, String> {
     let (host, port, tunnel) = resolve_runtime_target(&config)?;
+    let timeout_seconds = config.connect_timeout_seconds();
 
     let pool = match config.engine {
         DatabaseEngine::Postgres => {
             let url = build_connection_url(&config, &host, port)?;
-            ConnectionPool::Postgres(postgres::open_connection(&url).await?)
+            ConnectionPool::Postgres(postgres::open_connection(&url, timeout_seconds).await?)
         }
         DatabaseEngine::Mysql => {
             let url = build_connection_url(&config, &host, port)?;
-            ConnectionPool::Mysql(mysql::open_connection(&url).await?)
+            ConnectionPool::Mysql(mysql::open_connection(&url, timeout_seconds).await?)
         }
         DatabaseEngine::Oracle => {
             let oracle_handle = oracle::create_handle(&config, &host, port)?;

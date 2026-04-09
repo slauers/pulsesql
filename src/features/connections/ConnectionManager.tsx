@@ -1,21 +1,70 @@
 import { useState } from 'react';
-import { useConnectionsStore, ConnectionConfig } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
-import { Server, Plus, LoaderCircle, CheckCircle, XCircle, Pencil, Plug, FileText, Copy } from 'lucide-react';
-import ConnectionForm from './ConnectionForm';
+import {
+  CheckCircle,
+  Copy,
+  FileText,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  Plug,
+  RotateCcw,
+  Server,
+  XCircle,
+  Dot,
+} from 'lucide-react';
+import { ConnectionConfig, useConnectionsStore } from '../../store/connections';
 import { SchemaTree } from '../database/Explorer';
 import QueryWorkspace from '../query/QueryWorkspace';
+import ConnectionForm from './ConnectionForm';
+
+type TestStatus = 'idle' | 'testing' | 'success' | 'error';
+type RuntimeConnectionState =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'failed';
+
+const RECONNECT_DELAYS_MS = [800, 1600, 3200];
 
 export default function ConnectionManager() {
-  const { connections, activeConnectionId, removeConnection, setActiveConnection } = useConnectionsStore();
+  const { connections, activeConnectionId, removeConnection, setActiveConnection } =
+    useConnectionsStore();
   const [showForm, setShowForm] = useState(false);
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
-  const [testStatus, setTestStatus] = useState<Record<string, 'idle' | 'testing' | 'success' | 'error'>>({});
+  const [testStatus, setTestStatus] = useState<Record<string, TestStatus>>({});
+  const [runtimeStatus, setRuntimeStatus] = useState<Record<string, RuntimeConnectionState>>({});
   const [connectionLogs, setConnectionLogs] = useState<Record<string, string[]>>({});
-  const activeConnection = connections.find((connection) => connection.id === activeConnectionId) ?? null;
-  const editingConnection = connections.find((connection) => connection.id === editingConnectionId) ?? null;
-  const selectedConnection = connections.find((connection) => connection.id === selectedConnectionId) ?? null;
+
+  const activeConnection =
+    connections.find((connection) => connection.id === activeConnectionId) ?? null;
+  const editingConnection =
+    connections.find((connection) => connection.id === editingConnectionId) ?? null;
+  const selectedConnection =
+    connections.find((connection) => connection.id === selectedConnectionId) ?? null;
+
+  const appendLog = (connId: string, message: string) => {
+    const timestamp = new Date().toLocaleTimeString('pt-BR');
+    setConnectionLogs((current) => ({
+      ...current,
+      [connId]: [`[${timestamp}] ${message}`, ...(current[connId] ?? [])].slice(0, 40),
+    }));
+  };
+
+  const setConnectionState = (connId: string, state: RuntimeConnectionState) => {
+    setRuntimeStatus((current) => ({ ...current, [connId]: state }));
+  };
+
+  const resolveConnectionState = (connId: string, isActive: boolean): RuntimeConnectionState => {
+    const state = runtimeStatus[connId];
+    if (state) {
+      return state;
+    }
+
+    return isActive ? 'connected' : 'disconnected';
+  };
 
   const copyLogs = async (connId: string) => {
     const entries = connectionLogs[connId] ?? [];
@@ -27,50 +76,112 @@ export default function ConnectionManager() {
     appendLog(connId, 'Logs copiados para a area de transferencia.');
   };
 
-  const appendLog = (connId: string, message: string) => {
-    const timestamp = new Date().toLocaleTimeString('pt-BR');
-    setConnectionLogs((current) => ({
-      ...current,
-      [connId]: [`[${timestamp}] ${message}`, ...(current[connId] ?? [])].slice(0, 30),
-    }));
-  };
-
   const testConnection = async (conn: ConnectionConfig) => {
     setSelectedConnectionId(conn.id);
-    setTestStatus(prev => ({ ...prev, [conn.id]: 'testing' }));
-    appendLog(conn.id, `Iniciando teste de conexao para ${conn.engine.toUpperCase()}.`);
+    setTestStatus((current) => ({ ...current, [conn.id]: 'testing' }));
+    appendLog(
+      conn.id,
+      `Iniciando teste de conexao para ${conn.engine.toUpperCase()} com timeout de ${conn.connectTimeoutSeconds ?? 10}s.`,
+    );
+
     try {
       const result = await invoke<string>('test_connection', { config: conn });
-      setTestStatus(prev => ({ ...prev, [conn.id]: 'success' }));
+      setTestStatus((current) => ({ ...current, [conn.id]: 'success' }));
       appendLog(conn.id, result);
-    } catch (e) {
-      console.error(e);
-      setTestStatus(prev => ({ ...prev, [conn.id]: 'error' }));
-      appendLog(conn.id, extractErrorMessage(e));
+    } catch (error) {
+      setTestStatus((current) => ({ ...current, [conn.id]: 'error' }));
+      appendLog(conn.id, formatConnectionError(error));
     }
   };
 
-  const openConnection = async (conn: ConnectionConfig) => {
+  const openConnection = async (conn: ConnectionConfig, forceReconnect = false) => {
     setSelectedConnectionId(conn.id);
-    appendLog(conn.id, `Abrindo conexao ${conn.name}.`);
-    try {
-      await invoke('open_connection', { config: conn });
-      setActiveConnection(conn.id);
-      appendLog(conn.id, 'Conexao aberta com sucesso.');
-    } catch (e) {
-      console.error("Failed to open connection", e);
-      appendLog(conn.id, extractErrorMessage(e));
+
+    const currentState = resolveConnectionState(conn.id, activeConnectionId === conn.id);
+    if (forceReconnect && currentState === 'connected') {
+      appendLog(conn.id, 'A conexao ja esta ativa.');
+      return;
     }
+
+    const maxAttempts = conn.autoReconnect ? RECONNECT_DELAYS_MS.length + 1 : 1;
+    appendLog(
+      conn.id,
+      forceReconnect
+        ? `Reconectando ${conn.name}.`
+        : `Abrindo conexao ${conn.name} com timeout de ${conn.connectTimeoutSeconds ?? 10}s.`,
+    );
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const isRetry = attempt > 1;
+      setConnectionState(conn.id, isRetry ? 'reconnecting' : 'connecting');
+
+      try {
+        await invoke('open_connection', { config: conn });
+        setConnectionState(conn.id, 'connected');
+        setActiveConnection(conn.id);
+        appendLog(
+          conn.id,
+          isRetry
+            ? `Conexao restabelecida na tentativa ${attempt}.`
+            : 'Conexao aberta com sucesso.',
+        );
+        return;
+      } catch (error) {
+        const message = formatConnectionError(error);
+
+        if (attempt < maxAttempts) {
+          const delayMs = RECONNECT_DELAYS_MS[attempt - 1];
+          setConnectionState(conn.id, 'reconnecting');
+          appendLog(
+            conn.id,
+            `${message} Nova tentativa em ${(delayMs / 1000).toFixed(1)}s.`,
+          );
+          await wait(delayMs);
+          continue;
+        }
+
+        setConnectionState(conn.id, 'failed');
+        appendLog(conn.id, message);
+
+        if (activeConnectionId === conn.id) {
+          setActiveConnection(null);
+        }
+      }
+    }
+  };
+
+  const toggleSelectedConnection = (connId: string) => {
+    setSelectedConnectionId((current) => (current === connId ? null : connId));
+  };
+
+  const handleRemoveConnection = (connId: string) => {
+    removeConnection(connId);
+    setRuntimeStatus((current) => {
+      const next = { ...current };
+      delete next[connId];
+      return next;
+    });
+    setConnectionLogs((current) => {
+      const next = { ...current };
+      delete next[connId];
+      return next;
+    });
+    setTestStatus((current) => {
+      const next = { ...current };
+      delete next[connId];
+      return next;
+    });
+    setSelectedConnectionId((current) => (current === connId ? null : current));
   };
 
   return (
     <div className="flex h-full w-full max-[900px]:flex-col">
-      <div className="w-[290px] shrink-0 border-r border-border/80 glass-panel flex flex-col max-[900px]:w-full max-[900px]:max-h-[42vh] max-[900px]:border-r-0 max-[900px]:border-b">
-        <div className="p-4 border-b border-border/80 flex justify-between items-center sticky top-0 glass-panel">
+      <div className="w-[290px] shrink-0 border-r border-border/70 bg-surface/58 backdrop-blur-xl flex flex-col max-[900px]:w-full max-[900px]:max-h-[42vh] max-[900px]:border-r-0 max-[900px]:border-b">
+        <div className="p-4 border-b border-border/70 flex justify-between items-center sticky top-0 bg-surface/72 backdrop-blur-xl">
           <h2 className="font-semibold text-text/90 flex items-center gap-2">
             <Server size={18} /> Connections
           </h2>
-          <button 
+          <button
             onClick={() => {
               setEditingConnectionId(null);
               setShowForm(true);
@@ -85,77 +196,116 @@ export default function ConnectionManager() {
           {connections.length === 0 ? (
             <p className="text-center text-sm text-muted mt-4">No connections saved.</p>
           ) : (
-            connections.map(conn => {
+            connections.map((conn) => {
               const status = testStatus[conn.id] || 'idle';
               const isActive = activeConnectionId === conn.id;
-                  return (
-                <div 
-                  key={conn.id} 
-                  className={`p-3 rounded border text-sm group cursor-pointer transition-colors mb-2 ${
+              const connectionState = resolveConnectionState(conn.id, isActive);
+              const isBusy =
+                connectionState === 'connecting' || connectionState === 'reconnecting';
+
+              return (
+                <div
+                  key={conn.id}
+                  className={`p-3 rounded-xl border text-sm group cursor-pointer transition-colors mb-2 ${
                     selectedConnectionId === conn.id || isActive
-                      ? 'border-primary/70 bg-background/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.02),0_0_24px_rgba(34,199,255,0.08)]'
-                      : 'border-border/60 hover:bg-border/20 bg-transparent'
+                      ? 'border-primary/60 bg-background/58 shadow-[inset_0_1px_0_rgba(255,255,255,0.02),0_0_16px_rgba(34,199,255,0.08)]'
+                      : 'border-transparent hover:border-border/50 hover:bg-background/22 bg-transparent'
                   }`}
-                  onClick={() => setSelectedConnectionId(conn.id)}
+                  onClick={() => toggleSelectedConnection(conn.id)}
                 >
-                  <div className="flex justify-between items-start mb-1">
-                    <span className="font-medium truncate">{conn.name}</span>
-                    <div className="flex items-center gap-1">
-                      {status === 'testing' && <LoaderCircle size={14} className="animate-spin text-blue-400" />}
-                      {status === 'success' && <CheckCircle size={14} className="text-green-500" />}
-                      {status === 'error' && <XCircle size={14} className="text-red-500" />}
+                  <div className="flex justify-between items-start gap-2 mb-1">
+                    <div className="min-w-0">
+                      <div className="font-medium truncate text-text">{conn.name}</div>
+                      <div className="text-xs text-muted truncate mt-1">
+                        {conn.engine.toUpperCase()} | {conn.user}@{conn.host}
+                        {conn.database ? `/${conn.database}` : ''}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0 self-start">
+                      {status === 'testing' ? (
+                        <LoaderCircle size={14} className="animate-spin text-primary" />
+                      ) : status === 'success' ? (
+                        <CheckCircle size={14} className="text-emerald-400" />
+                      ) : status === 'error' ? (
+                        <XCircle size={14} className="text-red-400" />
+                      ) : null}
+                      <ConnectionBadge state={connectionState} compact />
                     </div>
                   </div>
-                  <div className="text-xs text-muted truncate">
-                    {conn.engine.toUpperCase()} | {conn.user}@{conn.host}:{conn.port} | {conn.database}
-                  </div>
-                  <div className="mt-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity pb-1 border-b border-transparent group-hover:border-border/50">
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); openConnection(conn); }}
-                      className="text-xs text-emerald-400 hover:underline"
+
+                  <div className="flex gap-3 mt-2 text-xs">
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void openConnection(conn);
+                      }}
+                      className="text-emerald-400 hover:underline disabled:opacity-50 disabled:no-underline"
+                      disabled={isBusy}
                     >
                       Open
                     </button>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); setSelectedConnectionId(conn.id); testConnection(conn); }}
-                      className="text-xs text-blue-400 hover:underline"
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void testConnection(conn);
+                      }}
+                      className="text-blue-400 hover:underline disabled:opacity-50 disabled:no-underline"
+                      disabled={isBusy}
                     >
                       Test
                     </button>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); removeConnection(conn.id); }}
-                      className="text-xs text-red-400 hover:underline"
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleRemoveConnection(conn.id);
+                      }}
+                      className="text-red-400 hover:underline"
                     >
                       Remove
                     </button>
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
+                      onClick={(event) => {
+                        event.stopPropagation();
                         setEditingConnectionId(conn.id);
                         setShowForm(true);
                       }}
-                      className="text-xs text-amber-400 hover:underline"
+                      className="text-amber-400 hover:underline"
                     >
                       Edit
                     </button>
                   </div>
 
                   {selectedConnectionId === conn.id && (
-                    <div className="mt-2 pt-2 border-t border-border/50" onClick={e => e.stopPropagation()}>
+                    <div className="mt-2 pt-2 border-t border-border/50" onClick={(event) => event.stopPropagation()}>
                       <div className="flex flex-wrap gap-2 px-2 pb-2">
                         <button
-                          onClick={() => testConnection(conn)}
-                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text hover:bg-border/40"
+                          onClick={() => void testConnection(conn)}
+                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text hover:bg-border/40 disabled:opacity-50"
+                          disabled={isBusy}
                         >
                           <CheckCircle size={12} />
                           Test
                         </button>
                         <button
-                          onClick={() => openConnection(conn)}
-                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text hover:bg-border/40"
+                          onClick={() => void openConnection(conn)}
+                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text hover:bg-border/40 disabled:opacity-50"
+                          disabled={isBusy}
                         >
                           <Plug size={12} />
                           Open
+                        </button>
+                        <button
+                          onClick={() => void openConnection(conn, true)}
+                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text hover:bg-border/40 disabled:opacity-50"
+                          disabled={isBusy || connectionState === 'connected'}
+                        >
+                          {connectionState === 'reconnecting' ? (
+                            <LoaderCircle size={12} className="animate-spin" />
+                          ) : (
+                            <RotateCcw size={12} />
+                          )}
+                          {connectionState === 'reconnecting' ? 'Reconnecting...' : 'Reconnect'}
                         </button>
                         <button
                           onClick={() => {
@@ -169,6 +319,14 @@ export default function ConnectionManager() {
                         </button>
                       </div>
 
+                      <div className="px-2 pb-2 text-[11px] text-muted/80">
+                        Reconnect: {conn.autoReconnect ? 'auto' : 'manual'} ({conn.connectTimeoutSeconds ?? 10}s)
+                        {' · '}
+                        <span className={conn.autoReconnect ? 'text-emerald-400' : 'text-amber-300'}>
+                          {conn.autoReconnect ? 'ativo' : 'desligado'}
+                        </span>
+                      </div>
+
                       <div className="rounded border border-border/50 bg-surface/60 p-2 mx-2 mb-2">
                         <div className="mb-2 flex items-center justify-between gap-2 text-xs font-medium text-muted">
                           <div className="flex items-center gap-2">
@@ -176,7 +334,7 @@ export default function ConnectionManager() {
                             Connection Logs
                           </div>
                           <button
-                            onClick={() => copyLogs(conn.id)}
+                            onClick={() => void copyLogs(conn.id)}
                             className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-muted hover:text-text hover:bg-border/30"
                           >
                             <Copy size={11} />
@@ -184,11 +342,13 @@ export default function ConnectionManager() {
                           </button>
                         </div>
                         {connectionLogs[conn.id]?.length ? (
-                          <div className="max-h-36 overflow-auto space-y-1 font-mono text-[11px] text-muted">
+                          <div className="max-h-36 overflow-auto space-y-1 font-mono text-[11px]">
                             {connectionLogs[conn.id].map((entry, index) => (
-                              <div key={`${conn.id}-log-${index}`} className="whitespace-pre-wrap break-words">
-                                {entry}
-                              </div>
+                              <ConnectionLogEntry
+                                key={`${conn.id}-log-${index}`}
+                                entry={entry}
+                                highlighted={index === 0}
+                              />
                             ))}
                           </div>
                         ) : (
@@ -221,77 +381,216 @@ export default function ConnectionManager() {
               setEditingConnectionId(null);
             }}
           />
-        ) : (
-          activeConnectionId ? (
-            <QueryWorkspace key={activeConnectionId} connectionLabel={activeConnection?.name} engine={activeConnection?.engine} />
-          ) : selectedConnection ? (
-            <div className="h-full p-4 md:p-8 overflow-auto">
-              <div className="max-w-3xl space-y-6">
-                <div>
+        ) : activeConnectionId ? (
+          <QueryWorkspace
+            key={activeConnectionId}
+            connectionLabel={activeConnection?.name}
+            engine={activeConnection?.engine}
+          />
+        ) : selectedConnection ? (
+          <div className="h-full p-4 md:p-8 overflow-auto">
+            <div className="max-w-3xl space-y-6">
+              <div>
+                <div className="flex flex-wrap items-center gap-3">
                   <h2 className="text-2xl font-bold text-text">{selectedConnection.name}</h2>
-                  <p className="text-sm text-muted mt-1">
-                    {selectedConnection.engine.toUpperCase()} | {selectedConnection.user}@{selectedConnection.host}:{selectedConnection.port} | {selectedConnection.database}
-                  </p>
+                  <ConnectionBadge
+                    state={resolveConnectionState(
+                      selectedConnection.id,
+                      activeConnectionId === selectedConnection.id,
+                    )}
+                  />
                 </div>
+                <p className="text-sm text-muted mt-1">
+                  {selectedConnection.engine.toUpperCase()} | {selectedConnection.user}@
+                  {selectedConnection.host}:{selectedConnection.port} | {selectedConnection.database}
+                </p>
+              </div>
 
-                <div className="flex gap-3">
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={() => void testConnection(selectedConnection)}
+                  className="px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40"
+                >
+                  Testar conexao
+                </button>
+                <button
+                  onClick={() => void openConnection(selectedConnection)}
+                  className="px-4 py-2 rounded text-sm bg-primary text-white hover:bg-blue-600"
+                >
+                  Abrir conexao
+                </button>
+                <button
+                  onClick={() => void openConnection(selectedConnection, true)}
+                  className="px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40 disabled:opacity-50"
+                  disabled={
+                    resolveConnectionState(
+                      selectedConnection.id,
+                      activeConnectionId === selectedConnection.id,
+                    ) === 'connected'
+                  }
+                >
+                  Reconnect
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingConnectionId(selectedConnection.id);
+                    setShowForm(true);
+                  }}
+                  className="px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40"
+                >
+                  Editar conexao
+                </button>
+              </div>
+
+              <div className="rounded-2xl border border-border glass-panel p-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-text">Logs da conexao</div>
                   <button
-                    onClick={() => testConnection(selectedConnection)}
-                    className="px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40"
+                    onClick={() => void copyLogs(selectedConnection.id)}
+                    className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-xs text-muted hover:text-text hover:bg-border/30"
                   >
-                    Testar conexao
-                  </button>
-                  <button
-                    onClick={() => openConnection(selectedConnection)}
-                    className="px-4 py-2 rounded text-sm bg-primary text-white hover:bg-blue-600"
-                  >
-                    Abrir conexao
-                  </button>
-                  <button
-                    onClick={() => {
-                      setEditingConnectionId(selectedConnection.id);
-                      setShowForm(true);
-                    }}
-                    className="px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40"
-                  >
-                    Editar conexao
+                    <Copy size={12} />
+                    Copiar logs
                   </button>
                 </div>
-
-                <div className="rounded-2xl border border-border glass-panel p-4">
-                  <div className="mb-3 flex items-center justify-between gap-2">
-                    <div className="text-sm font-medium text-text">Logs da conexao</div>
-                    <button
-                      onClick={() => copyLogs(selectedConnection.id)}
-                      className="inline-flex items-center gap-2 rounded border border-border px-3 py-1.5 text-xs text-muted hover:text-text hover:bg-border/30"
-                    >
-                      <Copy size={12} />
-                      Copiar logs
-                    </button>
+                {connectionLogs[selectedConnection.id]?.length ? (
+                  <div className="space-y-2 font-mono text-xs">
+                    {connectionLogs[selectedConnection.id].map((entry, index) => (
+                      <ConnectionLogEntry
+                        key={`${selectedConnection.id}-panel-log-${index}`}
+                        entry={entry}
+                        highlighted={index === 0}
+                      />
+                    ))}
                   </div>
-                  {connectionLogs[selectedConnection.id]?.length ? (
-                    <div className="space-y-2 font-mono text-xs text-muted">
-                      {connectionLogs[selectedConnection.id].map((entry, index) => (
-                        <div key={`${selectedConnection.id}-panel-log-${index}`} className="whitespace-pre-wrap break-words">
-                          {entry}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted">Ainda nao ha logs para esta conexao.</p>
-                  )}
-                </div>
+                ) : (
+                  <p className="text-sm text-muted">Ainda nao ha logs para esta conexao.</p>
+                )}
               </div>
             </div>
-          ) : (
-            <div className="h-full flex items-center justify-center text-muted">
-              <p>Select a connection or add a new one.</p>
-            </div>
-          )
+          </div>
+        ) : (
+          <div className="h-full flex items-center justify-center text-muted">
+            <p>Select a connection or add a new one.</p>
+          </div>
         )}
       </div>
     </div>
   );
+}
+
+function ConnectionBadge({
+  state,
+  compact = false,
+}: {
+  state: RuntimeConnectionState;
+  compact?: boolean;
+}) {
+  const palette: Record<RuntimeConnectionState, string> = {
+    disconnected: 'border-red-400/20 bg-red-400/8 text-red-300',
+    connecting: 'border-sky-400/30 bg-sky-400/10 text-sky-300',
+    connected: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300',
+    reconnecting: 'border-amber-400/30 bg-amber-400/10 text-amber-300',
+    failed: 'border-red-400/30 bg-red-400/10 text-red-300',
+  };
+
+  const labels: Record<RuntimeConnectionState, string> = {
+    disconnected: 'Disconnected',
+    connecting: 'Connecting',
+    connected: 'Connected',
+    reconnecting: 'Reconnecting',
+    failed: 'Failed',
+  };
+
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border ${compact ? 'px-1.5 py-0.5' : 'px-2 py-0.5'} text-[10px] uppercase tracking-[0.14em] ${palette[state]}`}
+    >
+      <Dot size={14} className="-ml-1 -mr-0.5" />
+      {labels[state]}
+    </span>
+  );
+}
+
+function ConnectionLogEntry({
+  entry,
+  highlighted = false,
+}: {
+  entry: string;
+  highlighted?: boolean;
+}) {
+  const match = entry.match(/^(\[[^\]]+\])\s*(.*)$/);
+  const timestamp = match?.[1];
+  const message = match?.[2] ?? entry;
+  const tone = resolveLogTone(message);
+
+  return (
+    <div
+      className={`rounded px-2 py-1.5 whitespace-pre-wrap break-words ${
+        highlighted ? 'bg-background/50 ring-1 ring-border/60' : 'bg-background/25'
+      }`}
+    >
+      {timestamp ? <span className="text-[10px] text-muted/55 mr-2">{timestamp}</span> : null}
+      <span className={tone}>{message}</span>
+    </div>
+  );
+}
+
+function resolveLogTone(message: string): string {
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes('sucesso') ||
+    lower.includes('restabelecida') ||
+    lower.includes('connection successful') ||
+    lower.includes('logs copiados')
+  ) {
+    return 'text-emerald-300';
+  }
+
+  if (
+    lower.includes('erro') ||
+    lower.includes('falha') ||
+    lower.includes('reset') ||
+    lower.includes('refused') ||
+    lower.includes('timed out')
+  ) {
+    return 'text-red-300';
+  }
+
+  if (lower.includes('tentativa') || lower.includes('reconectando')) {
+    return 'text-amber-300';
+  }
+
+  return 'text-muted';
+}
+
+function formatConnectionError(error: unknown): string {
+  const raw = extractErrorMessage(error);
+  const normalized = raw.trim();
+  const lower = normalized.toLowerCase();
+
+  if (lower.includes('timed out')) {
+    return 'Tempo limite excedido ao abrir a conexao.';
+  }
+
+  if (lower.includes('connection reset')) {
+    return 'A conexao foi encerrada pelo servidor durante o handshake.';
+  }
+
+  if (lower.includes('connection refused')) {
+    return 'O host recusou a conexao. Verifique host, porta e tunnel.';
+  }
+
+  if (lower.includes('authentication failed') || lower.includes('access denied')) {
+    return 'Falha de autenticacao. Revise usuario, senha ou chave privada.';
+  }
+
+  if (lower.includes('connection not found')) {
+    return 'A conexao nao esta disponivel no runtime. Abra ou reconecte antes de continuar.';
+  }
+
+  return normalized;
 }
 
 function extractErrorMessage(error: unknown): string {
@@ -323,4 +622,10 @@ function extractErrorMessage(error: unknown): string {
   }
 
   return 'Erro desconhecido ao executar a operacao.';
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }

@@ -18,23 +18,23 @@ pub fn build_connection_url(
     ))
 }
 
-pub async fn test_connection(url: &str) -> Result<(), String> {
+pub async fn test_connection(url: &str, timeout_seconds: u64) -> Result<(), String> {
     let connection = PgPool::connect(url);
 
-    match tokio::time::timeout(Duration::from_secs(10), connection).await {
+    match tokio::time::timeout(Duration::from_secs(timeout_seconds), connection).await {
         Ok(Ok(pool)) => {
             pool.close().await;
             Ok(())
         }
         Ok(Err(error)) => Err(format!("Connection failed: {error}")),
-        Err(_) => Err("Connection timed out after 10 seconds".into()),
+        Err(_) => Err(format!("Connection timed out after {timeout_seconds} seconds")),
     }
 }
 
-pub async fn open_connection(url: &str) -> Result<PgPool, String> {
+pub async fn open_connection(url: &str, timeout_seconds: u64) -> Result<PgPool, String> {
     PgPoolOptions::new()
         .max_connections(5)
-        .acquire_timeout(Duration::from_secs(10))
+        .acquire_timeout(Duration::from_secs(timeout_seconds))
         .idle_timeout(Duration::from_secs(60))
         .test_before_acquire(true)
         .connect(url)

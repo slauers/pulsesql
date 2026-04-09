@@ -46,6 +46,8 @@ pub struct ConnectionConfig {
     pub user: String,
     pub password: Option<String>,
     pub database: Option<String>,
+    pub connect_timeout_seconds: Option<u64>,
+    pub auto_reconnect: Option<bool>,
     pub oracle_connection_type: Option<OracleConnectionType>,
     pub oracle_driver_properties: Option<String>,
     pub ssh: Option<SshConfig>,
@@ -57,5 +59,13 @@ impl ConnectionConfig {
             .as_deref()
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| "Database name is required".to_string())
+    }
+
+    pub fn connect_timeout_seconds(&self) -> u64 {
+        self.connect_timeout_seconds.unwrap_or(10).clamp(3, 120)
+    }
+
+    pub fn auto_reconnect(&self) -> bool {
+        self.auto_reconnect.unwrap_or(true)
     }
 }

@@ -25,12 +25,12 @@ export default function ResultGrid({ columns, rows }: ResultGridProps) {
           position: 'relative',
         }}
       >
-        <div className="flex bg-surface/90 backdrop-blur text-xs font-semibold text-muted sticky top-0 z-10 border-b border-border/80" style={{ height: 32 }}>
-          <div className="w-14 px-2 py-2 text-center sticky left-0 bg-surface/90 select-none opacity-50 shrink-0 border-r border-border/50">
+        <div className="flex bg-surface/95 backdrop-blur text-xs font-semibold text-muted sticky top-0 z-10 border-b border-border/90 shadow-[0_8px_24px_rgba(0,0,0,0.18)]" style={{ height: 32 }}>
+          <div className="w-14 px-2 py-2 text-center sticky left-0 bg-surface/95 select-none opacity-50 shrink-0 border-r border-border/50">
             #
           </div>
           {columns.map((col, idx) => (
-            <div key={idx} className="px-3 py-2 whitespace-nowrap overflow-hidden text-ellipsis min-w-[150px] border-r border-border/50">
+            <div key={idx} className="px-3 py-2 whitespace-nowrap overflow-hidden text-ellipsis min-w-[150px] border-r border-border/50 text-[11px] uppercase tracking-[0.04em]">
               {col}
             </div>
           ))}
@@ -39,16 +39,17 @@ export default function ResultGrid({ columns, rows }: ResultGridProps) {
         <div className="absolute w-full top-[32px] divide-y divide-border/30">
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const row = rows[virtualRow.index];
+            const rowTone = virtualRow.index % 2 === 0 ? 'bg-[#0A1321]' : 'bg-[#0D1726]';
             return (
               <div
                 key={virtualRow.key}
-                className="hover:bg-surface/40 group absolute w-full flex text-sm"
+                className={`group absolute w-full flex text-sm transition-colors ${rowTone} hover:bg-primary/10`}
                 style={{
                   height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                <div className="w-14 px-2 flex items-center justify-center border-r border-border/20 text-xs text-muted/50 font-mono sticky left-0 bg-background/80 group-hover:bg-surface/80 shrink-0">
+                <div className={`w-14 px-2 flex items-center justify-center border-r border-border/20 text-xs text-muted/50 font-mono sticky left-0 shrink-0 ${rowTone} group-hover:bg-primary/10`}>
                   {virtualRow.index + 1}
                 </div>
                 {columns.map((col, cIdx) => {

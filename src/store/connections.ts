@@ -24,6 +24,8 @@ export interface ConnectionConfig {
   user: string;
   password?: string;
   database: string;
+  connectTimeoutSeconds?: number;
+  autoReconnect?: boolean;
   oracleConnectionType?: OracleConnectionType;
   oracleDriverProperties?: string;
   ssh?: SshConfig;
@@ -97,6 +99,8 @@ function normalizeConnection(input: unknown): ConnectionConfig | null {
     user: String(raw.user ?? ''),
     password: typeof raw.password === 'string' ? raw.password : undefined,
     database: String(raw.database ?? raw.dbname ?? ''),
+    connectTimeoutSeconds: normalizeTimeout(raw.connectTimeoutSeconds),
+    autoReconnect: typeof raw.autoReconnect === 'boolean' ? raw.autoReconnect : true,
     oracleConnectionType: raw.oracleConnectionType === 'sid' ? 'sid' : 'serviceName',
     oracleDriverProperties: asOptionalString(raw.oracleDriverProperties),
     ssh: {
@@ -110,6 +114,14 @@ function normalizeConnection(input: unknown): ConnectionConfig | null {
       passphrase: asOptionalString(ssh?.passphrase),
     },
   };
+}
+
+function normalizeTimeout(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.min(120, Math.max(3, Math.round(value)));
+  }
+
+  return 10;
 }
 
 function asOptionalString(value: unknown): string | undefined {

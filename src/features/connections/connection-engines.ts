@@ -55,6 +55,8 @@ export function createDefaultConnectionForm(engine: DatabaseEngine = 'postgres')
     port: definition.defaultPort,
     user: engine === 'postgres' ? 'postgres' : engine === 'mysql' ? 'root' : 'system',
     database: definition.defaultDatabase,
+    connectTimeoutSeconds: 10,
+    autoReconnect: true,
     oracleConnectionType: 'serviceName',
     oracleDriverProperties: '',
     password: '',

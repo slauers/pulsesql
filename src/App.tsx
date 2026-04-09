@@ -13,15 +13,15 @@ function App() {
         <div className="flex items-center gap-3 min-w-0">
           <img src={brandMark} alt="BlackTable" className="h-8 w-8 rounded-xl border border-border/80 shadow-[0_0_20px_rgba(34,199,255,0.14)]" />
           <div className="min-w-0">
-            <h1 className="font-semibold text-sm tracking-[0.18em] uppercase text-text truncate">
-              BlackTable
+            <h1 className="font-medium text-sm tracking-[0.06em] text-text truncate">
+              Blacktable
             </h1>
             <p className="text-[11px] text-muted truncate">
               Lightweight SQL workstation
             </p>
           </div>
         </div>
-        <div className="hidden md:block text-[11px] uppercase tracking-[0.18em] text-primary/80">
+        <div className="hidden md:block text-[10px] uppercase tracking-[0.14em] text-primary/70">
           Grid-native SQL Client
         </div>
       </div>
