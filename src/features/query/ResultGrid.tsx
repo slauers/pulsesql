@@ -18,8 +18,13 @@ export default function ResultGrid({ columns, rows }: ResultGridProps) {
 
   return (
     <div ref={parentRef} className="h-full w-full overflow-auto bg-transparent relative">
+      {!rows.length ? (
+        <div className="h-full flex items-center justify-center text-sm text-muted/60">
+          Nenhum resultado para o filtro aplicado.
+        </div>
+      ) : null}
       <div
-        className="min-w-fit"
+        className={`min-w-fit ${rows.length ? '' : 'hidden'}`}
         style={{
           height: `${rowVirtualizer.getTotalSize() + 32}px`, // +32 for header
           position: 'relative',

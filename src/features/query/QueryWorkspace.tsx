@@ -3,8 +3,20 @@ import Editor from '@monaco-editor/react';
 import { useQueriesStore } from '../../store/queries';
 import { useConnectionsStore } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
-import { Plus, X, Play, LoaderCircle, AlertCircle } from 'lucide-react';
+import {
+  Plus,
+  X,
+  Play,
+  LoaderCircle,
+  AlertCircle,
+  Clock3,
+  Download,
+  FileJson,
+  Search,
+} from 'lucide-react';
 import ResultGrid from './ResultGrid';
+import QueryHistoryDrawer from '../history/components/QueryHistoryDrawer';
+import type { QueryHistoryItem } from '../history/types';
 
 interface QueryResult {
   columns: string[];
@@ -12,42 +24,105 @@ interface QueryResult {
   execution_time: number;
 }
 
+interface ExecuteQueryPayload {
+  result: QueryResult;
+  history_item_id: string;
+}
+
 export default function QueryWorkspace({ connectionLabel, engine }: { connectionLabel?: string; engine?: string }) {
-  const { tabs, activeTabId, addTab, setActiveTab, closeTab, updateTabContent } = useQueriesStore();
-  const { activeConnectionId } = useConnectionsStore();
+  const {
+    tabs,
+    activeTabId,
+    addTab,
+    addTabWithContent,
+    setActiveTab,
+    closeTab,
+    updateTabContent,
+    replaceActiveTabContent,
+  } = useQueriesStore();
+  const { activeConnectionId, connections, setActiveConnection } = useConnectionsStore();
   
   const activeTab = tabs.find(t => t.id === activeTabId);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [quickFilter, setQuickFilter] = useState('');
   const executeQueryRef = useRef<() => void>(() => {});
 
-  const executeQuery = useCallback(async () => {
-    if (!activeTab || !activeTab.content.trim() || !activeConnectionId) return;
+  const runQuery = useCallback(async (queryText: string, connectionId: string) => {
+    const trimmedQuery = queryText.trim();
+    if (!trimmedQuery || !connectionId) {
+      return;
+    }
     
     setLoading(true);
     setError(null);
     setResult(null);
 
     try {
-      const res = await invoke<QueryResult>('execute_query', { 
-        connId: activeConnectionId, 
-        query: activeTab.content 
+      const payload = await invoke<ExecuteQueryPayload>('execute_query', { 
+        connId: connectionId, 
+        query: trimmedQuery,
       });
-      setResult(res);
+      setResult(payload.result);
     } catch (e: any) {
       setError(formatQueryError(e));
     } finally {
       setLoading(false);
     }
-  }, [activeTab, activeConnectionId]);
+  }, []);
+
+  const executeQuery = useCallback(async () => {
+    if (!activeTab || !activeConnectionId) return;
+    await runQuery(activeTab.content, activeConnectionId);
+  }, [activeTab, activeConnectionId, runQuery]);
+
+  const runHistoryItem = useCallback(async (item: QueryHistoryItem, replaceCurrent: boolean) => {
+    const connection = connections.find((current) => current.id === item.connectionId);
+
+    if (!connection) {
+      setError('A conexao salva para este historico nao existe mais.');
+      return;
+    }
+
+    if (replaceCurrent) {
+      replaceActiveTabContent(item.queryText, deriveHistoryTabTitle(item.queryText));
+    } else {
+      addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText));
+    }
+
+    try {
+      await invoke('open_connection', { config: connection });
+      setActiveConnection(connection.id);
+      await runQuery(item.queryText, connection.id);
+    } catch (runError) {
+      setError(formatQueryError(runError));
+    }
+  }, [addTabWithContent, connections, replaceActiveTabContent, runQuery, setActiveConnection]);
+
+  const openHistoryInNewTab = useCallback((item: QueryHistoryItem) => {
+    addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText));
+  }, [addTabWithContent]);
+
+  const replaceCurrentWithHistory = useCallback((item: QueryHistoryItem) => {
+    replaceActiveTabContent(item.queryText, deriveHistoryTabTitle(item.queryText));
+  }, [replaceActiveTabContent]);
+
+  const toggleHistory = useCallback(() => {
+    setHistoryOpen((current) => !current);
+  }, []);
 
   useEffect(() => {
     executeQueryRef.current = () => {
       void executeQuery();
     };
   }, [executeQuery]);
+
+  const filteredRows = result
+    ? applyQuickFilter(result.rows, result.columns, quickFilter)
+    : [];
 
   return (
     <div className="flex flex-col h-full bg-transparent overflow-hidden relative min-h-0">
@@ -56,14 +131,16 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
           <div 
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`group flex items-center gap-2 px-3 py-3 border-r border-border/70 w-32 max-w-[220px] cursor-pointer select-none border-b-2 transition-colors
+            className={`group flex items-center gap-2 px-3 py-3 border-r border-border/70 min-w-[148px] max-w-[240px] cursor-pointer select-none border-b-2 transition-colors
               ${activeTabId === tab.id ? 'bg-background/80 text-primary border-b-primary' : 'text-muted border-b-transparent hover:bg-border/20'}
             `}
           >
             <span className="text-sm truncate flex-1">{tab.title}</span>
             <button 
               onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
-              className="p-1 rounded hover:bg-border/50 text-muted opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+              className={`p-1 rounded hover:bg-border/50 text-muted transition-opacity flex-shrink-0 ${
+                activeTabId === tab.id ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'
+              }`}
             >
               <X size={14} />
             </button>
@@ -77,7 +154,7 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
       <div className="px-3 py-2 border-b border-border/80 glass-panel flex flex-wrap items-center gap-2 shrink-0">
         <button 
           onClick={executeQuery}
-          disabled={loading || !activeTab}
+          disabled={loading || !activeTab || !activeConnectionId}
           className="flex items-center gap-1.5 bg-emerald-400/18 text-emerald-200 hover:bg-emerald-400/26 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-400/35 shadow-[0_0_18px_rgba(16,185,129,0.18)] hover:shadow-[0_0_24px_rgba(16,185,129,0.28)]"
         >
           {loading ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} className="fill-green-400/50" />} 
@@ -85,6 +162,17 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
         </button>
         <div className="mx-2 h-4 w-px bg-border/50"></div>
         <span className="text-xs text-muted">Cmd+Enter to run</span>
+        <button
+          onClick={toggleHistory}
+          className={`ml-auto inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+            historyOpen
+              ? 'border-primary/40 bg-primary/10 text-primary'
+              : 'border-border text-muted hover:bg-border/30 hover:text-text'
+          }`}
+        >
+          <Clock3 size={13} />
+          History
+        </button>
         {connectionLabel && engine && (
           <>
             <div className="mx-2 h-4 w-px bg-border/50"></div>
@@ -166,14 +254,43 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
 
       <div className="h-[34%] min-h-[190px] max-h-[58%] border-t border-border glass-panel flex flex-col shrink-0 flex-grow-0 relative max-[720px]:h-[40%]">
         <div className="p-2 border-b border-border text-sm font-medium text-muted flex justify-between items-center bg-background/42">
-          <div className="flex gap-4 px-2">
+          <div className="flex gap-4 px-2 shrink-0">
             <button className="text-text border-b-2 border-primary pb-1">Result Grid</button>
           </div>
-          {result && (
-            <span className="text-xs text-muted mr-2">
-              {result.rows.length} rows in {result.execution_time}ms
-            </span>
-          )}
+          {result ? (
+            <div className="flex items-center gap-2 px-2 min-w-0">
+              <div className="hidden md:flex items-center gap-2 text-xs text-muted shrink-0">
+                <span>
+                  {filteredRows.length}
+                  {quickFilter ? ` / ${result.rows.length}` : ''} rows
+                </span>
+                <span>{result.execution_time}ms</span>
+              </div>
+              <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5 min-w-[180px] md:min-w-[220px]">
+                <Search size={13} className="shrink-0 text-muted" />
+                <input
+                  value={quickFilter}
+                  onChange={(event) => setQuickFilter(event.target.value)}
+                  placeholder="Filtro rapido"
+                  className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
+                />
+              </label>
+              <button
+                onClick={() => exportRowsAsCsv(result.columns, filteredRows, buildExportBaseName(connectionLabel))}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+              >
+                <Download size={13} />
+                CSV
+              </button>
+              <button
+                onClick={() => exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel))}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+              >
+                <FileJson size={13} />
+                JSON
+              </button>
+            </div>
+          ) : null}
         </div>
         
         <div className="flex-1 overflow-auto bg-background/10">
@@ -192,7 +309,7 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
               <div className="text-sm font-mono whitespace-pre-wrap">{error}</div>
             </div>
           ) : result ? (
-            <ResultGrid columns={result.columns} rows={result.rows} />
+            <ResultGrid columns={result.columns} rows={filteredRows} />
           ) : (
             <div className="h-full flex items-center justify-center text-muted/50 text-sm">
               Run a query to see results
@@ -200,8 +317,80 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
           )}
         </div>
       </div>
+
+      <QueryHistoryDrawer
+        open={historyOpen}
+        connections={connections}
+        onClose={() => setHistoryOpen(false)}
+        onOpenInNewTab={openHistoryInNewTab}
+        onReplaceCurrent={replaceCurrentWithHistory}
+        onRunAgain={(item) => void runHistoryItem(item, true)}
+      />
     </div>
   );
+}
+
+function deriveHistoryTabTitle(queryText: string): string {
+  const firstLine = queryText
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean);
+
+  if (!firstLine) {
+    return 'History Query';
+  }
+
+  return firstLine.slice(0, 36);
+}
+
+function applyQuickFilter(rows: any[], columns: string[], quickFilter: string) {
+  const normalizedFilter = quickFilter.trim().toLowerCase();
+
+  if (!normalizedFilter) {
+    return rows;
+  }
+
+  return rows.filter((row) =>
+    columns.some((column) => String(row?.[column] ?? '').toLowerCase().includes(normalizedFilter)),
+  );
+}
+
+function exportRowsAsCsv(columns: string[], rows: any[], baseName: string) {
+  const lines = [
+    columns.map(escapeCsvValue).join(','),
+    ...rows.map((row) => columns.map((column) => escapeCsvValue(row?.[column])).join(',')),
+  ];
+
+  downloadTextFile(`${baseName}.csv`, lines.join('\n'), 'text/csv;charset=utf-8;');
+}
+
+function exportRowsAsJson(rows: any[], baseName: string) {
+  downloadTextFile(`${baseName}.json`, JSON.stringify(rows, null, 2), 'application/json;charset=utf-8;');
+}
+
+function downloadTextFile(filename: string, contents: string, contentType: string) {
+  const blob = new Blob([contents], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function escapeCsvValue(value: unknown) {
+  const raw = value == null ? '' : String(value);
+  const escaped = raw.replace(/"/g, '""');
+  return `"${escaped}"`;
+}
+
+function buildExportBaseName(connectionLabel?: string) {
+  const safeConnection = (connectionLabel || 'results')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return `${safeConnection || 'results'}-${Date.now()}`;
 }
 
 function formatQueryError(error: unknown): string {

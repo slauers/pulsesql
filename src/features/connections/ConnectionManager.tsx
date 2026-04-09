@@ -8,6 +8,7 @@ import {
   Pencil,
   Plus,
   Plug,
+  PlugZap,
   RotateCcw,
   Server,
   XCircle,
@@ -174,6 +175,33 @@ export default function ConnectionManager() {
     setSelectedConnectionId((current) => (current === connId ? null : current));
   };
 
+  const confirmRemoveConnection = (conn: ConnectionConfig) => {
+    const confirmed = window.confirm(
+      `Remover a conexao "${conn.name}"?\n\nEssa acao exclui a configuracao salva desta conexao.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    handleRemoveConnection(conn.id);
+  };
+
+  const disconnectConnection = async (conn: ConnectionConfig) => {
+    appendLog(conn.id, `Fechando conexao ${conn.name}.`);
+
+    try {
+      await invoke('close_connection', { id: conn.id });
+      setConnectionState(conn.id, 'disconnected');
+      if (activeConnectionId === conn.id) {
+        setActiveConnection(null);
+      }
+      appendLog(conn.id, 'Conexao fechada.');
+    } catch (error) {
+      appendLog(conn.id, formatConnectionError(error));
+    }
+  };
+
   return (
     <div className="flex h-full w-full max-[900px]:flex-col">
       <div className="w-[290px] shrink-0 border-r border-border/70 bg-surface/58 backdrop-blur-xl flex flex-col max-[900px]:w-full max-[900px]:max-h-[42vh] max-[900px]:border-r-0 max-[900px]:border-b">
@@ -234,67 +262,60 @@ export default function ConnectionManager() {
                     </div>
                   </div>
 
-                  <div className="flex gap-3 mt-2 text-xs">
+                  <div className="mt-2 flex items-center gap-2">
                     <button
                       onClick={(event) => {
                         event.stopPropagation();
                         void openConnection(conn);
                       }}
-                      className="text-emerald-400 hover:underline disabled:opacity-50 disabled:no-underline"
+                      className="inline-flex items-center gap-1.5 rounded-lg  px-2.5 py-1.5 text-xs font-semibold hover:bg-primary/90 disabled:opacity-50"
                       disabled={isBusy}
                     >
+                      <Plug size={12} />
                       Open
                     </button>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void testConnection(conn);
-                      }}
-                      className="text-blue-400 hover:underline disabled:opacity-50 disabled:no-underline"
-                      disabled={isBusy}
-                    >
-                      Test
-                    </button>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleRemoveConnection(conn.id);
-                      }}
-                      className="text-red-400 hover:underline"
-                    >
-                      Remove
-                    </button>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setEditingConnectionId(conn.id);
-                        setShowForm(true);
-                      }}
-                      className="text-amber-400 hover:underline"
-                    >
-                      Edit
-                    </button>
+                    <div className="flex items-center gap-1 text-[11px] text-muted">
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void testConnection(conn);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-border/30 hover:text-text disabled:opacity-50"
+                        disabled={isBusy}
+                        title="Test connection"
+                      >
+                        <CheckCircle size={12} />
+                        Test
+                      </button>
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setEditingConnectionId(conn.id);
+                          setShowForm(true);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-border/30 hover:text-text"
+                        title="Edit connection"
+                      >
+                        <Pencil size={12} />
+                        Edit
+                      </button>
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          confirmRemoveConnection(conn);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-red-300 hover:bg-red-400/10"
+                        title="Remove connection"
+                      >
+                        <XCircle size={12} />
+                        Remove
+                      </button>
+                    </div>
                   </div>
 
                   {selectedConnectionId === conn.id && (
                     <div className="mt-2 pt-2 border-t border-border/50" onClick={(event) => event.stopPropagation()}>
                       <div className="flex flex-wrap gap-2 px-2 pb-2">
-                        <button
-                          onClick={() => void testConnection(conn)}
-                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text hover:bg-border/40 disabled:opacity-50"
-                          disabled={isBusy}
-                        >
-                          <CheckCircle size={12} />
-                          Test
-                        </button>
-                        <button
-                          onClick={() => void openConnection(conn)}
-                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text hover:bg-border/40 disabled:opacity-50"
-                          disabled={isBusy}
-                        >
-                          <Plug size={12} />
-                          Open
-                        </button>
                         <button
                           onClick={() => void openConnection(conn, true)}
                           className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text hover:bg-border/40 disabled:opacity-50"
@@ -308,6 +329,14 @@ export default function ConnectionManager() {
                           {connectionState === 'reconnecting' ? 'Reconnecting...' : 'Reconnect'}
                         </button>
                         <button
+                          onClick={() => void disconnectConnection(conn)}
+                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text hover:bg-border/40 disabled:opacity-50"
+                          disabled={isBusy || connectionState === 'disconnected'}
+                        >
+                          <PlugZap size={12} />
+                          Disconnect
+                        </button>
+                        <button
                           onClick={() => {
                             setEditingConnectionId(conn.id);
                             setShowForm(true);
@@ -316,6 +345,13 @@ export default function ConnectionManager() {
                         >
                           <Pencil size={12} />
                           Edit
+                        </button>
+                        <button
+                          onClick={() => confirmRemoveConnection(conn)}
+                          className="inline-flex items-center gap-1 rounded border border-red-400/20 px-2 py-1 text-xs text-red-300 hover:bg-red-400/10"
+                        >
+                          <XCircle size={12} />
+                          Remove
                         </button>
                       </div>
 
@@ -430,6 +466,18 @@ export default function ConnectionManager() {
                   }
                 >
                   Reconnect
+                </button>
+                <button
+                  onClick={() => void disconnectConnection(selectedConnection)}
+                  className="px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40 disabled:opacity-50"
+                  disabled={
+                    resolveConnectionState(
+                      selectedConnection.id,
+                      activeConnectionId === selectedConnection.id,
+                    ) === 'disconnected'
+                  }
+                >
+                  Disconnect
                 </button>
                 <button
                   onClick={() => {

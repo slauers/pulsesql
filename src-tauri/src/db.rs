@@ -1,10 +1,13 @@
 use crate::connection::types::{ConnectionConfig, DatabaseEngine};
 use crate::engines::{mysql, oracle, postgres};
+use crate::history::model::{NewQueryHistoryItem, QueryHistoryFilter, QueryHistoryItem};
+use crate::history::service::HistoryState;
 use crate::ssh::tunnel::{start_ssh_tunnel, SshTunnelHandle};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{MySqlPool, PgPool};
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -28,6 +31,7 @@ pub enum ConnectionPool {
 }
 
 pub struct ManagedConnection {
+    config: ConnectionConfig,
     pool: ConnectionPool,
     tunnel: Option<SshTunnelHandle>,
 }
@@ -56,6 +60,12 @@ impl DbState {
             connections: Mutex::new(HashMap::new()),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExecuteQueryPayload {
+    pub result: QueryResult,
+    pub history_item_id: String,
 }
 
 fn resolve_runtime_target(
@@ -159,7 +169,11 @@ pub async fn open_connection(
         }
     };
 
-    let managed = ManagedConnection { pool, tunnel };
+    let managed = ManagedConnection {
+        config: config.clone(),
+        pool,
+        tunnel,
+    };
 
     let existing = {
         let mut connections = state.connections.lock().await;
@@ -248,12 +262,124 @@ pub async fn list_columns(
 #[tauri::command]
 pub async fn execute_query(
     state: tauri::State<'_, DbState>,
+    history: tauri::State<'_, HistoryState>,
     conn_id: String,
     query: String,
-) -> Result<QueryResult, String> {
-    match get_connection_pool(&state, &conn_id).await? {
+) -> Result<ExecuteQueryPayload, String> {
+    let pool = get_connection_pool(&state, &conn_id).await?;
+    let execution = match pool {
         ConnectionPool::Postgres(pool) => postgres::execute_query(&pool, &query).await,
         ConnectionPool::Mysql(pool) => mysql::execute_query(&pool, &query).await,
         ConnectionPool::Oracle(connection) => oracle::execute_query(&connection, &query).await,
+    };
+
+    let now = now_iso_like();
+    let history_item_id = new_history_id();
+    let connection_details = resolve_connection_history_details(&state, &conn_id).await?;
+
+    match execution {
+        Ok(result) => {
+            let row_count = i64::try_from(result.rows.len()).unwrap_or(i64::MAX);
+            history
+                .record(NewQueryHistoryItem {
+                    id: history_item_id.clone(),
+                    connection_id: conn_id,
+                    connection_name: connection_details.0,
+                    database_name: connection_details.1,
+                    schema_name: None,
+                    query_text: query.trim().to_string(),
+                    executed_at: now,
+                    duration_ms: Some(i64::try_from(result.execution_time).unwrap_or(i64::MAX)),
+                    status: "success".into(),
+                    error_message: None,
+                    row_count: Some(row_count),
+                })
+                .await?;
+
+            Ok(ExecuteQueryPayload {
+                result,
+                history_item_id,
+            })
+        }
+        Err(error) => {
+            history
+                .record(NewQueryHistoryItem {
+                    id: history_item_id.clone(),
+                    connection_id: conn_id,
+                    connection_name: connection_details.0,
+                    database_name: connection_details.1,
+                    schema_name: None,
+                    query_text: query.trim().to_string(),
+                    executed_at: now,
+                    duration_ms: None,
+                    status: "error".into(),
+                    error_message: Some(error.clone()),
+                    row_count: None,
+                })
+                .await?;
+
+            Err(error)
+        }
     }
+}
+
+#[tauri::command]
+pub async fn list_query_history(
+    history: tauri::State<'_, HistoryState>,
+    filter: Option<QueryHistoryFilter>,
+) -> Result<Vec<QueryHistoryItem>, String> {
+    history.list(filter.unwrap_or(QueryHistoryFilter {
+        query: None,
+        connection_id: None,
+        status: None,
+        limit: Some(50),
+        offset: Some(0),
+    }))
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_query_history_item(
+    history: tauri::State<'_, HistoryState>,
+    id: String,
+) -> Result<(), String> {
+    history.delete_item(&id).await
+}
+
+#[tauri::command]
+pub async fn clear_query_history(
+    history: tauri::State<'_, HistoryState>,
+) -> Result<(), String> {
+    history.clear().await
+}
+
+async fn resolve_connection_history_details(
+    state: &tauri::State<'_, DbState>,
+    conn_id: &str,
+) -> Result<(String, Option<String>), String> {
+    let connections = state.connections.lock().await;
+    let connection = connections
+        .get(conn_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+
+    Ok((
+        connection.config.name.clone(),
+        connection.config.database.clone(),
+    ))
+}
+
+fn new_history_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("hist-{nanos}")
+}
+
+fn now_iso_like() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    millis.to_string()
 }
