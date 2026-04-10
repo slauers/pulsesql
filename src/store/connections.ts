@@ -3,6 +3,7 @@ import { create } from 'zustand';
 export type DatabaseEngine = 'postgres' | 'mysql' | 'oracle';
 export type SshAuthMethod = 'password' | 'privateKey';
 export type OracleConnectionType = 'serviceName' | 'sid';
+export type PostgresSslMode = 'disable' | 'prefer' | 'require';
 
 export interface SshConfig {
   enabled: boolean;
@@ -26,6 +27,7 @@ export interface ConnectionConfig {
   database: string;
   connectTimeoutSeconds?: number;
   autoReconnect?: boolean;
+  postgresSslMode?: PostgresSslMode;
   oracleConnectionType?: OracleConnectionType;
   oracleDriverProperties?: string;
   ssh?: SshConfig;
@@ -39,6 +41,41 @@ interface ConnectionsState {
   removeConnection: (id: string) => void;
   setActiveConnection: (id: string | null) => void;
 }
+
+const DEV_TEST_CONNECTIONS: ConnectionConfig[] = [
+  {
+    id: 'dev-supabase-test',
+    name: 'Supabase Test',
+    engine: 'postgres',
+    host: 'db.jokybdfzvuzunnionczq.supabase.co',
+    port: 5432,
+    user: 'postgres',
+    password: 'wBTUQkRyrwbZXVcV',
+    database: 'postgres',
+    connectTimeoutSeconds: 10,
+    autoReconnect: true,
+    postgresSslMode: 'require',
+    ssh: {
+      enabled: false,
+    },
+  },
+  {
+    id: 'dev-oracle-test',
+    name: 'Oracle Test',
+    engine: 'oracle',
+    host: 'localhost',
+    port: 7001,
+    user: 'CORE_DEVELOPMENT',
+    password: 'DevPass2024',
+    database: 'ORCL',
+    connectTimeoutSeconds: 10,
+    autoReconnect: true,
+    oracleConnectionType: 'serviceName',
+    ssh: {
+      enabled: false,
+    },
+  },
+];
 
 export const useConnectionsStore = create<ConnectionsState>((set) => ({
   connections: normalizeConnections(JSON.parse(localStorage.getItem('connections') || '[]')),
@@ -70,13 +107,13 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
 }));
 
 function normalizeConnections(input: unknown): ConnectionConfig[] {
-  if (!Array.isArray(input)) {
-    return [];
-  }
+  const normalized = Array.isArray(input)
+    ? input
+        .map((item) => normalizeConnection(item))
+        .filter((item): item is ConnectionConfig => item !== null)
+    : [];
 
-  return input
-    .map((item) => normalizeConnection(item))
-    .filter((item): item is ConnectionConfig => item !== null);
+  return ensureDevTestConnections(normalized);
 }
 
 function normalizeConnection(input: unknown): ConnectionConfig | null {
@@ -101,6 +138,7 @@ function normalizeConnection(input: unknown): ConnectionConfig | null {
     database: String(raw.database ?? raw.dbname ?? ''),
     connectTimeoutSeconds: normalizeTimeout(raw.connectTimeoutSeconds),
     autoReconnect: typeof raw.autoReconnect === 'boolean' ? raw.autoReconnect : true,
+    postgresSslMode: normalizePostgresSslMode(raw.postgresSslMode),
     oracleConnectionType: raw.oracleConnectionType === 'sid' ? 'sid' : 'serviceName',
     oracleDriverProperties: asOptionalString(raw.oracleDriverProperties),
     ssh: {
@@ -124,10 +162,43 @@ function normalizeTimeout(value: unknown): number {
   return 10;
 }
 
+function normalizePostgresSslMode(value: unknown): PostgresSslMode {
+  if (value === 'disable' || value === 'require') {
+    return value;
+  }
+
+  return 'prefer';
+}
+
 function asOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function asOptionalNumber(value: unknown): number | undefined {
   return typeof value === 'number' ? value : undefined;
+}
+
+function ensureDevTestConnections(connections: ConnectionConfig[]): ConnectionConfig[] {
+  if (!import.meta.env.DEV) {
+    return connections;
+  }
+
+  const seeded = [...connections];
+
+  for (const testConnection of DEV_TEST_CONNECTIONS) {
+    const exists = seeded.some(
+      (connection) =>
+        connection.id === testConnection.id ||
+        (connection.host === testConnection.host &&
+          connection.port === testConnection.port &&
+          connection.user === testConnection.user &&
+          connection.database === testConnection.database),
+    );
+
+    if (!exists) {
+      seeded.unshift(testConnection);
+    }
+  }
+
+  return seeded;
 }

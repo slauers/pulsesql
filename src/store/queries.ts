@@ -18,7 +18,7 @@ interface QueriesState {
 }
 
 export const useQueriesStore = create<QueriesState>((set) => ({
-  tabs: [{ id: '1', title: 'Query 1', content: 'SELECT * FROM information_schema.tables LIMIT 10;' }],
+  tabs: [{ id: '1', title: 'Query 1', content: '' }],
   activeTabId: '1',
   
   addTab: () => set((state) => {

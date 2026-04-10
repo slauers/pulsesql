@@ -13,8 +13,13 @@ pub fn build_connection_url(
     let database = config.database_name()?;
 
     Ok(format!(
-        "postgres://{}:{}@{}:{}/{}",
-        config.user, password, host, port, database
+        "postgres://{}:{}@{}:{}/{}?sslmode={}",
+        config.user,
+        password,
+        host,
+        port,
+        database,
+        config.postgres_ssl_mode()
     ))
 }
 
