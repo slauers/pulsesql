@@ -79,7 +79,7 @@ pub async fn list_columns(
     table: &str,
 ) -> Result<Vec<ColumnDef>, String> {
     sqlx::query_as::<_, ColumnDef>(
-        "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position",
+        "SELECT column_name, data_type, (is_nullable = 'YES') AS nullable, column_default AS default_value FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position",
     )
     .bind(schema)
     .bind(table)

@@ -14,6 +14,8 @@ use tokio::sync::Mutex;
 pub struct ColumnDef {
     pub column_name: String,
     pub data_type: String,
+    pub nullable: Option<bool>,
+    pub default_value: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

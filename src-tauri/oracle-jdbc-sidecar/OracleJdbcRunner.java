@@ -79,7 +79,7 @@ public class OracleJdbcRunner {
 
   private static String listColumns(Request request) throws Exception {
     String sql =
-        "SELECT column_name, data_type FROM all_tab_columns WHERE owner = '" + escapeSql(request.schema) +
+        "SELECT column_name, data_type, nullable, data_default FROM all_tab_columns WHERE owner = '" + escapeSql(request.schema) +
         "' AND table_name = '" + escapeSql(request.table) + "' ORDER BY column_id";
 
     try (Connection connection = DriverManager.getConnection(request.jdbcUrl(), request.properties());
@@ -98,6 +98,10 @@ public class OracleJdbcRunner {
             .append(quote(resultSet.getString(1)))
             .append(",\"data_type\":")
             .append(quote(resultSet.getString(2)))
+            .append(",\"nullable\":")
+            .append(String.valueOf("Y".equalsIgnoreCase(resultSet.getString(3))))
+            .append(",\"default_value\":")
+            .append(quote(trimToNull(resultSet.getString(4))))
             .append('}');
       }
 
@@ -368,6 +372,15 @@ public class OracleJdbcRunner {
     }
 
     return normalized;
+  }
+
+  private static String trimToNull(String value) {
+    if (value == null) {
+      return null;
+    }
+
+    String trimmed = value.trim();
+    return trimmed.isEmpty() ? null : trimmed;
   }
 
   private static void writeSuccess(Path responsePath, String payload) throws IOException {

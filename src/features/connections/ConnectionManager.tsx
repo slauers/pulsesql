@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   CheckCircle,
   Copy,
+  Eye,
+  EyeOff,
   FileText,
   LoaderCircle,
   Pencil,
@@ -15,29 +17,34 @@ import {
   Dot,
 } from 'lucide-react';
 import { ConnectionConfig, useConnectionsStore } from '../../store/connections';
-import { SchemaTree } from '../database/Explorer';
+import { useConnectionRuntimeStore, type RuntimeConnectionState } from '../../store/connectionRuntime';
+import { useDatabaseSessionStore } from '../../store/databaseSession';
+import { invalidateMetadataCache } from '../database/metadata-cache';
+import { DatabaseExplorer } from '../database/Explorer';
 import QueryWorkspace from '../query/QueryWorkspace';
 import ConnectionForm from './ConnectionForm';
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'error';
-type RuntimeConnectionState =
-  | 'disconnected'
-  | 'connecting'
-  | 'connected'
-  | 'reconnecting'
-  | 'failed';
 
 const RECONNECT_DELAYS_MS = [800, 1600, 3200];
 
 export default function ConnectionManager() {
   const { connections, activeConnectionId, removeConnection, setActiveConnection } =
     useConnectionsStore();
+  const activeSchema = useDatabaseSessionStore(
+    (state) => (activeConnectionId ? state.activeSchemaByConnection[activeConnectionId] ?? null : null),
+  );
+  const runtimeStatus = useConnectionRuntimeStore((state) => state.runtimeStatus);
+  const connectionLogs = useConnectionRuntimeStore((state) => state.connectionLogs);
+  const logsExpandedByConnection = useConnectionRuntimeStore((state) => state.logsExpandedByConnection);
+  const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
+  const setConnectionState = useConnectionRuntimeStore((state) => state.setRuntimeStatus);
+  const setLogsExpanded = useConnectionRuntimeStore((state) => state.setLogsExpanded);
+  const removeConnectionRuntime = useConnectionRuntimeStore((state) => state.removeConnectionRuntime);
   const [showForm, setShowForm] = useState(false);
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<Record<string, TestStatus>>({});
-  const [runtimeStatus, setRuntimeStatus] = useState<Record<string, RuntimeConnectionState>>({});
-  const [connectionLogs, setConnectionLogs] = useState<Record<string, string[]>>({});
   const [sidebarWidth, setSidebarWidth] = useState(290);
   const [sidebarResizing, setSidebarResizing] = useState(false);
 
@@ -47,18 +54,6 @@ export default function ConnectionManager() {
     connections.find((connection) => connection.id === editingConnectionId) ?? null;
   const selectedConnection =
     connections.find((connection) => connection.id === selectedConnectionId) ?? null;
-
-  const appendLog = (connId: string, message: string) => {
-    const timestamp = new Date().toLocaleTimeString('pt-BR');
-    setConnectionLogs((current) => ({
-      ...current,
-      [connId]: [`[${timestamp}] ${message}`, ...(current[connId] ?? [])].slice(0, 40),
-    }));
-  };
-
-  const setConnectionState = (connId: string, state: RuntimeConnectionState) => {
-    setRuntimeStatus((current) => ({ ...current, [connId]: state }));
-  };
 
   const resolveConnectionState = (connId: string, isActive: boolean): RuntimeConnectionState => {
     const state = runtimeStatus[connId];
@@ -121,6 +116,7 @@ export default function ConnectionManager() {
       try {
         await invoke('open_connection', { config: conn });
         setConnectionState(conn.id, 'connected');
+        invalidateMetadataCache(conn.id);
         setActiveConnection(conn.id);
         appendLog(
           conn.id,
@@ -159,16 +155,8 @@ export default function ConnectionManager() {
 
   const handleRemoveConnection = (connId: string) => {
     removeConnection(connId);
-    setRuntimeStatus((current) => {
-      const next = { ...current };
-      delete next[connId];
-      return next;
-    });
-    setConnectionLogs((current) => {
-      const next = { ...current };
-      delete next[connId];
-      return next;
-    });
+    removeConnectionRuntime(connId);
+    invalidateMetadataCache(connId);
     setTestStatus((current) => {
       const next = { ...current };
       delete next[connId];
@@ -195,6 +183,7 @@ export default function ConnectionManager() {
     try {
       await invoke('close_connection', { id: conn.id });
       setConnectionState(conn.id, 'disconnected');
+      invalidateMetadataCache(conn.id);
       if (activeConnectionId === conn.id) {
         setActiveConnection(null);
       }
@@ -258,6 +247,7 @@ export default function ConnectionManager() {
               const connectionState = resolveConnectionState(conn.id, isActive);
               const isBusy =
                 connectionState === 'connecting' || connectionState === 'reconnecting';
+              const logsExpanded = logsExpandedByConnection[conn.id] ?? true;
 
               return (
                 <div
@@ -397,15 +387,25 @@ export default function ConnectionManager() {
                             <FileText size={12} />
                             Connection Logs
                           </div>
-                          <button
-                            onClick={() => void copyLogs(conn.id)}
-                            className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-muted hover:text-text hover:bg-border/30"
-                          >
-                            <Copy size={11} />
-                            Copiar
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => setLogsExpanded(conn.id, !logsExpanded)}
+                              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-muted hover:text-text hover:bg-border/30"
+                            >
+                              {logsExpanded ? <EyeOff size={11} /> : <Eye size={11} />}
+                              {logsExpanded ? 'Ocultar' : 'Mostrar'}
+                            </button>
+                            <button
+                              onClick={() => void copyLogs(conn.id)}
+                              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-muted hover:text-text hover:bg-border/30"
+                            >
+                              <Copy size={11} />
+                              Copiar
+                            </button>
+                          </div>
                         </div>
-                        {connectionLogs[conn.id]?.length ? (
+                        {logsExpanded ? (
+                          connectionLogs[conn.id]?.length ? (
                           <div className="max-h-36 overflow-auto space-y-1 font-mono text-[11px]">
                             {connectionLogs[conn.id].map((entry, index) => (
                               <ConnectionLogEntry
@@ -417,15 +417,14 @@ export default function ConnectionManager() {
                           </div>
                         ) : (
                           <div className="text-[11px] text-muted/70">Nenhum log para esta conexao ainda.</div>
+                          )
+                        ) : (
+                          <div className="text-[11px] text-muted/70">Logs recolhidos para liberar espaco no explorer.</div>
                         )}
                       </div>
 
-                      {isActive && conn.engine === 'postgres' ? (
-                        <SchemaTree connId={conn.id} />
-                      ) : isActive ? (
-                        <p className="text-xs text-muted px-2 py-1">
-                          Metadata explorer fica limitado ao query runner para {conn.engine.toUpperCase()} nesta fase.
-                        </p>
+                      {isActive ? (
+                        <DatabaseExplorer connId={conn.id} dbName={conn.database} engine={conn.engine} />
                       ) : null}
                     </div>
                   )}
@@ -462,6 +461,7 @@ export default function ConnectionManager() {
             key={activeConnectionId}
             connectionLabel={activeConnection?.name}
             engine={activeConnection?.engine}
+            schemaLabel={activeSchema ?? undefined}
           />
         ) : selectedConnection ? (
           <div className="h-full p-4 md:p-8 overflow-auto">

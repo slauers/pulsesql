@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { useQueriesStore } from '../../store/queries';
-import { useConnectionsStore } from '../../store/connections';
+import { type DatabaseEngine, useConnectionsStore } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
+import { ensureTablesCached } from '../database/metadata-cache';
 import {
   Plus,
   X,
@@ -17,6 +18,8 @@ import {
 import ResultGrid from './ResultGrid';
 import QueryHistoryDrawer from '../history/components/QueryHistoryDrawer';
 import type { QueryHistoryItem } from '../history/types';
+import { isTableSuggestionContext, registerSqlAutocomplete } from './sql-autocomplete';
+import { useDatabaseSessionStore } from '../../store/databaseSession';
 
 interface QueryResult {
   columns: string[];
@@ -29,7 +32,15 @@ interface ExecuteQueryPayload {
   history_item_id: string;
 }
 
-export default function QueryWorkspace({ connectionLabel, engine }: { connectionLabel?: string; engine?: string }) {
+export default function QueryWorkspace({
+  connectionLabel,
+  engine,
+  schemaLabel,
+}: {
+  connectionLabel?: string;
+  engine?: DatabaseEngine;
+  schemaLabel?: string;
+}) {
   const {
     tabs,
     activeTabId,
@@ -41,6 +52,14 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
     replaceActiveTabContent,
   } = useQueriesStore();
   const { activeConnectionId, connections, setActiveConnection } = useConnectionsStore();
+  const metadataActivity = useDatabaseSessionStore((state) =>
+    activeConnectionId ? state.metadataActivityByConnection[activeConnectionId] : undefined,
+  );
+  const activeSchemaMetadata = useDatabaseSessionStore((state) =>
+    activeConnectionId && schemaLabel
+      ? state.metadataByConnection[activeConnectionId]?.schemasByName[schemaLabel]
+      : undefined,
+  );
   
   const activeTab = tabs.find(t => t.id === activeTabId);
 
@@ -52,6 +71,34 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
   const [resultsHeight, setResultsHeight] = useState(34);
   const [resultsResizing, setResultsResizing] = useState(false);
   const executeQueryRef = useRef<() => void>(() => {});
+  const autocompleteDisposableRef = useRef<{ dispose(): void } | null>(null);
+  const suggestTimeoutRef = useRef<number | null>(null);
+  const autocompleteContextRef = useRef<{ connectionId?: string | null; activeSchema?: string | null }>({
+    connectionId: activeConnectionId,
+    activeSchema: schemaLabel,
+  });
+
+  useEffect(() => {
+    autocompleteContextRef.current = {
+      connectionId: activeConnectionId,
+      activeSchema: schemaLabel,
+    };
+  }, [activeConnectionId, schemaLabel]);
+
+  useEffect(() => {
+    if (!activeConnectionId || !engine || !schemaLabel) {
+      return;
+    }
+
+    void ensureTablesCached(activeConnectionId, engine, schemaLabel).catch(() => null);
+  }, [activeConnectionId, engine, schemaLabel]);
+
+  useEffect(() => () => {
+    autocompleteDisposableRef.current?.dispose();
+    if (suggestTimeoutRef.current) {
+      window.clearTimeout(suggestTimeoutRef.current);
+    }
+  }, []);
 
   const runQuery = useCallback(async (queryText: string, connectionId: string) => {
     const trimmedQuery = queryText.trim();
@@ -203,7 +250,7 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
           <>
             <div className="mx-2 h-4 w-px bg-border/50"></div>
             <span className="text-xs text-muted uppercase tracking-wide">
-              {engine} · {connectionLabel}
+              {schemaLabel ? `${engine.toUpperCase()} • ${connectionLabel} • ${schemaLabel}` : `${engine.toUpperCase()} • ${connectionLabel}`}
             </span>
           </>
         )}
@@ -250,8 +297,40 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
                 roundedSelection: false,
                 smoothScrolling: true,
                 overviewRulerBorder: false,
+                quickSuggestions: {
+                  other: true,
+                  comments: false,
+                  strings: false,
+                },
+                suggestOnTriggerCharacters: true,
               }}
               onMount={(editor, monaco) => {
+                autocompleteDisposableRef.current?.dispose();
+                autocompleteDisposableRef.current = registerSqlAutocomplete(monaco, () => autocompleteContextRef.current);
+                editor.onDidChangeModelContent(() => {
+                  const position = editor.getPosition();
+                  const model = editor.getModel();
+                  if (!position || !model) {
+                    return;
+                  }
+
+                  const sqlBeforeCursor = model.getValueInRange({
+                    startLineNumber: 1,
+                    startColumn: 1,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column,
+                  });
+
+                  if (isTableSuggestionContext(sqlBeforeCursor)) {
+                    if (suggestTimeoutRef.current) {
+                      window.clearTimeout(suggestTimeoutRef.current);
+                    }
+
+                    suggestTimeoutRef.current = window.setTimeout(() => {
+                      editor.trigger('blacktable', 'editor.action.triggerSuggest', {});
+                    }, 90);
+                  }
+                });
                 editor.addAction({
                   id: 'blacktable.runQuery',
                   label: 'Run Query',
@@ -356,6 +435,17 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
               Run a query to see results
             </div>
           )}
+        </div>
+        <div className="border-t border-border/70 px-3 py-1.5 text-[11px] text-muted bg-background/35">
+          {schemaLabel && !activeSchemaMetadata?.tablesLoadedAt && !activeSchemaMetadata?.tablesError
+            ? `Loading tables • ${schemaLabel}`
+            : metadataActivity?.phase === 'loadingTables'
+            ? `Loading tables • ${metadataActivity.schemaName ?? 'schema'}`
+            : metadataActivity?.phase === 'loadingSchemas'
+              ? 'Loading schemas'
+              : metadataActivity?.phase === 'loadingColumns'
+                ? `Loading columns • ${metadataActivity.schemaName ?? ''}${metadataActivity.tableName ? `.${metadataActivity.tableName}` : ''}`
+                : 'Ready'}
         </div>
       </div>
 
