@@ -1,44 +1,7 @@
-import { useRef } from 'react';
 import brandMark from './assets/blacktable-mark.svg';
 import ConnectionManager from './features/connections/ConnectionManager';
-import { useUiPreferencesStore } from './store/uiPreferences';
 
 function App() {
-  const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
-  const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
-  const semanticToggleButtonRef = useRef<HTMLButtonElement | null>(null);
-
-  const handleSemanticBackgroundToggle = () => {
-    setSemanticBackgroundEnabled(!semanticBackgroundEnabled);
-
-    semanticToggleButtonRef.current?.animate(
-      [
-        {
-          boxShadow: '0 0 0 rgba(110, 72, 255, 0)',
-          borderColor: 'rgba(110, 72, 255, 0.35)',
-          background: 'rgba(110, 72, 255, 0.08)',
-          transform: 'translateY(0) scale(1)',
-        },
-        {
-          boxShadow: '0 0 18px rgba(110, 72, 255, 0.28), 0 0 36px rgba(110, 72, 255, 0.16)',
-          borderColor: 'rgba(110, 72, 255, 0.72)',
-          background: 'rgba(110, 72, 255, 0.18)',
-          transform: 'translateY(-1px) scale(1.03)',
-        },
-        {
-          boxShadow: '0 0 0 rgba(110, 72, 255, 0)',
-          borderColor: 'rgba(110, 72, 255, 0.35)',
-          background: 'rgba(110, 72, 255, 0.08)',
-          transform: 'translateY(0) scale(1)',
-        },
-      ],
-      {
-        duration: 720,
-        easing: 'ease-out',
-      },
-    );
-  };
-
   return (
     <div className="h-screen w-screen bg-background text-text overflow-hidden flex flex-col relative p-3">
       <div className="pointer-events-none absolute inset-0 opacity-70">
@@ -59,19 +22,6 @@ function App() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            ref={semanticToggleButtonRef}
-            type="button"
-            onClick={handleSemanticBackgroundToggle}
-            className={`rounded-lg border px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] transition-colors ${
-              semanticBackgroundEnabled
-                ? 'border-primary/35 bg-primary/10 text-primary'
-                : 'border-border/70 bg-background/18 text-muted hover:text-text'
-            }`}
-            title="Ligar ou desligar fundo semantico"
-          >
-            Fundo semantico {semanticBackgroundEnabled ? 'on' : 'off'}
-          </button>
           <div className="hidden md:block text-[10px] uppercase tracking-[0.14em] text-primary/70">
             Grid-native SQL Client
           </div>

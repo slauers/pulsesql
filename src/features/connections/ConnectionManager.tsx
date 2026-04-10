@@ -1,19 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import {
   ChevronsLeft,
   ChevronsRight,
-  CheckCircle,
   Copy,
   Eye,
   EyeOff,
+  Expand,
   FileText,
   LoaderCircle,
-  Pencil,
   Plus,
   Plug,
   PlugZap,
-  RefreshCw,
   Server,
   XCircle,
   Dot,
@@ -23,15 +22,21 @@ import postgresMark from '../../assets/postgres-mark.svg';
 import { ConnectionConfig, useConnectionsStore } from '../../store/connections';
 import { useConnectionRuntimeStore, type RuntimeConnectionState } from '../../store/connectionRuntime';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
+import { useUiPreferencesStore } from '../../store/uiPreferences';
 import { invalidateMetadataCache } from '../database/metadata-cache';
 import { DatabaseExplorer } from '../database/Explorer';
 import QueryWorkspace from '../query/QueryWorkspace';
 import ConnectionForm from './ConnectionForm';
 
-type TestStatus = 'idle' | 'testing' | 'success' | 'error';
-
 const RECONNECT_DELAYS_MS = [800, 1600, 3200];
 const SIDEBAR_UI_STORAGE_KEY = 'connection-sidebar-ui';
+const CONNECTION_MENU_WIDTH = 180;
+
+type ConnectionContextMenuState = {
+  x: number;
+  y: number;
+  connId: string;
+};
 
 export default function ConnectionManager() {
   const { connections, activeConnectionId, removeConnection, setActiveConnection } =
@@ -54,14 +59,17 @@ export default function ConnectionManager() {
   const setConnectionState = useConnectionRuntimeStore((state) => state.setRuntimeStatus);
   const setLogsExpanded = useConnectionRuntimeStore((state) => state.setLogsExpanded);
   const removeConnectionRuntime = useConnectionRuntimeStore((state) => state.removeConnectionRuntime);
+  const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
+  const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
   const [showForm, setShowForm] = useState(false);
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
-  const [testStatus, setTestStatus] = useState<Record<string, TestStatus>>({});
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarUiState().width);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarUiState().collapsed);
   const [sidebarResizing, setSidebarResizing] = useState(false);
-  const [explorerRefreshTokenByConnection, setExplorerRefreshTokenByConnection] = useState<Record<string, number>>({});
+  const [connectionContextMenu, setConnectionContextMenu] = useState<ConnectionContextMenuState | null>(null);
+  const [expandedLogsConnectionId, setExpandedLogsConnectionId] = useState<string | null>(null);
+  const semanticToggleRef = useRef<HTMLButtonElement | null>(null);
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
@@ -69,7 +77,6 @@ export default function ConnectionManager() {
     connections.find((connection) => connection.id === editingConnectionId) ?? null;
   const selectedConnection =
     connections.find((connection) => connection.id === selectedConnectionId) ?? null;
-  const selectedConnectionState = selectedConnection ? resolveRuntimeConnectionState(runtimeStatus, selectedConnection.id) : 'disconnected';
   const statusBarConnection = activeConnection ?? selectedConnection ?? null;
   const statusBarState = statusBarConnection ? resolveRuntimeConnectionState(runtimeStatus, statusBarConnection.id) : 'disconnected';
   const statusBarText =
@@ -92,10 +99,16 @@ export default function ConnectionManager() {
   }, [activeConnection, activeConnectionId, setActiveConnection]);
 
   useEffect(() => {
-    if (!selectedConnectionId && activeConnectionId) {
-      setSelectedConnectionId(activeConnectionId);
-    }
-  }, [activeConnectionId, selectedConnectionId]);
+    const handlePointerDown = () => {
+      setConnectionContextMenu(null);
+    };
+
+    window.addEventListener('mousedown', handlePointerDown);
+
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, []);
 
   const resolveConnectionState = (connId: string): RuntimeConnectionState => {
     return resolveRuntimeConnectionState(runtimeStatus, connId);
@@ -109,24 +122,6 @@ export default function ConnectionManager() {
 
     await navigator.clipboard.writeText(entries.join('\n'));
     appendLog(connId, 'Logs copiados para a area de transferencia.');
-  };
-
-  const testConnection = async (conn: ConnectionConfig) => {
-    setSelectedConnectionId(conn.id);
-    setTestStatus((current) => ({ ...current, [conn.id]: 'testing' }));
-    appendLog(
-      conn.id,
-      `Iniciando teste de conexao para ${conn.engine.toUpperCase()} com timeout de ${conn.connectTimeoutSeconds ?? 10}s.`,
-    );
-
-    try {
-      const result = await invoke<string>('test_connection', { config: conn });
-      setTestStatus((current) => ({ ...current, [conn.id]: 'success' }));
-      appendLog(conn.id, result);
-    } catch (error) {
-      setTestStatus((current) => ({ ...current, [conn.id]: 'error' }));
-      appendLog(conn.id, formatConnectionError(error));
-    }
   };
 
   const openConnection = async (conn: ConnectionConfig, forceReconnect = false) => {
@@ -190,6 +185,17 @@ export default function ConnectionManager() {
     setSelectedConnectionId((current) => (current === connId ? null : connId));
   };
 
+  const openConnectionContextMenu = (event: ReactMouseEvent<HTMLElement>, connId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setConnectionContextMenu({
+      connId,
+      x: Math.min(rect.right - CONNECTION_MENU_WIDTH, window.innerWidth - CONNECTION_MENU_WIDTH - 8),
+      y: Math.min(rect.bottom + 8, window.innerHeight - 120),
+    });
+  };
+
   const toggleSidebarCollapsed = () => {
     setSidebarCollapsed((current) => {
       const next = !current;
@@ -203,22 +209,10 @@ export default function ConnectionManager() {
     writeSidebarUiState({ collapsed: sidebarCollapsed, width: nextWidth });
   };
 
-  const requestExplorerRefresh = (connId: string) => {
-    setExplorerRefreshTokenByConnection((current) => ({
-      ...current,
-      [connId]: (current[connId] ?? 0) + 1,
-    }));
-  };
-
   const handleRemoveConnection = (connId: string) => {
     removeConnection(connId);
     removeConnectionRuntime(connId);
     invalidateMetadataCache(connId);
-    setTestStatus((current) => {
-      const next = { ...current };
-      delete next[connId];
-      return next;
-    });
     setSelectedConnectionId((current) => (current === connId ? null : current));
   };
 
@@ -248,6 +242,19 @@ export default function ConnectionManager() {
     } catch (error) {
       appendLog(conn.id, formatConnectionError(error));
     }
+  };
+
+  const handleSemanticBackgroundToggle = () => {
+    setSemanticBackgroundEnabled(!semanticBackgroundEnabled);
+
+    semanticToggleRef.current?.animate(
+      [
+        { color: 'rgba(148, 163, 184, 0.9)', textShadow: '0 0 0 rgba(110,72,255,0)' },
+        { color: 'rgba(110, 72, 255, 1)', textShadow: '0 0 14px rgba(110,72,255,0.45), 0 0 28px rgba(110,72,255,0.24)' },
+        { color: semanticBackgroundEnabled ? 'rgba(148, 163, 184, 0.9)' : 'rgba(110, 72, 255, 1)', textShadow: '0 0 0 rgba(110,72,255,0)' },
+      ],
+      { duration: 680, easing: 'ease-out' },
+    );
   };
 
   useEffect(() => {
@@ -379,165 +386,83 @@ export default function ConnectionManager() {
                   </p>
                 ) : (
                   connections.map((conn) => {
-                    const status = testStatus[conn.id] || 'idle';
-                    const isActive = activeConnectionId === conn.id;
-                    const isSelected = selectedConnectionId === conn.id || isActive;
+                    const isSelected = selectedConnectionId === conn.id;
                     const connectionState = resolveConnectionState(conn.id);
+                    const logsExpanded = logsExpandedByConnection[conn.id] ?? false;
 
                     return (
-                      <button
-                        key={conn.id}
-                        type="button"
-                        onClick={() => toggleSelectedConnection(conn.id)}
-                        className={`group w-full rounded-lg border px-3 py-3 text-left transition-colors ${
-                          isSelected
-                            ? 'border-primary/60 bg-background/58 shadow-[inset_0_1px_0_rgba(255,255,255,0.02),0_0_16px_rgba(34,199,255,0.08)]'
-                            : 'border-border/50 bg-background/18 hover:bg-background/28'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2 min-w-0">
-                              {collapsedConnectionMark(conn.engine) ? (
-                                <img
-                                  src={collapsedConnectionMark(conn.engine) as string}
-                                  alt={conn.engine}
-                                  className="h-4 w-4 shrink-0 object-contain"
-                                />
-                              ) : null}
-                              <div className="truncate text-sm font-medium text-text">{conn.name}</div>
-                            </div>
+                      <div key={conn.id} className="space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleSelectedConnection(conn.id)}
+                          onContextMenu={(event) => openConnectionContextMenu(event, conn.id)}
+                          className={`group w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                            isSelected
+                              ? 'border-primary/60 bg-background/58 shadow-[inset_0_1px_0_rgba(255,255,255,0.02),0_0_16px_rgba(34,199,255,0.08)]'
+                              : 'border-border/50 bg-background/18 hover:bg-background/28'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 min-w-0">
+                                {collapsedConnectionMark(conn.engine) ? (
+                                  <img
+                                    src={collapsedConnectionMark(conn.engine) as string}
+                                    alt={conn.engine}
+                                    className="h-4 w-4 shrink-0 object-contain"
+                                  />
+                                ) : null}
+                                <div className="truncate text-sm font-medium text-text">{conn.name}</div>
+                              </div>
                             <div className="mt-1 truncate text-[11px] text-muted">
                               {conn.engine.toUpperCase()} • {conn.user}@{conn.host}
                               {conn.database ? `/${conn.database}` : ''}
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            {status === 'testing' ? (
-                              <LoaderCircle size={13} className="animate-spin text-primary" />
-                            ) : status === 'success' ? (
-                              <CheckCircle size={13} className="text-emerald-400" />
-                            ) : status === 'error' ? (
-                              <XCircle size={13} className="text-red-400" />
-                            ) : null}
-                            <ConnectionBadge state={connectionState} compact />
+                              <ConnectionBadge state={connectionState} compact />
+                            </div>
                           </div>
-                        </div>
-                      </button>
+                        </button>
+
+                        {isSelected ? (
+                          <div className="space-y-3 rounded-lg border border-border/70 bg-background/18 p-3">
+                            <ActionSection
+                              title="Acoes principais"
+                              actions={buildPrimaryActions({
+                                connectionState,
+                                onOpen: () => void openConnection(conn),
+                              })}
+                            />
+
+                            <LogsSection
+                              connectionName={conn.name}
+                              expanded={logsExpanded}
+                              entries={connectionLogs[conn.id] ?? []}
+                              onToggle={() => setLogsExpanded(conn.id, !logsExpanded)}
+                              onCopy={() => void copyLogs(conn.id)}
+                              onExpand={() => setExpandedLogsConnectionId(conn.id)}
+                            />
+
+                            {activeConnectionId === conn.id ? (
+                              <DatabaseExplorer
+                                connId={conn.id}
+                                dbName={conn.database}
+                                engine={conn.engine}
+                                showRefreshButton
+                              />
+                            ) : (
+                              <div className="rounded-lg border border-border/60 bg-background/24 px-3 py-3 text-xs text-muted">
+                                Abra a conexao para carregar o explorer.
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
                     );
                   })
                 )}
               </div>
-
-              {selectedConnection ? (
-                <div className="space-y-3 rounded-lg border border-border/70 bg-background/18 p-3">
-                  <div className="rounded-lg border border-border/60 bg-background/30 px-3 py-3">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {collapsedConnectionMark(selectedConnection.engine) ? (
-                            <img
-                              src={collapsedConnectionMark(selectedConnection.engine) as string}
-                              alt={selectedConnection.engine}
-                              className="h-4 w-4 shrink-0 object-contain"
-                            />
-                          ) : null}
-                          <div className="truncate text-sm font-semibold text-text">{selectedConnection.name}</div>
-                        </div>
-                        <div className="mt-1 truncate text-[11px] text-muted">
-                          {selectedConnection.engine.toUpperCase()} • {selectedConnection.user}@{selectedConnection.host}:{selectedConnection.port}
-                        </div>
-                        <div className="mt-1 truncate text-[11px] text-muted/80">
-                          {selectedConnection.database}
-                          {activeSchema ? ` • ${activeSchema}` : ''}
-                        </div>
-                      </div>
-                      <ConnectionBadge state={selectedConnectionState} />
-                    </div>
-                  </div>
-
-                  <ActionSection
-                    title="Acoes principais"
-                    actions={buildPrimaryActions({
-                      connectionState: selectedConnectionState,
-                      testState: testStatus[selectedConnection.id] || 'idle',
-                      onOpen: () => void openConnection(selectedConnection),
-                      onDisconnect: () => void disconnectConnection(selectedConnection),
-                      onTest: () => void testConnection(selectedConnection),
-                    })}
-                  />
-
-                  <ActionSection
-                    title="Acoes secundarias"
-                    actions={buildSecondaryActions({
-                      conn: selectedConnection,
-                      logsExpanded: logsExpandedByConnection[selectedConnection.id] ?? true,
-                      canRefreshExplorer: activeConnectionId === selectedConnection.id && selectedConnectionState === 'connected',
-                      onEdit: () => {
-                        setEditingConnectionId(selectedConnection.id);
-                        setShowForm(true);
-                      },
-                      onToggleLogs: () =>
-                        setLogsExpanded(selectedConnection.id, !(logsExpandedByConnection[selectedConnection.id] ?? true)),
-                      onRefreshExplorer: () => requestExplorerRefresh(selectedConnection.id),
-                    })}
-                  />
-
-                  <ActionSection
-                    title="Remocao"
-                    actions={[
-                      {
-                        id: 'remove',
-                        label: 'Remove',
-                        icon: XCircle,
-                        tone: 'danger',
-                        onClick: () => confirmRemoveConnection(selectedConnection),
-                      },
-                    ]}
-                  />
-
-                  {(logsExpandedByConnection[selectedConnection.id] ?? true) ? (
-                    <div className="rounded-lg border border-border/60 bg-surface/60 p-3">
-                      <div className="mb-2 flex items-center justify-between gap-2 text-xs font-medium text-muted">
-                        <div className="flex items-center gap-2">
-                          <FileText size={12} />
-                          Connection Logs
-                        </div>
-                        <button
-                          onClick={() => void copyLogs(selectedConnection.id)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:text-text hover:bg-border/30"
-                        >
-                          <Copy size={11} />
-                          Copiar
-                        </button>
-                      </div>
-                      {connectionLogs[selectedConnection.id]?.length ? (
-                        <div className="max-h-36 overflow-auto space-y-1 font-mono text-[11px]">
-                          {connectionLogs[selectedConnection.id].map((entry, index) => (
-                            <ConnectionLogEntry
-                              key={`${selectedConnection.id}-log-${index}`}
-                              entry={entry}
-                              highlighted={index === 0}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-[11px] text-muted/70">Nenhum log para esta conexao ainda.</div>
-                      )}
-                    </div>
-                  ) : null}
-
-                  {activeConnectionId === selectedConnection.id ? (
-                    <DatabaseExplorer
-                      connId={selectedConnection.id}
-                      dbName={selectedConnection.database}
-                      engine={selectedConnection.engine}
-                      showRefreshButton={false}
-                      refreshToken={explorerRefreshTokenByConnection[selectedConnection.id] ?? 0}
-                    />
-                  ) : null}
-                </div>
-              ) : null}
             </div>
           )}
         </div>
@@ -583,10 +508,82 @@ export default function ConnectionManager() {
         </div>
       </div>
 
+      {connectionContextMenu ? (
+        <div
+          className="fixed z-[130] min-w-[180px] rounded-lg border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+          style={{ left: connectionContextMenu.x, top: connectionContextMenu.y }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setConnectionContextMenu(null);
+              setEditingConnectionId(connectionContextMenu.connId);
+              setShowForm(true);
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+          >
+            <FileText size={14} className="text-muted" />
+            <span>Editar</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const conn = connections.find((item) => item.id === connectionContextMenu.connId);
+              setConnectionContextMenu(null);
+              if (conn) {
+                void disconnectConnection(conn);
+              }
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+          >
+            <PlugZap size={14} className="text-muted" />
+            <span>Disconnect</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const conn = connections.find((item) => item.id === connectionContextMenu.connId);
+              setConnectionContextMenu(null);
+              if (conn) {
+                confirmRemoveConnection(conn);
+              }
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-300 transition-colors hover:bg-red-400/10"
+          >
+            <XCircle size={14} className="text-red-300" />
+            <span>Remover</span>
+          </button>
+        </div>
+      ) : null}
+
+      {expandedLogsConnectionId ? (
+        <LogsModal
+          connectionName={connections.find((item) => item.id === expandedLogsConnectionId)?.name ?? 'Conexao'}
+          entries={connectionLogs[expandedLogsConnectionId] ?? []}
+          onCopy={() => void copyLogs(expandedLogsConnectionId)}
+          onClose={() => setExpandedLogsConnectionId(null)}
+        />
+      ) : null}
+
       <div className="shrink-0 rounded-lg border border-border/80 glass-panel px-4 py-1 text-[10px] shadow-[0_18px_42px_rgba(0,0,0,0.2)]">
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0 truncate text-text/90">
-            {statusBarText}
+          <div className="flex min-w-0 items-center gap-3 truncate text-text/90">
+            <span className="truncate">{statusBarText}</span>
+            <span className="hidden sm:inline text-muted/70">•</span>
+            <span className="hidden sm:inline text-muted/80">
+              Fundo semantico{' '}
+              <button
+                ref={semanticToggleRef}
+                type="button"
+                onClick={handleSemanticBackgroundToggle}
+                className={`inline text-[10px] uppercase tracking-[0.14em] transition-colors ${
+                  semanticBackgroundEnabled ? 'text-primary' : 'text-slate-200/90'
+                }`}
+              >
+                {semanticBackgroundEnabled ? 'ON' : 'OFF'}
+              </button>
+            </span>
           </div>
           {statusBarConnection ? (
             <div className="flex items-center gap-2 shrink-0">
@@ -650,29 +647,15 @@ function ActionSection({ title, actions }: { title: string; actions: ActionItem[
 
 function buildPrimaryActions({
   connectionState,
-  testState,
   onOpen,
-  onDisconnect,
-  onTest,
 }: {
   connectionState: RuntimeConnectionState;
-  testState: TestStatus;
   onOpen: () => void;
-  onDisconnect: () => void;
-  onTest: () => void;
 }): ActionItem[] {
   const isBusy = connectionState === 'connecting' || connectionState === 'reconnecting';
   const actions: ActionItem[] = [];
 
-  if (connectionState === 'connected') {
-    actions.push({
-      id: 'disconnect',
-      label: 'Disconnect',
-      icon: PlugZap,
-      onClick: onDisconnect,
-      tone: 'primary',
-    });
-  } else {
+  if (connectionState !== 'connected') {
     actions.push({
       id: 'open',
       label: connectionState === 'reconnecting' ? 'Reconectando' : 'Open',
@@ -684,58 +667,76 @@ function buildPrimaryActions({
     });
   }
 
-  actions.push({
-    id: 'test',
-    label: testState === 'testing' ? 'Testing' : 'Test',
-    icon: CheckCircle,
-    onClick: onTest,
-    disabled: isBusy,
-    loading: testState === 'testing',
-  });
-
   return actions;
 }
 
-function buildSecondaryActions({
-  conn,
-  logsExpanded,
-  canRefreshExplorer,
-  onEdit,
-  onToggleLogs,
-  onRefreshExplorer,
+function LogsSection({
+  connectionName,
+  expanded,
+  entries,
+  onToggle,
+  onCopy,
+  onExpand,
 }: {
-  conn: ConnectionConfig;
-  logsExpanded: boolean;
-  canRefreshExplorer: boolean;
-  onEdit: () => void;
-  onToggleLogs: () => void;
-  onRefreshExplorer: () => void;
-}): ActionItem[] {
-  const actions: ActionItem[] = [
-    {
-      id: `edit-${conn.id}`,
-      label: 'Edit',
-      icon: Pencil,
-      onClick: onEdit,
-    },
-    {
-      id: `logs-${conn.id}`,
-      label: logsExpanded ? 'Ocultar logs' : 'Mostrar logs',
-      icon: logsExpanded ? EyeOff : Eye,
-      onClick: onToggleLogs,
-    },
-  ];
+  connectionName: string;
+  expanded: boolean;
+  entries: string[];
+  onToggle: () => void;
+  onCopy: () => void;
+  onExpand: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-background/24 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+          <FileText size={12} />
+          Logs
+        </div>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-background/30 px-3 py-1.5 text-xs text-text hover:bg-border/30"
+        >
+          {expanded ? <EyeOff size={12} /> : <Eye size={12} />}
+          {expanded ? 'Ocultar' : 'Mostrar'}
+        </button>
+      </div>
 
-  if (canRefreshExplorer) {
-    actions.push({
-      id: `refresh-${conn.id}`,
-      label: 'Refresh explorer',
-      icon: RefreshCw,
-      onClick: onRefreshExplorer,
-    });
-  }
-
-  return actions;
+      {expanded ? (
+        <div className="mt-3">
+          <div className="mb-2 flex items-center justify-end gap-1.5 text-xs text-muted">
+            <button
+              onClick={onExpand}
+              className="inline-flex items-center rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:text-text hover:bg-border/30"
+              title={`Expandir logs de ${connectionName}`}
+            >
+              <Expand size={11} />
+            </button>
+            <button
+              onClick={onCopy}
+              className="inline-flex items-center rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:text-text hover:bg-border/30"
+              title="Copiar logs"
+            >
+              <Copy size={11} />
+            </button>
+          </div>
+          {entries.length ? (
+            <div className="max-h-40 overflow-auto space-y-1 font-mono text-[11px]">
+              {entries.map((entry, index) => (
+                <ConnectionLogEntry
+                  key={`log-${index}`}
+                  entry={entry}
+                  highlighted={index === 0}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="text-[11px] text-muted/70">Nenhum log para esta conexao ainda.</div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function resolveRuntimeConnectionState(
@@ -829,23 +830,76 @@ function ConnectionBadge({
     failed: 'border-red-400/30 bg-red-400/10 text-red-300',
   };
 
-  const labels: Record<RuntimeConnectionState, string> = {
-    disconnected: 'Disconnected',
-    connecting: 'Connecting',
-    connected: 'Connected',
-    reconnecting: 'Reconnecting',
-    failed: 'Failed',
-  };
-
   return (
     <span
-      className={`inline-flex items-center rounded-full border ${compact ? 'px-1.5 py-0.5' : 'px-2 py-0.5'} text-[10px] uppercase tracking-[0.14em] ${palette[state]} ${
+      className={`inline-flex items-center rounded-full border ${compact ? 'px-1 py-0.5' : 'px-1.5 py-0.5'} text-[10px] uppercase tracking-[0.14em] ${palette[state]} ${
         glowing ? 'shadow-[0_0_16px_rgba(255,255,255,0.08)]' : ''
       }`}
     >
-      <Dot size={14} className="-ml-1 -mr-0.5" />
-      {labels[state]}
+      <Dot size={14} className="-mx-0.5" />
     </span>
+  );
+}
+
+function LogsModal({
+  connectionName,
+  entries,
+  onCopy,
+  onClose,
+}: {
+  connectionName: string;
+  entries: string[];
+  onCopy: () => void;
+  onClose: () => void;
+}) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[140] flex items-center justify-center bg-background/72 p-6 backdrop-blur-sm"
+      onMouseDown={onClose}
+    >
+      <div
+        className="flex h-[78vh] w-full max-w-5xl flex-col rounded-lg border border-border bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <div className="text-sm font-semibold text-text">Logs</div>
+            <div className="text-xs uppercase tracking-[0.14em] text-muted">{connectionName}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onCopy}
+              className="inline-flex items-center rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+              title="Copiar logs"
+            >
+              <Copy size={12} />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          {entries.length ? (
+            <div className="space-y-1.5 font-mono text-[12px]">
+              {entries.map((entry, index) => (
+                <ConnectionLogEntry key={`modal-log-${index}`} entry={entry} highlighted={index === 0} />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-border/70 bg-background/40 px-4 py-5 text-sm text-muted">
+              Nenhum log para esta conexao ainda.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
