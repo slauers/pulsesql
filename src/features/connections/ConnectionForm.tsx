@@ -584,6 +584,7 @@ function buildPayload(formData: Partial<ConnectionConfig>): ConnectionConfig | n
     oracleConnectionType: formData.engine === 'oracle' ? formData.oracleConnectionType ?? 'serviceName' : undefined,
     oracleDriverProperties:
       formData.engine === 'oracle' ? formData.oracleDriverProperties?.trim() || undefined : undefined,
+    preferredSchema: formData.preferredSchema?.trim() || undefined,
     ssh,
   };
 }
@@ -655,6 +656,23 @@ function normalizeImportedSslMode(value: string | null, host: string): PostgresS
 }
 
 function extractErrorMessage(error: unknown): string {
+  const raw = extractRawErrorMessage(error);
+  const normalized = raw.trim();
+  const lower = normalized.toLowerCase();
+
+  if (
+    lower.includes('unable to locate a java runtime') ||
+    lower.includes('java/jdk') ||
+    lower.includes('failed to compile oracle jdbc sidecar') ||
+    lower.includes('failed to run javac for oracle sidecar')
+  ) {
+    return 'Conexao Oracle requer Java/JDK instalado na maquina. Instale um JDK e tente novamente.';
+  }
+
+  return normalized || 'Erro desconhecido ao testar a conexao.';
+}
+
+function extractRawErrorMessage(error: unknown): string {
   if (typeof error === 'string') {
     return error;
   }

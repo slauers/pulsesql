@@ -5,12 +5,17 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::{Instant, SystemTime};
+use tauri::{AppHandle, Manager};
 
 const ORACLE_JDBC_VERSION: &str = "23.4.0.24.05";
 const ORACLE_JDBC_URL: &str =
     "https://repo.maven.apache.org/maven2/com/oracle/database/jdbc/ojdbc11/23.4.0.24.05/ojdbc11-23.4.0.24.05.jar";
 const ORACLE_JAVA_CLASS: &str = "OracleJdbcRunner";
+const ORACLE_JAVA_SOURCE: &str = include_str!("../../oracle-jdbc-sidecar/OracleJdbcRunner.java");
+
+static ORACLE_SIDECAR_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct OracleConnectionHandle {
@@ -128,6 +133,19 @@ pub async fn execute_query(
     })
 }
 
+pub fn init_sidecar_root(app: &AppHandle) -> Result<(), String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Failed to resolve Oracle app data directory: {error}"))?;
+
+    let sidecar_root = app_data_dir.join("oracle-jdbc-sidecar");
+
+    ORACLE_SIDECAR_ROOT
+        .set(sidecar_root)
+        .map_err(|_| "Oracle sidecar root was already initialized".to_string())
+}
+
 fn invoke_sidecar(
     command: &str,
     handle: &OracleConnectionHandle,
@@ -191,7 +209,7 @@ fn invoke_sidecar(
         .arg(&request_file)
         .arg(&response_file)
         .output()
-        .map_err(|error| format!("Failed to run Oracle JDBC sidecar: {error}"))?;
+        .map_err(|error| format_oracle_java_launch_error("executar", &error.to_string()))?;
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
@@ -213,7 +231,7 @@ fn invoke_sidecar(
             parts.join(" | ")
         };
 
-        return Err(message);
+        return Err(humanize_oracle_sidecar_error(&message));
     }
 
     let response_bytes = fs::read(&response_file)
@@ -240,7 +258,7 @@ fn read_error_response(response_file: &Path) -> Option<String> {
 }
 
 fn ensure_oracle_sidecar_compiled(sidecar_root: &Path, classes_dir: &Path) -> Result<(), String> {
-    let source_path = oracle_java_source_path();
+    let source_path = ensure_oracle_java_source(sidecar_root)?;
     let class_file = classes_dir.join(format!("{ORACLE_JAVA_CLASS}.class"));
 
     let should_compile =
@@ -262,16 +280,41 @@ fn ensure_oracle_sidecar_compiled(sidecar_root: &Path, classes_dir: &Path) -> Re
         .arg(classes_dir)
         .arg(&source_path)
         .output()
-        .map_err(|error| format!("Failed to run javac for Oracle sidecar: {error}"))?;
+        .map_err(|error| format_oracle_java_launch_error("compilar", &error.to_string()))?;
 
     if !output.status.success() {
-        return Err(format!(
+        return Err(humanize_oracle_sidecar_error(&format!(
             "Failed to compile Oracle JDBC sidecar: {}",
             String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        )));
     }
 
     Ok(())
+}
+
+fn ensure_oracle_java_source(sidecar_root: &Path) -> Result<PathBuf, String> {
+    let source_path = sidecar_root.join(format!("{ORACLE_JAVA_CLASS}.java"));
+    let should_write = match fs::read_to_string(&source_path) {
+        Ok(existing) => existing != ORACLE_JAVA_SOURCE,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => {
+            return Err(format!(
+                "Failed to read Oracle sidecar source from {}: {error}",
+                source_path.display()
+            ));
+        }
+    };
+
+    if should_write {
+        fs::write(&source_path, ORACLE_JAVA_SOURCE).map_err(|error| {
+            format!(
+                "Failed to write Oracle sidecar source to {}: {error}",
+                source_path.display()
+            )
+        })?;
+    }
+
+    Ok(source_path)
 }
 
 fn ensure_oracle_driver(sidecar_root: &Path) -> Result<(), String> {
@@ -338,16 +381,14 @@ fn merge_driver_properties(
 }
 
 fn oracle_sidecar_root() -> Result<PathBuf, String> {
+    if let Some(path) = ORACLE_SIDECAR_ROOT.get() {
+        return Ok(path.clone());
+    }
+
     let current_dir = std::env::current_dir()
         .map_err(|error| format!("Failed to resolve current directory: {error}"))?;
 
     Ok(current_dir.join("target").join("oracle-jdbc-sidecar"))
-}
-
-fn oracle_java_source_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("oracle-jdbc-sidecar")
-        .join("OracleJdbcRunner.java")
 }
 
 fn file_mtime(path: &Path) -> Result<SystemTime, String> {
@@ -359,4 +400,41 @@ fn file_mtime(path: &Path) -> Result<SystemTime, String> {
                 path.display()
             )
         })
+}
+
+fn humanize_oracle_sidecar_error(message: &str) -> String {
+    let normalized = message.trim();
+    let lower = normalized.to_lowercase();
+
+    if lower.contains("unable to locate a java runtime")
+        || lower.contains("failed to run javac for oracle sidecar")
+        || lower.contains("failed to run oracle jdbc sidecar")
+        || lower.contains("failed to compile oracle jdbc sidecar")
+    {
+        return [
+            "Conexao Oracle requer Java/JDK instalado e disponivel para o aplicativo.",
+            "Instale um JDK e configure o macOS para encontrá-lo fora do terminal.",
+            "Detalhe tecnico:",
+            normalized,
+        ]
+        .join(" ");
+    }
+
+    if lower.contains("failed to download oracle jdbc driver") {
+        return [
+            "Nao foi possivel preparar o driver Oracle JDBC.",
+            "Verifique sua conexao com a internet ou regras de proxy/firewall.",
+            "Detalhe tecnico:",
+            normalized,
+        ]
+        .join(" ");
+    }
+
+    normalized.to_string()
+}
+
+fn format_oracle_java_launch_error(action: &str, details: &str) -> String {
+    format!(
+        "Nao foi possivel {action} o runtime Oracle porque o Java/JDK nao esta disponivel para o aplicativo. Detalhe tecnico: {details}"
+    )
 }

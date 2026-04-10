@@ -19,6 +19,7 @@ pub fn run() {
             let history_state = tauri::async_runtime::block_on(history::service::HistoryState::new(
                 &app.handle(),
             ))?;
+            engines::oracle::init_sidecar_root(&app.handle())?;
             app.manage(db::DbState::new());
             app.manage(history_state);
 

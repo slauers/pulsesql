@@ -55,13 +55,19 @@ export default function ConnectionManager() {
   const selectedConnection =
     connections.find((connection) => connection.id === selectedConnectionId) ?? null;
 
-  const resolveConnectionState = (connId: string, isActive: boolean): RuntimeConnectionState => {
+  useEffect(() => {
+    if (activeConnectionId && !activeConnection) {
+      setActiveConnection(null);
+    }
+  }, [activeConnection, activeConnectionId, setActiveConnection]);
+
+  const resolveConnectionState = (connId: string): RuntimeConnectionState => {
     const state = runtimeStatus[connId];
     if (state) {
       return state;
     }
 
-    return isActive ? 'connected' : 'disconnected';
+    return 'disconnected';
   };
 
   const copyLogs = async (connId: string) => {
@@ -95,7 +101,7 @@ export default function ConnectionManager() {
   const openConnection = async (conn: ConnectionConfig, forceReconnect = false) => {
     setSelectedConnectionId(conn.id);
 
-    const currentState = resolveConnectionState(conn.id, activeConnectionId === conn.id);
+    const currentState = resolveConnectionState(conn.id);
     if (forceReconnect && currentState === 'connected') {
       appendLog(conn.id, 'A conexao ja esta ativa.');
       return;
@@ -244,7 +250,7 @@ export default function ConnectionManager() {
             connections.map((conn) => {
               const status = testStatus[conn.id] || 'idle';
               const isActive = activeConnectionId === conn.id;
-              const connectionState = resolveConnectionState(conn.id, isActive);
+              const connectionState = resolveConnectionState(conn.id);
               const isBusy =
                 connectionState === 'connecting' || connectionState === 'reconnecting';
               const logsExpanded = logsExpandedByConnection[conn.id] ?? true;
@@ -470,10 +476,7 @@ export default function ConnectionManager() {
                 <div className="flex flex-wrap items-center gap-3">
                   <h2 className="text-2xl font-bold text-text">{selectedConnection.name}</h2>
                   <ConnectionBadge
-                    state={resolveConnectionState(
-                      selectedConnection.id,
-                      activeConnectionId === selectedConnection.id,
-                    )}
+                      state={resolveConnectionState(selectedConnection.id)}
                   />
                 </div>
                 <p className="text-sm text-muted mt-1">
@@ -499,10 +502,7 @@ export default function ConnectionManager() {
                   onClick={() => void openConnection(selectedConnection, true)}
                   className="px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40 disabled:opacity-50"
                   disabled={
-                    resolveConnectionState(
-                      selectedConnection.id,
-                      activeConnectionId === selectedConnection.id,
-                    ) === 'connected'
+                    resolveConnectionState(selectedConnection.id) === 'connected'
                   }
                 >
                   Reconnect
@@ -511,10 +511,7 @@ export default function ConnectionManager() {
                   onClick={() => void disconnectConnection(selectedConnection)}
                   className="px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40 disabled:opacity-50"
                   disabled={
-                    resolveConnectionState(
-                      selectedConnection.id,
-                      activeConnectionId === selectedConnection.id,
-                    ) === 'disconnected'
+                    resolveConnectionState(selectedConnection.id) === 'disconnected'
                   }
                 >
                   Disconnect
@@ -676,6 +673,15 @@ function formatConnectionError(error: unknown): string {
 
   if (lower.includes('connection not found')) {
     return 'A conexao nao esta disponivel no runtime. Abra ou reconecte antes de continuar.';
+  }
+
+  if (
+    lower.includes('unable to locate a java runtime') ||
+    lower.includes('java/jdk') ||
+    lower.includes('failed to compile oracle jdbc sidecar') ||
+    lower.includes('failed to run javac for oracle sidecar')
+  ) {
+    return 'Conexao Oracle requer Java/JDK instalado na maquina. Instale um JDK e tente novamente.';
   }
 
   return normalized;

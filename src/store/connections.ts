@@ -30,6 +30,7 @@ export interface ConnectionConfig {
   postgresSslMode?: PostgresSslMode;
   oracleConnectionType?: OracleConnectionType;
   oracleDriverProperties?: string;
+  preferredSchema?: string;
   ssh?: SshConfig;
 }
 
@@ -41,6 +42,9 @@ interface ConnectionsState {
   removeConnection: (id: string) => void;
   setActiveConnection: (id: string | null) => void;
 }
+
+const CONNECTIONS_STORAGE_KEY = 'connections';
+const ACTIVE_CONNECTION_STORAGE_KEY = 'active-connection-id';
 
 const DEV_TEST_CONNECTIONS: ConnectionConfig[] = [
   {
@@ -71,6 +75,7 @@ const DEV_TEST_CONNECTIONS: ConnectionConfig[] = [
     connectTimeoutSeconds: 10,
     autoReconnect: true,
     oracleConnectionType: 'serviceName',
+    preferredSchema: 'CORE_DEVELOPMENT',
     ssh: {
       enabled: false,
     },
@@ -78,18 +83,18 @@ const DEV_TEST_CONNECTIONS: ConnectionConfig[] = [
 ];
 
 export const useConnectionsStore = create<ConnectionsState>((set) => ({
-  connections: normalizeConnections(JSON.parse(localStorage.getItem('connections') || '[]')),
-  activeConnectionId: null,
+  connections: readConnections(),
+  activeConnectionId: readActiveConnectionId(),
   addConnection: (conn) =>
     set((state) => {
       const newConns = [...state.connections, conn];
-      localStorage.setItem('connections', JSON.stringify(newConns));
+      writeConnections(newConns);
       return { connections: newConns };
     }),
   updateConnection: (conn) =>
     set((state) => {
       const newConns = state.connections.map((current) => (current.id === conn.id ? conn : current));
-      localStorage.setItem('connections', JSON.stringify(newConns));
+      writeConnections(newConns);
       return {
         connections: newConns,
       };
@@ -97,13 +102,19 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
   removeConnection: (id) =>
     set((state) => {
       const newConns = state.connections.filter((c) => c.id !== id);
-      localStorage.setItem('connections', JSON.stringify(newConns));
+      writeConnections(newConns);
+      if (state.activeConnectionId === id) {
+        writeActiveConnectionId(null);
+      }
       return { 
         connections: newConns,
         activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId
       };
     }),
-  setActiveConnection: (id) => set({ activeConnectionId: id }),
+  setActiveConnection: (id) => set(() => {
+    writeActiveConnectionId(id);
+    return { activeConnectionId: id };
+  }),
 }));
 
 function normalizeConnections(input: unknown): ConnectionConfig[] {
@@ -114,6 +125,32 @@ function normalizeConnections(input: unknown): ConnectionConfig[] {
     : [];
 
   return ensureDevTestConnections(normalized);
+}
+
+function readConnections(): ConnectionConfig[] {
+  try {
+    return normalizeConnections(JSON.parse(localStorage.getItem(CONNECTIONS_STORAGE_KEY) || '[]'));
+  } catch {
+    return normalizeConnections([]);
+  }
+}
+
+function writeConnections(connections: ConnectionConfig[]) {
+  localStorage.setItem(CONNECTIONS_STORAGE_KEY, JSON.stringify(connections));
+}
+
+function readActiveConnectionId(): string | null {
+  const value = localStorage.getItem(ACTIVE_CONNECTION_STORAGE_KEY);
+  return value && value.length > 0 ? value : null;
+}
+
+function writeActiveConnectionId(id: string | null) {
+  if (id) {
+    localStorage.setItem(ACTIVE_CONNECTION_STORAGE_KEY, id);
+    return;
+  }
+
+  localStorage.removeItem(ACTIVE_CONNECTION_STORAGE_KEY);
 }
 
 function normalizeConnection(input: unknown): ConnectionConfig | null {
@@ -141,6 +178,7 @@ function normalizeConnection(input: unknown): ConnectionConfig | null {
     postgresSslMode: normalizePostgresSslMode(raw.postgresSslMode),
     oracleConnectionType: raw.oracleConnectionType === 'sid' ? 'sid' : 'serviceName',
     oracleDriverProperties: asOptionalString(raw.oracleDriverProperties),
+    preferredSchema: asOptionalString(raw.preferredSchema),
     ssh: {
       enabled: sshEnabled,
       host: asOptionalString(ssh?.host ?? raw.sshHost),

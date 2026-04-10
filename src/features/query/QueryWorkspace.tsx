@@ -20,6 +20,7 @@ import QueryHistoryDrawer from '../history/components/QueryHistoryDrawer';
 import type { QueryHistoryItem } from '../history/types';
 import { isTableSuggestionContext, registerSqlAutocomplete } from './sql-autocomplete';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
+import { useConnectionRuntimeStore } from '../../store/connectionRuntime';
 
 interface QueryResult {
   columns: string[];
@@ -52,6 +53,9 @@ export default function QueryWorkspace({
     replaceActiveTabContent,
   } = useQueriesStore();
   const { activeConnectionId, connections, setActiveConnection } = useConnectionsStore();
+  const runtimeStatus = useConnectionRuntimeStore((state) =>
+    activeConnectionId ? state.runtimeStatus[activeConnectionId] : undefined,
+  );
   const metadataActivity = useDatabaseSessionStore((state) =>
     activeConnectionId ? state.metadataActivityByConnection[activeConnectionId] : undefined,
   );
@@ -62,6 +66,7 @@ export default function QueryWorkspace({
   );
   
   const activeTab = tabs.find(t => t.id === activeTabId);
+  const isConnectionReady = runtimeStatus === 'connected';
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -227,7 +232,7 @@ export default function QueryWorkspace({
       <div className="px-3 py-2 border-b border-border/80 glass-panel flex flex-wrap items-center gap-2 shrink-0">
         <button 
           onClick={executeQuery}
-          disabled={loading || !activeTab || !activeConnectionId}
+          disabled={loading || !activeTab || !activeConnectionId || !isConnectionReady}
           className="flex items-center gap-1.5 bg-emerald-400/18 text-emerald-200 hover:bg-emerald-400/26 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-400/35 shadow-[0_0_18px_rgba(16,185,129,0.18)] hover:shadow-[0_0_24px_rgba(16,185,129,0.28)]"
         >
           {loading ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} className="fill-green-400/50" />} 
@@ -252,6 +257,11 @@ export default function QueryWorkspace({
             <span className="text-xs text-muted uppercase tracking-wide">
               {schemaLabel ? `${engine.toUpperCase()} • ${connectionLabel} • ${schemaLabel}` : `${engine.toUpperCase()} • ${connectionLabel}`}
             </span>
+            {!isConnectionReady ? (
+              <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-amber-200">
+                desconectado
+              </span>
+            ) : null}
           </>
         )}
       </div>

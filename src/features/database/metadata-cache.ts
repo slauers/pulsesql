@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { DatabaseEngine } from '../../store/connections';
+import { type DatabaseEngine, useConnectionsStore } from '../../store/connections';
 import { useConnectionRuntimeStore } from '../../store/connectionRuntime';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
 import type { ColumnDef, MetadataColumn } from './types';
@@ -16,7 +16,7 @@ export async function ensureSchemasCached(
   const cached = state.metadataByConnection[connectionId];
   if (cached?.schemas.length && !options?.force) {
     if (options?.markActive && !state.activeSchemaByConnection[connectionId]) {
-      state.setActiveSchema(connectionId, cached.schemas[0] ?? null);
+      state.setActiveSchema(connectionId, resolvePreferredSchema(connectionId, cached.schemas));
     }
     return cached.schemas;
   }
@@ -35,7 +35,9 @@ export async function ensureSchemasCached(
 
       const activeSchema = useDatabaseSessionStore.getState().activeSchemaByConnection[connectionId];
       if ((options?.markActive || !activeSchema) && schemas.length) {
-        useDatabaseSessionStore.getState().setActiveSchema(connectionId, activeSchema ?? schemas[0]);
+        useDatabaseSessionStore
+          .getState()
+          .setActiveSchema(connectionId, activeSchema ?? resolvePreferredSchema(connectionId, schemas));
       }
 
       useConnectionRuntimeStore
@@ -57,6 +59,26 @@ export async function ensureSchemasCached(
       throw new Error(message);
     }
   }) as Promise<string[]>;
+}
+
+function resolvePreferredSchema(connectionId: string, schemas: string[]): string | null {
+  if (!schemas.length) {
+    return null;
+  }
+
+  const connection = useConnectionsStore.getState().connections.find((item) => item.id === connectionId);
+  const preferredCandidates = [connection?.preferredSchema, connection?.user]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+
+  for (const candidate of preferredCandidates) {
+    const match = schemas.find((schema) => schema.localeCompare(candidate, undefined, { sensitivity: 'accent' }) === 0);
+    if (match) {
+      return match;
+    }
+  }
+
+  return schemas[0] ?? null;
 }
 
 export async function ensureTablesCached(

@@ -4,17 +4,19 @@ import {
   ChevronRight,
   Columns,
   CopyPlus,
+  Crosshair,
   Database,
   EllipsisVertical,
   FilePenLine,
   FileSearch,
+  Pin,
   LayoutTemplate,
   LoaderCircle,
   RefreshCw,
   Rows4,
   Table2,
 } from 'lucide-react';
-import type { DatabaseEngine } from '../../store/connections';
+import { type DatabaseEngine, useConnectionsStore } from '../../store/connections';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
 import { useQueriesStore } from '../../store/queries';
 import {
@@ -38,11 +40,19 @@ interface DatabaseExplorerProps {
   engine: DatabaseEngine;
 }
 
-interface ContextMenuState {
+interface TableContextMenuState {
   x: number;
   y: number;
   schema: string;
   table: string;
+  anchor?: 'right' | 'left';
+}
+
+interface SchemaContextMenuState {
+  x: number;
+  y: number;
+  schema: string;
+  anchor?: 'right' | 'left';
 }
 
 interface DescribeState {
@@ -63,15 +73,20 @@ const EXPLORER_ACTIONS: Array<{
   { id: 'insert', label: 'Insert', icon: CopyPlus },
 ];
 
+const MENU_OFFSET_PX = 6;
+
 export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerProps) {
   const metadataConnection = useDatabaseSessionStore((state) => state.metadataByConnection[connId]);
   const activeSchema = useDatabaseSessionStore((state) => state.activeSchemaByConnection[connId] ?? null);
   const setActiveSchema = useDatabaseSessionStore((state) => state.setActiveSchema);
+  const connection = useConnectionsStore((state) => state.connections.find((item) => item.id === connId) ?? null);
+  const updateConnection = useConnectionsStore((state) => state.updateConnection);
   const addTabWithContent = useQueriesStore((state) => state.addTabWithContent);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [contextMenu, setContextMenu] = useState<TableContextMenuState | null>(null);
+  const [schemaContextMenu, setSchemaContextMenu] = useState<SchemaContextMenuState | null>(null);
   const [describeState, setDescribeState] = useState<DescribeState | null>(null);
 
   useEffect(() => {
@@ -92,10 +107,14 @@ export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerPro
   }, [connId, engine]);
 
   useEffect(() => {
-    const handlePointerDown = () => setContextMenu(null);
+    const handlePointerDown = () => {
+      setContextMenu(null);
+      setSchemaContextMenu(null);
+    };
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setContextMenu(null);
+        setSchemaContextMenu(null);
         setDescribeState(null);
       }
     };
@@ -111,6 +130,7 @@ export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerPro
 
   const schemas = metadataConnection?.schemas ?? [];
   const schemaError = metadataConnection?.schemasError;
+  const preferredSchema = connection?.preferredSchema ?? null;
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -186,14 +206,24 @@ export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerPro
                 engine={engine}
                 schema={schema}
                 active={activeSchema === schema}
+                preferred={preferredSchema === schema}
                 onActivate={() => setActiveSchema(connId, schema)}
+                onOpenSchemaContextMenu={(event) =>
+                  setSchemaContextMenu({
+                    x: event.clientX + MENU_OFFSET_PX,
+                    y: event.clientY - 6,
+                    schema,
+                    anchor: 'left',
+                  })
+                }
                 onOpenAction={(action, table) => void openQueryFromExplorer(action, schema, table)}
                 onOpenContextMenu={(event, table) =>
                   setContextMenu({
-                    x: event.clientX,
-                    y: event.clientY,
+                    x: event.clientX + MENU_OFFSET_PX,
+                    y: event.clientY - 6,
                     schema,
                     table,
+                    anchor: 'left',
                   })
                 }
               />
@@ -207,7 +237,7 @@ export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerPro
       {contextMenu ? (
         <div
           className="fixed z-50 min-w-[190px] rounded-2xl border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          style={buildMenuPosition(contextMenu.x, contextMenu.y, contextMenu.anchor)}
           onClick={(event) => event.stopPropagation()}
         >
           {EXPLORER_ACTIONS.map((action) => {
@@ -230,6 +260,43 @@ export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerPro
         </div>
       ) : null}
 
+      {schemaContextMenu ? (
+        <div
+          className="fixed z-50 min-w-[220px] rounded-2xl border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+          style={buildMenuPosition(schemaContextMenu.x, schemaContextMenu.y, schemaContextMenu.anchor)}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setActiveSchema(connId, schemaContextMenu.schema);
+              setSchemaContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+          >
+            <Crosshair size={14} className="text-muted" />
+            <span>Usar neste editor</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (connection) {
+                updateConnection({
+                  ...connection,
+                  preferredSchema: schemaContextMenu.schema,
+                });
+              }
+              setActiveSchema(connId, schemaContextMenu.schema);
+              setSchemaContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+          >
+            <Pin size={14} className="text-muted" />
+            <span>Tornar schema padrao</span>
+          </button>
+        </div>
+      ) : null}
+
       {describeState ? (
         <DescribeTableModal
           engine={engine}
@@ -248,7 +315,9 @@ function SchemaItem({
   engine,
   schema,
   active,
+  preferred,
   onActivate,
+  onOpenSchemaContextMenu,
   onOpenAction,
   onOpenContextMenu,
 }: {
@@ -256,13 +325,21 @@ function SchemaItem({
   engine: DatabaseEngine;
   schema: string;
   active: boolean;
+  preferred: boolean;
   onActivate: () => void;
+  onOpenSchemaContextMenu: (event: ReactMouseEvent<HTMLElement>) => void;
   onOpenAction: (action: ExplorerActionId, table: string) => void;
   onOpenContextMenu: (event: ReactMouseEvent<HTMLElement>, table: string) => void;
 }) {
   const schemaEntry = useDatabaseSessionStore((state) => state.metadataByConnection[connId]?.schemasByName[schema]);
-  const [expanded, setExpanded] = useState(schema === 'public');
+  const [expanded, setExpanded] = useState(schema === 'public' || active);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (active) {
+      setExpanded(true);
+    }
+  }, [active]);
 
   useEffect(() => {
     if (!expanded) {
@@ -288,6 +365,10 @@ function SchemaItem({
   return (
     <div>
       <div
+        onContextMenu={(event) => {
+          event.preventDefault();
+          onOpenSchemaContextMenu(event);
+        }}
         onClick={() => {
           onActivate();
           setExpanded((current) => !current);
@@ -299,6 +380,11 @@ function SchemaItem({
         {expanded ? <ChevronDown size={15} className="text-muted" /> : <ChevronRight size={15} className="text-muted" />}
         <LayoutTemplate size={15} className="text-amber-400" />
         <span className="text-sm font-medium">{schema}</span>
+        {preferred ? (
+          <span className="ml-auto rounded-full border border-border/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted">
+            padrao
+          </span>
+        ) : null}
       </div>
 
       {expanded ? (
@@ -524,4 +610,20 @@ function resolveActionTitle(action: ExplorerActionId): string {
     default:
       return 'Select';
   }
+}
+
+function buildMenuPosition(x: number, y: number, anchor: 'right' | 'left' = 'left') {
+  const safeTop = Math.max(8, Math.min(y, window.innerHeight - 8));
+
+  if (anchor === 'right') {
+    return {
+      right: Math.max(8, window.innerWidth - x),
+      top: safeTop,
+    };
+  }
+
+  return {
+    left: Math.max(8, Math.min(x, window.innerWidth - 8)),
+    top: safeTop,
+  };
 }

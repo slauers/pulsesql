@@ -45,17 +45,23 @@ interface DatabaseSessionState {
   invalidateConnection: (connectionId: string) => void;
 }
 
+const ACTIVE_SCHEMA_STORAGE_KEY = 'active-schema-by-connection';
+
 export const useDatabaseSessionStore = create<DatabaseSessionState>((set) => ({
-  activeSchemaByConnection: {},
+  activeSchemaByConnection: readActiveSchemaState(),
   metadataByConnection: {},
   metadataActivityByConnection: {},
   setActiveSchema: (connectionId, schemaName) =>
-    set((current) => ({
-      activeSchemaByConnection: {
+    set((current) => {
+      const next = {
         ...current.activeSchemaByConnection,
         [connectionId]: schemaName,
-      },
-    })),
+      };
+      writeActiveSchemaState(next);
+      return {
+        activeSchemaByConnection: next,
+      };
+    }),
   setMetadataActivity: (connectionId, activity) =>
     set((current) => ({
       metadataActivityByConnection: {
@@ -217,6 +223,7 @@ export const useDatabaseSessionStore = create<DatabaseSessionState>((set) => ({
       delete metadataByConnection[connectionId];
       delete activeSchemaByConnection[connectionId];
       delete metadataActivityByConnection[connectionId];
+      writeActiveSchemaState(activeSchemaByConnection);
       return { metadataByConnection, activeSchemaByConnection, metadataActivityByConnection };
     }),
 }));
@@ -252,4 +259,26 @@ function ensureTableEntry(
   return current ?? {
     name: tableName,
   };
+}
+
+function readActiveSchemaState(): Record<string, string | null> {
+  try {
+    const raw = localStorage.getItem(ACTIVE_SCHEMA_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeActiveSchemaState(value: Record<string, string | null>) {
+  try {
+    localStorage.setItem(ACTIVE_SCHEMA_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Persistencia de sessao nao deve quebrar a aplicacao.
+  }
 }
