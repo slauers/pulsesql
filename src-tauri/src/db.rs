@@ -14,6 +14,8 @@ use tokio::sync::Mutex;
 pub struct ColumnDef {
     pub column_name: String,
     pub data_type: String,
+    pub nullable: Option<bool>,
+    pub default_value: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,6 +23,7 @@ pub struct QueryResult {
     pub columns: Vec<String>,
     pub rows: Vec<Value>,
     pub execution_time: u64,
+    pub summary: Option<String>,
 }
 
 #[derive(Clone)]

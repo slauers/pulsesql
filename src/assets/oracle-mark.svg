@@ -1,0 +1,15 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="oracleGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#oracleGlow)">
+    <rect x="20" y="34" width="88" height="60" rx="30" stroke="#FF4D5E" stroke-width="6"/>
+    <rect x="36" y="50" width="56" height="28" rx="14" stroke="#FF4D5E" stroke-width="5"/>
+  </g>
+</svg>

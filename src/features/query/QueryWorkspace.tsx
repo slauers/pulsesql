@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { useQueriesStore } from '../../store/queries';
-import { useConnectionsStore } from '../../store/connections';
+import { type DatabaseEngine, useConnectionsStore } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
+import { ensureTablesCached } from '../database/metadata-cache';
 import {
   Plus,
   X,
@@ -17,11 +18,20 @@ import {
 import ResultGrid from './ResultGrid';
 import QueryHistoryDrawer from '../history/components/QueryHistoryDrawer';
 import type { QueryHistoryItem } from '../history/types';
+import { isTableSuggestionContext, registerSqlAutocomplete } from './sql-autocomplete';
+import { useConnectionRuntimeStore } from '../../store/connectionRuntime';
+import { useUiPreferencesStore } from '../../store/uiPreferences';
 
 interface QueryResult {
   columns: string[];
   rows: any[];
   execution_time: number;
+  summary?: string | null;
+}
+
+interface QueryExecutionResult extends QueryResult {
+  statement: string;
+  title: string;
 }
 
 interface ExecuteQueryPayload {
@@ -29,7 +39,15 @@ interface ExecuteQueryPayload {
   history_item_id: string;
 }
 
-export default function QueryWorkspace({ connectionLabel, engine }: { connectionLabel?: string; engine?: string }) {
+export default function QueryWorkspace({
+  connectionLabel,
+  engine,
+  schemaLabel,
+}: {
+  connectionLabel?: string;
+  engine?: DatabaseEngine;
+  schemaLabel?: string;
+}) {
   const {
     tabs,
     activeTabId,
@@ -41,45 +59,128 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
     replaceActiveTabContent,
   } = useQueriesStore();
   const { activeConnectionId, connections, setActiveConnection } = useConnectionsStore();
+  const runtimeStatus = useConnectionRuntimeStore((state) =>
+    activeConnectionId ? state.runtimeStatus[activeConnectionId] : undefined,
+  );
+  const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
+  const semanticBackgroundState = useUiPreferencesStore((state) => state.semanticBackgroundState);
+  const semanticBackgroundVersion = useUiPreferencesStore((state) => state.semanticBackgroundVersion);
+  const setSemanticBackgroundState = useUiPreferencesStore((state) => state.setSemanticBackgroundState);
   
   const activeTab = tabs.find(t => t.id === activeTabId);
+  const isConnectionReady = runtimeStatus === 'connected';
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<QueryResult | null>(null);
+  const [results, setResults] = useState<QueryExecutionResult[]>([]);
+  const [activeResultIndex, setActiveResultIndex] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [quickFilter, setQuickFilter] = useState('');
   const [resultsHeight, setResultsHeight] = useState(34);
   const [resultsResizing, setResultsResizing] = useState(false);
   const executeQueryRef = useRef<() => void>(() => {});
+  const editorRef = useRef<any>(null);
+  const lastCursorPositionRef = useRef<{ lineNumber: number; column: number } | null>(null);
+  const autocompleteDisposableRef = useRef<{ dispose(): void } | null>(null);
+  const suggestTimeoutRef = useRef<number | null>(null);
+  const semanticResetTimeoutRef = useRef<number | null>(null);
+  const autocompleteContextRef = useRef<{ connectionId?: string | null; activeSchema?: string | null }>({
+    connectionId: activeConnectionId,
+    activeSchema: schemaLabel,
+  });
 
-  const runQuery = useCallback(async (queryText: string, connectionId: string) => {
-    const trimmedQuery = queryText.trim();
-    if (!trimmedQuery || !connectionId) {
+  useEffect(() => {
+    autocompleteContextRef.current = {
+      connectionId: activeConnectionId,
+      activeSchema: schemaLabel,
+    };
+  }, [activeConnectionId, schemaLabel]);
+
+  useEffect(() => {
+    if (!activeConnectionId || !engine || !schemaLabel) {
       return;
     }
-    
-    setLoading(true);
-    setError(null);
-    setResult(null);
 
-    try {
-      const payload = await invoke<ExecuteQueryPayload>('execute_query', { 
-        connId: connectionId, 
-        query: trimmedQuery,
-      });
-      setResult(payload.result);
-    } catch (e: any) {
-      setError(formatQueryError(e));
-    } finally {
-      setLoading(false);
+    void ensureTablesCached(activeConnectionId, engine, schemaLabel).catch(() => null);
+  }, [activeConnectionId, engine, schemaLabel]);
+
+  useEffect(() => () => {
+    autocompleteDisposableRef.current?.dispose();
+    if (suggestTimeoutRef.current) {
+      window.clearTimeout(suggestTimeoutRef.current);
+    }
+    if (semanticResetTimeoutRef.current) {
+      window.clearTimeout(semanticResetTimeoutRef.current);
     }
   }, []);
 
+  const runQueryBatch = useCallback(async (queries: string[], connectionId: string) => {
+    const statements = queries.map((item) => item.trim()).filter(Boolean);
+    if (!statements.length || !connectionId) {
+      return;
+    }
+    
+    if (semanticResetTimeoutRef.current) {
+      window.clearTimeout(semanticResetTimeoutRef.current);
+      semanticResetTimeoutRef.current = null;
+    }
+
+    setSemanticBackgroundState('running');
+    setLoading(true);
+    setError(null);
+    setResults([]);
+    setActiveResultIndex(0);
+
+    try {
+      const nextResults: QueryExecutionResult[] = [];
+
+      for (let index = 0; index < statements.length; index++) {
+        const statement = statements[index];
+        const payload = await invoke<ExecuteQueryPayload>('execute_query', {
+          connId: connectionId,
+          query: statement,
+        });
+
+        nextResults.push({
+          ...payload.result,
+          statement,
+          title: `Result ${index + 1}`,
+        });
+      }
+
+      setResults(nextResults);
+      setActiveResultIndex(0);
+      setSemanticBackgroundState('success');
+      semanticResetTimeoutRef.current = window.setTimeout(() => {
+        setSemanticBackgroundState('idle');
+        semanticResetTimeoutRef.current = null;
+      }, 5000);
+    } catch (e: any) {
+      setError(formatQueryError(e));
+      setSemanticBackgroundState('error');
+      semanticResetTimeoutRef.current = window.setTimeout(() => {
+        setSemanticBackgroundState('idle');
+        semanticResetTimeoutRef.current = null;
+      }, 5000);
+    } finally {
+      setLoading(false);
+    }
+  }, [setSemanticBackgroundState]);
+
   const executeQuery = useCallback(async () => {
     if (!activeTab || !activeConnectionId) return;
-    await runQuery(activeTab.content, activeConnectionId);
-  }, [activeTab, activeConnectionId, runQuery]);
+
+    const executionTarget = resolveExecutionTarget(
+      editorRef.current,
+      activeTab.content,
+      lastCursorPositionRef.current,
+    );
+    if (!executionTarget.statements.length) {
+      return;
+    }
+
+    await runQueryBatch(executionTarget.statements, activeConnectionId);
+  }, [activeTab, activeConnectionId, runQueryBatch]);
 
   const runHistoryItem = useCallback(async (item: QueryHistoryItem, replaceCurrent: boolean) => {
     const connection = connections.find((current) => current.id === item.connectionId);
@@ -98,11 +199,11 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
     try {
       await invoke('open_connection', { config: connection });
       setActiveConnection(connection.id);
-      await runQuery(item.queryText, connection.id);
+      await runQueryBatch(splitSqlStatements(item.queryText), connection.id);
     } catch (runError) {
       setError(formatQueryError(runError));
     }
-  }, [addTabWithContent, connections, replaceActiveTabContent, runQuery, setActiveConnection]);
+  }, [addTabWithContent, connections, replaceActiveTabContent, runQueryBatch, setActiveConnection]);
 
   const openHistoryInNewTab = useCallback((item: QueryHistoryItem) => {
     addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText));
@@ -116,11 +217,42 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
     setHistoryOpen((current) => !current);
   }, []);
 
+  const closeResultTab = useCallback((indexToClose: number) => {
+    setResults((current) => {
+      const next = current.filter((_, index) => index !== indexToClose);
+
+      setActiveResultIndex((currentIndex) => {
+        if (!next.length) {
+          return 0;
+        }
+
+        if (currentIndex > indexToClose) {
+          return currentIndex - 1;
+        }
+
+        if (currentIndex === indexToClose) {
+          return Math.max(0, Math.min(indexToClose, next.length - 1));
+        }
+
+        return currentIndex;
+      });
+
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     executeQueryRef.current = () => {
       void executeQuery();
     };
   }, [executeQuery]);
+
+  useEffect(() => () => {
+    if (semanticResetTimeoutRef.current) {
+      window.clearTimeout(semanticResetTimeoutRef.current);
+    }
+    setSemanticBackgroundState('idle');
+  }, [setSemanticBackgroundState]);
 
   useEffect(() => {
     if (!resultsResizing) {
@@ -146,216 +278,356 @@ export default function QueryWorkspace({ connectionLabel, engine }: { connection
     };
   }, [resultsResizing]);
 
-  const filteredRows = result
-    ? applyQuickFilter(result.rows, result.columns, quickFilter)
+  const activeResult = results[activeResultIndex] ?? null;
+  const filteredRows = activeResult
+    ? applyQuickFilter(activeResult.rows, activeResult.columns, quickFilter)
     : [];
+  const hasGridResult = Boolean(activeResult?.columns.length);
 
   return (
     <div className="flex flex-col h-full bg-transparent overflow-hidden relative min-h-0">
-      <div className="flex items-center glass-panel border-b border-border overflow-x-auto shrink-0 scrollbar-hide">
-        {tabs.map(tab => (
-          <div 
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`group flex items-center gap-2 px-3 py-3 border-r border-border/70 min-w-[148px] max-w-[240px] cursor-pointer select-none border-b-2 transition-colors
-              ${activeTabId === tab.id ? 'bg-background/80 text-primary border-b-primary' : 'text-muted border-b-transparent hover:bg-border/20'}
-            `}
-          >
-            <span className="text-sm truncate flex-1">{tab.title}</span>
-            <button 
-              onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
-              className={`p-1 rounded hover:bg-border/50 text-muted transition-opacity flex-shrink-0 ${
-                activeTabId === tab.id ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'
-              }`}
-            >
-              <X size={14} />
-            </button>
-          </div>
-        ))}
-        <button onClick={addTab} className="px-3 py-2 text-muted hover:text-text hover:bg-border/30 shrink-0">
-          <Plus size={16} />
-        </button>
-      </div>
+      <div
+        className={`sql-workspace-shell ${semanticBackgroundEnabled ? `sql-workspace-shell--${semanticBackgroundState}` : ''}`}
+      >
+        {semanticBackgroundEnabled ? (
+          <div
+            key={`${semanticBackgroundState}-${semanticBackgroundVersion}`}
+            className={`sql-workspace-shell__ambient semantic-ambient semantic-ambient--${semanticBackgroundState}`}
+          />
+        ) : null}
 
-      <div className="px-3 py-2 border-b border-border/80 glass-panel flex flex-wrap items-center gap-2 shrink-0">
-        <button 
-          onClick={executeQuery}
-          disabled={loading || !activeTab || !activeConnectionId}
-          className="flex items-center gap-1.5 bg-emerald-400/18 text-emerald-200 hover:bg-emerald-400/26 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-400/35 shadow-[0_0_18px_rgba(16,185,129,0.18)] hover:shadow-[0_0_24px_rgba(16,185,129,0.28)]"
-        >
-          {loading ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} className="fill-green-400/50" />} 
-          Run
-        </button>
-        <div className="mx-2 h-4 w-px bg-border/50"></div>
-        <span className="text-xs text-muted">Cmd+Enter to run</span>
-        <button
-          onClick={toggleHistory}
-          className={`ml-auto inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-            historyOpen
-              ? 'border-primary/40 bg-primary/10 text-primary'
-              : 'border-border text-muted hover:bg-border/30 hover:text-text'
-          }`}
-        >
-          <Clock3 size={13} />
-          History
-        </button>
-        {connectionLabel && engine && (
-          <>
-            <div className="mx-2 h-4 w-px bg-border/50"></div>
-            <span className="text-xs text-muted uppercase tracking-wide">
-              {engine} · {connectionLabel}
-            </span>
-          </>
-        )}
-      </div>
-
-      <div className="flex-1 relative min-h-0 flex flex-col overflow-hidden">
-        {activeTab ? (
-          <div className="flex-1 min-h-[220px] bg-background/30">
-            <Editor
-              height="100%"
-              language="sql"
-              theme="blacktable-night"
-              value={activeTab.content}
-              onChange={(val) => updateTabContent(activeTab.id, val || "")}
-              beforeMount={(monaco) => {
-                monaco.editor.defineTheme('blacktable-night', {
-                  base: 'vs-dark',
-                  inherit: true,
-                  rules: [
-                    { token: 'keyword', foreground: '62D7FF' },
-                    { token: 'number', foreground: '8BE9FD' },
-                    { token: 'string', foreground: '9FE870' },
-                    { token: 'comment', foreground: '60708E' },
-                  ],
-                  colors: {
-                    'editor.background': '#08111D',
-                    'editor.lineHighlightBackground': '#0F1C2D',
-                    'editorCursor.foreground': '#62D7FF',
-                    'editorLineNumber.foreground': '#4A607D',
-                    'editorLineNumber.activeForeground': '#9FC2E8',
-                    'editor.selectionBackground': '#163A59',
-                    'editor.inactiveSelectionBackground': '#10273D',
-                    'editorIndentGuide.background1': '#132236',
-                    'editorIndentGuide.activeBackground1': '#21405F',
-                  },
-                });
-              }}
-              options={{
-                minimap: { enabled: false },
-                padding: { top: 18 },
-                fontSize: 14,
-                fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
-                scrollBeyondLastLine: false,
-                roundedSelection: false,
-                smoothScrolling: true,
-                overviewRulerBorder: false,
-              }}
-              onMount={(editor, monaco) => {
-                editor.addAction({
-                  id: 'blacktable.runQuery',
-                  label: 'Run Query',
-                  keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
-                  run: () => {
-                    executeQueryRef.current();
-                  },
-                });
-                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.NumpadEnter, () => {
-                  executeQueryRef.current();
-                });
-              }}
-            />
-          </div>
-        ) : (
-          <div className="h-full flex items-center justify-center text-muted bg-background/40">
-            <div className="text-center">
-              <p className="mb-2">No active queries.</p>
-              <button onClick={addTab} className="px-4 py-2 glass-panel border border-border rounded-xl text-sm hover:text-text flex items-center gap-2 mx-auto">
-                <Plus size={16} /> Create new query
+        <div className="relative z-10 flex h-full min-h-0 flex-col gap-3">
+          <div className="shrink-0 overflow-hidden rounded-lg border border-border/80 glass-panel shadow-[0_18px_48px_rgba(0,0,0,0.22)]">
+            <div className="flex items-center overflow-x-auto scrollbar-hide border-b border-border/70 bg-background/16">
+              {tabs.map(tab => (
+                <div
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`group flex items-center gap-2 px-3 py-3 border-r border-border/70 min-w-[148px] max-w-[240px] cursor-pointer select-none rounded-t-lg border-b-2 transition-colors ${
+                    activeTabId === tab.id
+                      ? 'bg-background/80 text-primary border-b-primary'
+                      : 'text-muted border-b-transparent hover:bg-border/20'
+                  }`}
+                >
+                  <span className="text-sm truncate flex-1">{tab.title}</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                    className={`p-1 rounded hover:bg-border/50 text-muted transition-opacity flex-shrink-0 ${
+                      activeTabId === tab.id ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'
+                    }`}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={addTab}
+                className="ml-auto mr-2 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-background/28 px-3 py-2 text-xs text-muted hover:bg-border/30 hover:text-text"
+              >
+                <Plus size={15} />
+                Nova aba
               </button>
             </div>
-          </div>
-        )}
-      </div>
 
-      <div
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label="Resize results panel"
-        onPointerDown={() => setResultsResizing(true)}
-        className={`h-1 shrink-0 cursor-row-resize bg-transparent transition-colors ${
-          resultsResizing ? 'bg-primary/40' : 'hover:bg-primary/25'
-        }`}
-      >
-        <div className="mx-auto h-full w-24 rounded-full bg-border/70" />
-      </div>
-
-      <div
-        className="min-h-[190px] max-h-[58%] border-t border-border glass-panel flex flex-col shrink-0 flex-grow-0 relative max-[720px]:h-[40%]"
-        style={{ height: `${resultsHeight}%` }}
-      >
-        <div className="p-2 border-b border-border text-sm font-medium text-muted flex justify-between items-center bg-background/42">
-          <div className="flex gap-4 px-2 shrink-0">
-            <button className="text-text border-b-2 border-primary pb-1">Result Grid</button>
+            <div className="px-3 py-2.5 flex flex-wrap items-center gap-2">
+              <button
+                onClick={executeQuery}
+                disabled={loading || !activeTab || !activeConnectionId || !isConnectionReady}
+                className="flex items-center gap-1.5 bg-emerald-400/18 text-emerald-200 hover:bg-emerald-400/26 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-400/35 shadow-[0_0_18px_rgba(16,185,129,0.18)] hover:shadow-[0_0_24px_rgba(16,185,129,0.28)]"
+              >
+                {loading ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} className="fill-green-400/50" />}
+                Run
+              </button>
+              <span className="rounded-full border border-border/70 bg-background/22 px-2.5 py-1 text-[11px] text-muted">
+                Cmd+Enter
+              </span>
+              <button
+                onClick={toggleHistory}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  historyOpen
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                }`}
+              >
+                <Clock3 size={13} />
+                History
+              </button>
+              {connectionLabel && engine ? (
+                <div className="ml-auto flex min-w-0 items-center gap-2 rounded-lg border border-border/70 bg-background/22 px-3 py-1.5">
+                  <span className="truncate text-[11px] uppercase tracking-[0.14em] text-muted">
+                    {schemaLabel ? `${engine.toUpperCase()} • ${connectionLabel} • ${schemaLabel}` : `${engine.toUpperCase()} • ${connectionLabel}`}
+                  </span>
+                  {!isConnectionReady ? (
+                    <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-amber-200">
+                      desconectado
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
-          {result ? (
-            <div className="flex items-center gap-2 px-2 min-w-0">
-              <div className="hidden md:flex items-center gap-2 text-xs text-muted shrink-0">
-                <span>
-                  {filteredRows.length}
-                  {quickFilter ? ` / ${result.rows.length}` : ''} rows
-                </span>
-                <span>{result.execution_time}ms</span>
-              </div>
-              <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5 min-w-[180px] md:min-w-[220px]">
-                <Search size={13} className="shrink-0 text-muted" />
-                <input
-                  value={quickFilter}
-                  onChange={(event) => setQuickFilter(event.target.value)}
-                  placeholder="Filtro rapido"
-                  className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
+
+          <div className="flex-1 relative min-h-0 flex flex-col overflow-hidden rounded-lg border border-border/80 glass-panel shadow-[0_18px_48px_rgba(0,0,0,0.24)]">
+            {activeTab ? (
+              <div className="flex-1 min-h-[220px] overflow-hidden rounded-lg bg-background/30">
+                <Editor
+                  height="100%"
+                  language="sql"
+                  theme="blacktable-night"
+                  value={activeTab.content}
+                  onChange={(val) => updateTabContent(activeTab.id, val || "")}
+                  beforeMount={(monaco) => {
+                    monaco.editor.defineTheme('blacktable-night', {
+                      base: 'vs-dark',
+                      inherit: true,
+                      rules: [
+                        { token: 'keyword', foreground: '62D7FF' },
+                        { token: 'number', foreground: '8BE9FD' },
+                        { token: 'string', foreground: '9FE870' },
+                        { token: 'comment', foreground: '60708E' },
+                      ],
+                      colors: {
+                        'editor.background': '#08111D',
+                        'editor.lineHighlightBackground': '#0F1C2D',
+                        'editorCursor.foreground': '#62D7FF',
+                        'editorLineNumber.foreground': '#4A607D',
+                        'editorLineNumber.activeForeground': '#9FC2E8',
+                        'editor.selectionBackground': '#163A59',
+                        'editor.inactiveSelectionBackground': '#10273D',
+                        'editorIndentGuide.background1': '#132236',
+                        'editorIndentGuide.activeBackground1': '#21405F',
+                        'editorSuggestWidget.background': '#091321',
+                        'editorSuggestWidget.border': '#1B3248',
+                        'editorSuggestWidget.foreground': '#D5E5F8',
+                        'editorSuggestWidget.highlightForeground': '#62D7FF',
+                        'editorSuggestWidget.selectedBackground': '#14304B',
+                        'editorSuggestWidget.selectedForeground': '#FFFFFF',
+                        'editorSuggestWidget.selectedIconForeground': '#62D7FF',
+                        'editorSuggestWidgetStatus.foreground': '#7E98B8',
+                      },
+                    });
+                  }}
+                  options={{
+                    minimap: { enabled: false },
+                    padding: { top: 18 },
+                    fontSize: 14,
+                    fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+                    scrollBeyondLastLine: false,
+                    roundedSelection: false,
+                    smoothScrolling: true,
+                    overviewRulerBorder: false,
+                    acceptSuggestionOnEnter: 'on',
+                    quickSuggestionsDelay: 60,
+                    tabCompletion: 'on',
+                    wordBasedSuggestions: 'off',
+                    fixedOverflowWidgets: false,
+                    quickSuggestions: {
+                      other: true,
+                      comments: false,
+                      strings: false,
+                    },
+                    suggestOnTriggerCharacters: true,
+                    suggest: {
+                      showStatusBar: false,
+                      preview: true,
+                      previewMode: 'subwordSmart',
+                      selectionMode: 'always',
+                    },
+                  }}
+                  onMount={(editor, monaco) => {
+                    editorRef.current = editor;
+                    autocompleteDisposableRef.current?.dispose();
+                    autocompleteDisposableRef.current = registerSqlAutocomplete(monaco, () => autocompleteContextRef.current);
+                    lastCursorPositionRef.current = editor.getPosition();
+                    editor.onDidChangeModelContent(() => {
+                      const position = editor.getPosition();
+                      const model = editor.getModel();
+                      if (!position || !model) {
+                        return;
+                      }
+
+                      const sqlBeforeCursor = model.getValueInRange({
+                        startLineNumber: 1,
+                        startColumn: 1,
+                        endLineNumber: position.lineNumber,
+                        endColumn: position.column,
+                      });
+
+                      if (isTableSuggestionContext(sqlBeforeCursor)) {
+                        if (suggestTimeoutRef.current) {
+                          window.clearTimeout(suggestTimeoutRef.current);
+                        }
+
+                        suggestTimeoutRef.current = window.setTimeout(() => {
+                          editor.trigger('blacktable', 'editor.action.triggerSuggest', {});
+                        }, 90);
+                      }
+                    });
+                    editor.onDidChangeCursorPosition((event) => {
+                      lastCursorPositionRef.current = event.position;
+                    });
+                    editor.addAction({
+                      id: 'blacktable.runQuery',
+                      label: 'Run Query',
+                      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+                      run: () => {
+                        executeQueryRef.current();
+                      },
+                    });
+                    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.NumpadEnter, () => {
+                      executeQueryRef.current();
+                    });
+                  }}
                 />
-              </label>
-              <button
-                onClick={() => exportRowsAsCsv(result.columns, filteredRows, buildExportBaseName(connectionLabel))}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
-              >
-                <Download size={13} />
-                CSV
-              </button>
-              <button
-                onClick={() => exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel))}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
-              >
-                <FileJson size={13} />
-                JSON
-              </button>
-            </div>
-          ) : null}
-        </div>
-        
-        <div className="flex-1 overflow-auto bg-background/10">
-          {loading ? (
-            <div className="h-full flex items-center justify-center text-muted">
-              <div className="flex items-center gap-3">
-                <LoaderCircle size={16} className="animate-spin text-primary" />
-                <span className="text-[10px] uppercase tracking-[0.14em] text-primary/70">
-                  Retrieving data...
-                </span>
               </div>
+            ) : (
+              <div className="h-full flex items-center justify-center text-muted bg-background/40">
+                <div className="text-center">
+                  <p className="mb-2">No active queries.</p>
+                  <button onClick={addTab} className="px-4 py-2 glass-panel border border-border rounded-lg text-sm hover:text-text flex items-center gap-2 mx-auto">
+                    <Plus size={16} /> Create new query
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize results panel"
+            onPointerDown={() => setResultsResizing(true)}
+            className="shrink-0 px-3"
+          >
+            <div className={`h-1 cursor-row-resize rounded-full bg-transparent transition-colors ${
+              resultsResizing ? 'bg-primary/40' : 'hover:bg-primary/25'
+            }`}>
+              <div className="mx-auto h-full w-24 rounded-full bg-border/70" />
             </div>
-          ) : error ? (
-            <div className="p-4 flex items-start gap-3 text-red-400">
-              <AlertCircle size={18} className="mt-0.5 shrink-0" />
-              <div className="text-sm font-mono whitespace-pre-wrap">{error}</div>
+          </div>
+
+          <div
+            className="min-h-[190px] max-h-[58%] rounded-lg border border-border/80 glass-panel flex flex-col shrink-0 flex-grow-0 relative max-[720px]:h-[40%] overflow-hidden shadow-[0_18px_48px_rgba(0,0,0,0.24)]"
+            style={{ height: `${resultsHeight}%` }}
+          >
+            <div className="p-2 border-b border-border text-sm font-medium text-muted flex justify-between items-center bg-background/42">
+              <div className="flex gap-2 px-2 shrink-0 overflow-x-auto scrollbar-hide">
+                {(results.length ? results : [{ title: 'Result Grid' } as QueryExecutionResult]).map((item, index) => (
+                  <div
+                    key={`${item.title}-${index}`}
+                    className={`rounded-t-lg border-b-2 px-2.5 pb-1 pt-0.5 text-xs transition-colors ${
+                      activeResultIndex === index
+                        ? 'text-text border-primary'
+                        : 'text-muted border-transparent hover:text-text hover:border-border/70'
+                    }`}
+                  >
+                    <button
+                      onClick={() => setActiveResultIndex(index)}
+                      className="inline-flex items-center gap-1.5"
+                    >
+                      <span>{results.length <= 1 ? 'Result Grid' : item.title}</span>
+                    </button>
+                    {results.length > 1 ? (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          closeResultTab(index);
+                        }}
+                        className="ml-1 inline-flex items-center text-muted transition-colors hover:text-text"
+                        aria-label={`Fechar ${item.title}`}
+                      >
+                        <X size={12} />
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+              {activeResult ? (
+                <div className="flex items-center gap-2 px-2 min-w-0">
+                  <div className="hidden md:flex items-center gap-2 text-xs text-muted shrink-0">
+                    {hasGridResult ? (
+                      <span>
+                        {filteredRows.length}
+                        {quickFilter ? ` / ${activeResult.rows.length}` : ''} rows
+                      </span>
+                    ) : null}
+                    <span>{activeResult.execution_time}ms</span>
+                  </div>
+                  {hasGridResult ? (
+                    <>
+                      <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5 min-w-[180px] md:min-w-[220px]">
+                        <Search size={13} className="shrink-0 text-muted" />
+                        <input
+                          value={quickFilter}
+                          onChange={(event) => setQuickFilter(event.target.value)}
+                          placeholder="Filtro rapido"
+                          className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
+                        />
+                      </label>
+                      <button
+                        onClick={() => exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel))}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+                      >
+                        <Download size={13} />
+                        CSV
+                      </button>
+                      <button
+                        onClick={() => exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel))}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+                      >
+                        <FileJson size={13} />
+                        JSON
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
-          ) : result ? (
-            <ResultGrid columns={result.columns} rows={filteredRows} />
-          ) : (
-            <div className="h-full flex items-center justify-center text-muted/50 text-sm">
-              Run a query to see results
+
+            <div className="flex-1 overflow-auto bg-background/10">
+              {loading ? (
+                <div className="h-full flex items-center justify-center text-muted">
+                  <div className="flex items-center gap-3">
+                    <LoaderCircle size={16} className="animate-spin text-primary" />
+                    <span className="text-[10px] uppercase tracking-[0.14em] text-primary/70">
+                      Retrieving data...
+                    </span>
+                  </div>
+                </div>
+              ) : error ? (
+                <div className="p-4 flex items-start gap-3 text-red-400">
+                  <AlertCircle size={18} className="mt-0.5 shrink-0" />
+                  <div className="text-sm font-mono whitespace-pre-wrap">{error}</div>
+                </div>
+              ) : activeResult ? (
+                <div className="flex h-full min-h-0 flex-col">
+                  {activeResult.summary ? (
+                    <div className="border-b border-border/60 bg-emerald-400/5 px-4 py-3 text-xs text-emerald-100/90">
+                      <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-emerald-300/80">
+                        Resumo da execucao
+                      </div>
+                      <pre className="whitespace-pre-wrap font-mono text-[12px] leading-6 text-emerald-100/90">
+                        {activeResult.summary}
+                      </pre>
+                    </div>
+                  ) : null}
+                  <div className="min-h-0 flex-1">
+                    {hasGridResult ? (
+                      <ResultGrid columns={activeResult.columns} rows={filteredRows} />
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-muted/50 text-sm">
+                        Execucao concluida sem result set.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="h-full flex items-center justify-center text-muted/50 text-sm">
+                  Run a query to see results
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </div>
 
@@ -382,6 +654,138 @@ function deriveHistoryTabTitle(queryText: string): string {
   }
 
   return firstLine.slice(0, 36);
+}
+
+function resolveExecutionTarget(
+  editor: any,
+  fallbackContent: string,
+  lastCursorPosition?: { lineNumber: number; column: number } | null,
+) {
+  const model = editor?.getModel?.();
+  const fullText = model?.getValue?.() ?? fallbackContent;
+  const selection = editor?.getSelection?.();
+
+  if (model && selection && !selection.isEmpty()) {
+    const selectedText = model.getValueInRange(selection).trim();
+    const statements = splitSqlStatements(selectedText);
+    if (statements.length) {
+      return { statements };
+    }
+  }
+
+  const position = editor?.getPosition?.() ?? lastCursorPosition;
+  if (!model || !position) {
+    return { statements: splitSqlStatements(fullText) };
+  }
+
+  const cursorOffset = model.getOffsetAt(position);
+  const statementsWithRange = splitSqlStatementsWithRange(fullText);
+  const activeStatement = statementsWithRange.find((item) => cursorOffset >= item.start && cursorOffset <= item.end);
+
+  if (activeStatement) {
+    return { statements: [activeStatement.text] };
+  }
+
+  return { statements: splitSqlStatements(fullText) };
+}
+
+function splitSqlStatements(sql: string) {
+  return splitSqlStatementsWithRange(sql).map((item) => item.text);
+}
+
+function splitSqlStatementsWithRange(sql: string) {
+  const statements: Array<{ text: string; start: number; end: number }> = [];
+  let current = '';
+  let statementStart = 0;
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < sql.length; index++) {
+    const currentChar = sql[index];
+    const nextChar = sql[index + 1] ?? '';
+
+    if (!current.trim()) {
+      statementStart = index;
+    }
+
+    if (inLineComment) {
+      current += currentChar;
+      if (currentChar === '\n') {
+        inLineComment = false;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      current += currentChar;
+      if (currentChar === '*' && nextChar === '/') {
+        current += nextChar;
+        index += 1;
+        inBlockComment = false;
+      }
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && currentChar === '-' && nextChar === '-') {
+      current += currentChar + nextChar;
+      index += 1;
+      inLineComment = true;
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && currentChar === '/' && nextChar === '*') {
+      current += currentChar + nextChar;
+      index += 1;
+      inBlockComment = true;
+      continue;
+    }
+
+    if (!inDoubleQuote && currentChar === "'") {
+      current += currentChar;
+      if (inSingleQuote && nextChar === "'") {
+        current += nextChar;
+        index += 1;
+      } else {
+        inSingleQuote = !inSingleQuote;
+      }
+      continue;
+    }
+
+    if (!inSingleQuote && currentChar === '"') {
+      inDoubleQuote = !inDoubleQuote;
+      current += currentChar;
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && currentChar === ';') {
+      const text = current.trim();
+      if (text) {
+        statements.push({
+          text,
+          start: statementStart,
+          end: index,
+        });
+      }
+      current = '';
+      statementStart = index + 1;
+      continue;
+    }
+
+    current += currentChar;
+  }
+
+  const tail = current.trim();
+  if (tail) {
+    statements.push({
+      text: tail,
+      start: statementStart,
+      end: sql.length,
+    });
+  }
+
+  return statements;
 }
 
 function applyQuickFilter(rows: any[], columns: string[], quickFilter: string) {

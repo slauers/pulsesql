@@ -17,6 +17,14 @@ pub enum OracleConnectionType {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum PostgresSslMode {
+    Disable,
+    Prefer,
+    Require,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum SshAuthMethod {
     Password,
     PrivateKey,
@@ -48,6 +56,7 @@ pub struct ConnectionConfig {
     pub database: Option<String>,
     pub connect_timeout_seconds: Option<u64>,
     pub auto_reconnect: Option<bool>,
+    pub postgres_ssl_mode: Option<PostgresSslMode>,
     pub oracle_connection_type: Option<OracleConnectionType>,
     pub oracle_driver_properties: Option<String>,
     pub ssh: Option<SshConfig>,
@@ -67,5 +76,13 @@ impl ConnectionConfig {
 
     pub fn auto_reconnect(&self) -> bool {
         self.auto_reconnect.unwrap_or(true)
+    }
+
+    pub fn postgres_ssl_mode(&self) -> &str {
+        match self.postgres_ssl_mode {
+            Some(PostgresSslMode::Disable) => "disable",
+            Some(PostgresSslMode::Require) => "require",
+            _ => "prefer",
+        }
     }
 }

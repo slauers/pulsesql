@@ -74,7 +74,7 @@ pub async fn list_columns(
     table: &str,
 ) -> Result<Vec<ColumnDef>, String> {
     sqlx::query_as::<_, ColumnDef>(
-        "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position",
+        "SELECT column_name, data_type, (is_nullable = 'YES') AS nullable, column_default AS default_value FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position",
     )
     .bind(schema)
     .bind(table)
@@ -126,6 +126,7 @@ where
                 columns,
                 rows,
                 execution_time: started_at.elapsed().as_millis() as u64,
+                summary: None,
             })
         } else {
             let result = sqlx::query(trimmed)
@@ -137,6 +138,7 @@ where
                 columns: vec!["Rows Affected".into()],
                 rows: vec![json!({ "Rows Affected": result.rows_affected() })],
                 execution_time: started_at.elapsed().as_millis() as u64,
+                summary: None,
             })
         }
     };
