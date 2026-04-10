@@ -23,6 +23,7 @@ pub struct QueryResult {
     pub columns: Vec<String>,
     pub rows: Vec<Value>,
     pub execution_time: u64,
+    pub summary: Option<String>,
 }
 
 #[derive(Clone)]

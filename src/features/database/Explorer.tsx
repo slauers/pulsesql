@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronDown,
   ChevronRight,
@@ -38,6 +39,8 @@ interface DatabaseExplorerProps {
   connId: string;
   dbName: string;
   engine: DatabaseEngine;
+  showRefreshButton?: boolean;
+  refreshToken?: number;
 }
 
 interface TableContextMenuState {
@@ -45,14 +48,12 @@ interface TableContextMenuState {
   y: number;
   schema: string;
   table: string;
-  anchor?: 'right' | 'left';
 }
 
 interface SchemaContextMenuState {
   x: number;
   y: number;
   schema: string;
-  anchor?: 'right' | 'left';
 }
 
 interface DescribeState {
@@ -73,9 +74,17 @@ const EXPLORER_ACTIONS: Array<{
   { id: 'insert', label: 'Insert', icon: CopyPlus },
 ];
 
-const MENU_OFFSET_PX = 6;
+const MENU_OFFSET_PX = 8;
+const TABLE_MENU_WIDTH = 190;
+const SCHEMA_MENU_WIDTH = 220;
 
-export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerProps) {
+export function DatabaseExplorer({
+  connId,
+  dbName,
+  engine,
+  showRefreshButton = true,
+  refreshToken = 0,
+}: DatabaseExplorerProps) {
   const metadataConnection = useDatabaseSessionStore((state) => state.metadataByConnection[connId]);
   const activeSchema = useDatabaseSessionStore((state) => state.activeSchemaByConnection[connId] ?? null);
   const setActiveSchema = useDatabaseSessionStore((state) => state.setActiveSchema);
@@ -93,7 +102,7 @@ export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerPro
     let cancelled = false;
 
     setLoading(true);
-    ensureSchemasCached(connId, engine)
+    ensureSchemasCached(connId, engine, refreshToken > 0 ? { force: true } : undefined)
       .catch(() => null)
       .finally(() => {
         if (!cancelled) {
@@ -104,7 +113,7 @@ export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerPro
     return () => {
       cancelled = true;
     };
-  }, [connId, engine]);
+  }, [connId, engine, refreshToken]);
 
   useEffect(() => {
     const handlePointerDown = () => {
@@ -180,14 +189,16 @@ export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerPro
             {activeSchema}
           </span>
         ) : null}
-        <button
-          type="button"
-          onClick={() => void handleRefresh()}
-          className="rounded-lg border border-border/70 p-1.5 text-muted hover:bg-border/30 hover:text-text"
-          title="Atualizar metadata"
-        >
-          <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
-        </button>
+        {showRefreshButton ? (
+          <button
+            type="button"
+            onClick={() => void handleRefresh()}
+            className="rounded-lg border border-border/70 p-1.5 text-muted hover:bg-border/30 hover:text-text"
+            title="Atualizar metadata"
+          >
+            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+          </button>
+        ) : null}
       </div>
 
       <div className="flex-1 overflow-y-auto p-2">
@@ -210,20 +221,16 @@ export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerPro
                 onActivate={() => setActiveSchema(connId, schema)}
                 onOpenSchemaContextMenu={(event) =>
                   setSchemaContextMenu({
-                    x: event.clientX + MENU_OFFSET_PX,
-                    y: event.clientY - 6,
+                    ...resolveMenuAnchor(event, SCHEMA_MENU_WIDTH),
                     schema,
-                    anchor: 'left',
                   })
                 }
                 onOpenAction={(action, table) => void openQueryFromExplorer(action, schema, table)}
                 onOpenContextMenu={(event, table) =>
                   setContextMenu({
-                    x: event.clientX + MENU_OFFSET_PX,
-                    y: event.clientY - 6,
+                    ...resolveMenuAnchor(event, TABLE_MENU_WIDTH),
                     schema,
                     table,
-                    anchor: 'left',
                   })
                 }
               />
@@ -234,68 +241,76 @@ export function DatabaseExplorer({ connId, dbName, engine }: DatabaseExplorerPro
         )}
       </div>
 
-      {contextMenu ? (
-        <div
-          className="fixed z-50 min-w-[190px] rounded-2xl border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
-          style={buildMenuPosition(contextMenu.x, contextMenu.y, contextMenu.anchor)}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {EXPLORER_ACTIONS.map((action) => {
-            const Icon = action.icon;
-            return (
+      {contextMenu
+        ? createPortal(
+            <div
+              className="fixed z-[120] min-w-[190px] rounded-lg border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+              style={buildMenuPosition(contextMenu.x, contextMenu.y, TABLE_MENU_WIDTH)}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              {EXPLORER_ACTIONS.map((action) => {
+                const Icon = action.icon;
+                return (
+                  <button
+                    key={action.id}
+                    type="button"
+                    onClick={() => {
+                      setContextMenu(null);
+                      void openQueryFromExplorer(action.id, contextMenu.schema, contextMenu.table);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+                  >
+                    <Icon size={14} className="text-muted" />
+                    <span>{action.label}</span>
+                  </button>
+                );
+              })}
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {schemaContextMenu
+        ? createPortal(
+            <div
+              className="fixed z-[120] min-w-[220px] rounded-lg border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+              style={buildMenuPosition(schemaContextMenu.x, schemaContextMenu.y, SCHEMA_MENU_WIDTH)}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
               <button
-                key={action.id}
                 type="button"
                 onClick={() => {
-                  setContextMenu(null);
-                  void openQueryFromExplorer(action.id, contextMenu.schema, contextMenu.table);
+                  setActiveSchema(connId, schemaContextMenu.schema);
+                  setSchemaContextMenu(null);
                 }}
-                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
               >
-                <Icon size={14} className="text-muted" />
-                <span>{action.label}</span>
+                <Crosshair size={14} className="text-muted" />
+                <span>Usar neste editor</span>
               </button>
-            );
-          })}
-        </div>
-      ) : null}
-
-      {schemaContextMenu ? (
-        <div
-          className="fixed z-50 min-w-[220px] rounded-2xl border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
-          style={buildMenuPosition(schemaContextMenu.x, schemaContextMenu.y, schemaContextMenu.anchor)}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              setActiveSchema(connId, schemaContextMenu.schema);
-              setSchemaContextMenu(null);
-            }}
-            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
-          >
-            <Crosshair size={14} className="text-muted" />
-            <span>Usar neste editor</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (connection) {
-                updateConnection({
-                  ...connection,
-                  preferredSchema: schemaContextMenu.schema,
-                });
-              }
-              setActiveSchema(connId, schemaContextMenu.schema);
-              setSchemaContextMenu(null);
-            }}
-            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
-          >
-            <Pin size={14} className="text-muted" />
-            <span>Tornar schema padrao</span>
-          </button>
-        </div>
-      ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  if (connection) {
+                    updateConnection({
+                      ...connection,
+                      preferredSchema: schemaContextMenu.schema,
+                    });
+                  }
+                  setActiveSchema(connId, schemaContextMenu.schema);
+                  setSchemaContextMenu(null);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+              >
+                <Pin size={14} className="text-muted" />
+                <span>Tornar schema padrao</span>
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
 
       {describeState ? (
         <DescribeTableModal
@@ -537,9 +552,15 @@ function DescribeTableModal({
     closeButtonRef.current?.focus();
   }, []);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-3xl rounded-3xl border border-border bg-surface/95 shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[140] flex items-center justify-center bg-background/72 p-6 backdrop-blur-sm"
+      onMouseDown={onClose}
+    >
+      <div
+        className="w-full max-w-5xl rounded-lg border border-border bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <div className="text-sm font-semibold text-text">Describe table</div>
@@ -555,7 +576,7 @@ function DescribeTableModal({
           </button>
         </div>
 
-        <div className="max-h-[70vh] overflow-auto p-4">
+        <div className="max-h-[78vh] overflow-auto p-4">
           {columns.length ? (
             <table className="w-full border-separate border-spacing-0 text-sm">
               <thead>
@@ -582,18 +603,19 @@ function DescribeTableModal({
               </tbody>
             </table>
           ) : (
-            <div className="rounded-2xl border border-border/70 bg-background/40 px-4 py-5 text-sm text-muted">
+            <div className="rounded-lg border border-border/70 bg-background/40 px-4 py-5 text-sm text-muted">
               Nao foi possivel montar a descricao desta tabela com a metadata atual.
             </div>
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
 function ExplorerError({ message }: { message: string }) {
-  return <div className="rounded-xl border border-red-400/20 bg-red-400/8 p-3 text-sm text-red-300">{message}</div>;
+  return <div className="rounded-lg border border-red-400/20 bg-red-400/8 p-3 text-sm text-red-300">{message}</div>;
 }
 
 function resolveActionTitle(action: ExplorerActionId): string {
@@ -612,18 +634,20 @@ function resolveActionTitle(action: ExplorerActionId): string {
   }
 }
 
-function buildMenuPosition(x: number, y: number, anchor: 'right' | 'left' = 'left') {
-  const safeTop = Math.max(8, Math.min(y, window.innerHeight - 8));
+function buildMenuPosition(x: number, y: number, menuWidth: number) {
+  const left = Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8));
+  const top = Math.max(8, Math.min(y, window.innerHeight - 220));
 
-  if (anchor === 'right') {
-    return {
-      right: Math.max(8, window.innerWidth - x),
-      top: safeTop,
-    };
-  }
+  return { left, top };
+}
 
-  return {
-    left: Math.max(8, Math.min(x, window.innerWidth - 8)),
-    top: safeTop,
-  };
+function resolveMenuAnchor(event: ReactMouseEvent<HTMLElement>, menuWidth: number) {
+  const currentTarget = event.currentTarget.getBoundingClientRect();
+  const prefersRightSide = currentTarget.right + menuWidth + MENU_OFFSET_PX <= window.innerWidth - 8;
+  const x = prefersRightSide
+    ? Math.round(currentTarget.right + MENU_OFFSET_PX)
+    : Math.round(Math.max(8, currentTarget.left - menuWidth - MENU_OFFSET_PX));
+  const y = Math.round(Math.min(currentTarget.top, window.innerHeight - 220));
+
+  return { x, y };
 }

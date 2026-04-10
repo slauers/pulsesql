@@ -126,6 +126,7 @@ where
                 columns,
                 rows,
                 execution_time: started_at.elapsed().as_millis() as u64,
+                summary: None,
             })
         } else {
             let result = sqlx::query(trimmed)
@@ -137,6 +138,7 @@ where
                 columns: vec!["Rows Affected".into()],
                 rows: vec![json!({ "Rows Affected": result.rows_affected() })],
                 execution_time: started_at.elapsed().as_millis() as u64,
+                summary: None,
             })
         }
     };

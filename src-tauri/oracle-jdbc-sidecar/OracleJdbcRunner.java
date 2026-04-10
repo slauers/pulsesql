@@ -112,65 +112,454 @@ public class OracleJdbcRunner {
 
   private static String executeQuery(Request request) throws Exception {
     long startedAt = System.currentTimeMillis();
-    String sql = normalizeExecutableSql(request.query);
+    List<String> statements = splitExecutableStatements(request.query);
 
-    try (Connection connection = DriverManager.getConnection(request.jdbcUrl(), request.properties());
-         Statement statement = connection.createStatement()) {
-      statement.setQueryTimeout(30);
-      boolean hasResultSet = statement.execute(sql);
+    if (statements.isEmpty()) {
+      throw new IllegalArgumentException("Nenhum comando SQL informado.");
+    }
 
-      if (hasResultSet) {
-        try (ResultSet resultSet = statement.getResultSet()) {
-          ResultSetMetaData metaData = resultSet.getMetaData();
-          int columnCount = metaData.getColumnCount();
+    try (Connection connection = DriverManager.getConnection(request.jdbcUrl(), request.properties())) {
+      connection.setAutoCommit(false);
 
-          StringBuilder json = new StringBuilder();
-          json.append("{\"columns\":[");
+      try {
+        List<String> summaryParts = new ArrayList<>();
+        List<String> lastColumns = new ArrayList<>();
+        List<String> lastRows = new ArrayList<>();
 
-          for (int index = 1; index <= columnCount; index++) {
-            if (index > 1) {
-              json.append(',');
-            }
-            json.append(quote(metaData.getColumnLabel(index)));
-          }
+        for (String statementSql : statements) {
+          try (Statement statement = connection.createStatement()) {
+            statement.setQueryTimeout(30);
+            boolean hasResultSet = statement.execute(statementSql);
 
-          json.append("],\"rows\":[");
-
-          boolean firstRow = true;
-          while (resultSet.next()) {
-            if (!firstRow) {
-              json.append(',');
-            }
-            firstRow = false;
-            json.append('{');
-
-            for (int index = 1; index <= columnCount; index++) {
-              if (index > 1) {
-                json.append(',');
+            if (hasResultSet) {
+              try (ResultSet resultSet = statement.getResultSet()) {
+                SelectResult selectResult = readSelectResult(resultSet);
+                lastColumns = selectResult.columns;
+                lastRows = selectResult.rows;
               }
-
-              json.append(quote(metaData.getColumnLabel(index)))
-                  .append(':')
-                  .append(toJsonValue(resultSet, metaData, index));
+              continue;
             }
 
-            json.append('}');
+            String summary = buildStatementSummary(statementSql, statement.getUpdateCount());
+            if (summary != null) {
+              summaryParts.add(summary);
+            }
           }
+        }
 
-          json.append("],\"execution_time\":")
-              .append(System.currentTimeMillis() - startedAt)
-              .append('}');
+        connection.commit();
 
-          return json.toString();
+        return buildExecuteResponseJson(
+            lastColumns,
+            lastRows,
+            summaryParts.isEmpty() ? null : String.join("\n\n", summaryParts),
+            System.currentTimeMillis() - startedAt
+        );
+      } catch (Exception error) {
+        connection.rollback();
+        throw error;
+      }
+    }
+  }
+
+  private static SelectResult readSelectResult(ResultSet resultSet) throws Exception {
+    ResultSetMetaData metaData = resultSet.getMetaData();
+    int columnCount = metaData.getColumnCount();
+    List<String> columns = new ArrayList<>();
+    List<String> rows = new ArrayList<>();
+
+    for (int index = 1; index <= columnCount; index++) {
+      columns.add(metaData.getColumnLabel(index));
+    }
+
+    while (resultSet.next()) {
+      StringBuilder rowJson = new StringBuilder();
+      rowJson.append('{');
+
+      for (int index = 1; index <= columnCount; index++) {
+        if (index > 1) {
+          rowJson.append(',');
+        }
+
+        rowJson.append(quote(metaData.getColumnLabel(index)))
+            .append(':')
+            .append(toJsonValue(resultSet, metaData, index));
+      }
+
+      rowJson.append('}');
+      rows.add(rowJson.toString());
+    }
+
+    return new SelectResult(columns, rows);
+  }
+
+  private static String buildExecuteResponseJson(List<String> columns, List<String> rows, String summary, long executionTime) {
+    StringBuilder json = new StringBuilder();
+    json.append("{\"columns\":");
+    appendJsonStringArray(json, columns);
+    json.append(",\"rows\":[");
+    for (int index = 0; index < rows.size(); index++) {
+      if (index > 0) {
+        json.append(',');
+      }
+      json.append(rows.get(index));
+    }
+    json.append("],\"execution_time\":")
+        .append(executionTime)
+        .append(",\"summary\":")
+        .append(quote(summary))
+        .append('}');
+    return json.toString();
+  }
+
+  private static void appendJsonStringArray(StringBuilder json, List<String> items) {
+    json.append('[');
+    for (int index = 0; index < items.size(); index++) {
+      if (index > 0) {
+        json.append(',');
+      }
+      json.append(quote(items.get(index)));
+    }
+    json.append(']');
+  }
+
+  private static String buildStatementSummary(String sql, int updateCount) {
+    if (updateCount < 0) {
+      return null;
+    }
+
+    if (updateCount == 1) {
+      String insertSummary = tryBuildSingleInsertSummary(sql);
+      if (insertSummary != null) {
+        return insertSummary + "\n1 row affected.";
+      }
+
+      return "1 row affected.";
+    }
+
+    return updateCount + " rows affected.";
+  }
+
+  private static String tryBuildSingleInsertSummary(String sql) {
+    String normalized = normalizeExecutableSql(sql);
+    if (!normalized.regionMatches(true, 0, "INSERT INTO", 0, "INSERT INTO".length())) {
+      return null;
+    }
+
+    int valuesIndex = indexOfKeywordOutsideScopes(normalized, "VALUES", 0);
+    if (valuesIndex < 0) {
+      return null;
+    }
+
+    int columnListStart = normalized.indexOf('(', "INSERT INTO".length());
+    if (columnListStart < 0 || columnListStart > valuesIndex) {
+      return null;
+    }
+
+    int columnListEnd = findMatchingParenthesis(normalized, columnListStart);
+    if (columnListEnd < 0 || columnListEnd > valuesIndex) {
+      return null;
+    }
+
+    int valueListStart = normalized.indexOf('(', valuesIndex);
+    if (valueListStart < 0) {
+      return null;
+    }
+
+    int valueListEnd = findMatchingParenthesis(normalized, valueListStart);
+    if (valueListEnd < 0) {
+      return null;
+    }
+
+    List<String> columns = splitSqlList(normalized.substring(columnListStart + 1, columnListEnd));
+    List<String> values = splitSqlList(normalized.substring(valueListStart + 1, valueListEnd));
+
+    if (columns.isEmpty() || columns.size() != values.size()) {
+      return null;
+    }
+
+    StringBuilder summary = new StringBuilder("Dados inseridos:");
+    for (int index = 0; index < columns.size(); index++) {
+      summary.append('\n')
+          .append(cleanSqlIdentifier(columns.get(index)))
+          .append(": ")
+          .append(cleanInsertedValue(values.get(index)));
+    }
+
+    return summary.toString();
+  }
+
+  private static List<String> splitExecutableStatements(String sql) {
+    List<String> statements = new ArrayList<>();
+    if (sql == null) {
+      return statements;
+    }
+
+    StringBuilder current = new StringBuilder();
+    boolean inSingleQuote = false;
+    boolean inDoubleQuote = false;
+    boolean inLineComment = false;
+    boolean inBlockComment = false;
+
+    for (int index = 0; index < sql.length(); index++) {
+      char currentChar = sql.charAt(index);
+      char nextChar = index + 1 < sql.length() ? sql.charAt(index + 1) : '\0';
+
+      if (inLineComment) {
+        current.append(currentChar);
+        if (currentChar == '\n') {
+          inLineComment = false;
+        }
+        continue;
+      }
+
+      if (inBlockComment) {
+        current.append(currentChar);
+        if (currentChar == '*' && nextChar == '/') {
+          current.append(nextChar);
+          index++;
+          inBlockComment = false;
+        }
+        continue;
+      }
+
+      if (!inSingleQuote && !inDoubleQuote && currentChar == '-' && nextChar == '-') {
+        current.append(currentChar).append(nextChar);
+        index++;
+        inLineComment = true;
+        continue;
+      }
+
+      if (!inSingleQuote && !inDoubleQuote && currentChar == '/' && nextChar == '*') {
+        current.append(currentChar).append(nextChar);
+        index++;
+        inBlockComment = true;
+        continue;
+      }
+
+      if (currentChar == '\'' && !inDoubleQuote) {
+        current.append(currentChar);
+        if (inSingleQuote && nextChar == '\'') {
+          current.append(nextChar);
+          index++;
+        } else {
+          inSingleQuote = !inSingleQuote;
+        }
+        continue;
+      }
+
+      if (currentChar == '"' && !inSingleQuote) {
+        inDoubleQuote = !inDoubleQuote;
+        current.append(currentChar);
+        continue;
+      }
+
+      if (currentChar == ';' && !inSingleQuote && !inDoubleQuote) {
+        String statement = normalizeExecutableSql(current.toString());
+        if (!statement.isEmpty()) {
+          statements.add(statement);
+        }
+        current.setLength(0);
+        continue;
+      }
+
+      current.append(currentChar);
+    }
+
+    String tail = normalizeExecutableSql(current.toString());
+    if (!tail.isEmpty()) {
+      statements.add(tail);
+    }
+
+    return statements;
+  }
+
+  private static int indexOfKeywordOutsideScopes(String sql, String keyword, int fromIndex) {
+    String upperSql = sql.toUpperCase(Locale.ROOT);
+    String upperKeyword = keyword.toUpperCase(Locale.ROOT);
+    boolean inSingleQuote = false;
+    boolean inDoubleQuote = false;
+    int parenthesesDepth = 0;
+
+    for (int index = Math.max(fromIndex, 0); index <= sql.length() - upperKeyword.length(); index++) {
+      char current = sql.charAt(index);
+      char next = index + 1 < sql.length() ? sql.charAt(index + 1) : '\0';
+
+      if (!inDoubleQuote && current == '\'') {
+        if (inSingleQuote && next == '\'') {
+          index++;
+          continue;
+        }
+        inSingleQuote = !inSingleQuote;
+        continue;
+      }
+
+      if (!inSingleQuote && current == '"') {
+        inDoubleQuote = !inDoubleQuote;
+        continue;
+      }
+
+      if (inSingleQuote || inDoubleQuote) {
+        continue;
+      }
+
+      if (current == '(') {
+        parenthesesDepth++;
+        continue;
+      }
+
+      if (current == ')') {
+        parenthesesDepth = Math.max(0, parenthesesDepth - 1);
+        continue;
+      }
+
+      if (parenthesesDepth == 0
+          && upperSql.startsWith(upperKeyword, index)
+          && isKeywordBoundary(sql, index - 1)
+          && isKeywordBoundary(sql, index + upperKeyword.length())) {
+        return index;
+      }
+    }
+
+    return -1;
+  }
+
+  private static boolean isKeywordBoundary(String sql, int index) {
+    if (index < 0 || index >= sql.length()) {
+      return true;
+    }
+
+    char current = sql.charAt(index);
+    return !Character.isLetterOrDigit(current) && current != '_';
+  }
+
+  private static int findMatchingParenthesis(String sql, int openIndex) {
+    boolean inSingleQuote = false;
+    boolean inDoubleQuote = false;
+    int depth = 0;
+
+    for (int index = openIndex; index < sql.length(); index++) {
+      char current = sql.charAt(index);
+      char next = index + 1 < sql.length() ? sql.charAt(index + 1) : '\0';
+
+      if (!inDoubleQuote && current == '\'') {
+        if (inSingleQuote && next == '\'') {
+          index++;
+          continue;
+        }
+        inSingleQuote = !inSingleQuote;
+        continue;
+      }
+
+      if (!inSingleQuote && current == '"') {
+        inDoubleQuote = !inDoubleQuote;
+        continue;
+      }
+
+      if (inSingleQuote || inDoubleQuote) {
+        continue;
+      }
+
+      if (current == '(') {
+        depth++;
+      } else if (current == ')') {
+        depth--;
+        if (depth == 0) {
+          return index;
+        }
+      }
+    }
+
+    return -1;
+  }
+
+  private static List<String> splitSqlList(String source) {
+    List<String> items = new ArrayList<>();
+    StringBuilder current = new StringBuilder();
+    boolean inSingleQuote = false;
+    boolean inDoubleQuote = false;
+    int parenthesesDepth = 0;
+
+    for (int index = 0; index < source.length(); index++) {
+      char currentChar = source.charAt(index);
+      char nextChar = index + 1 < source.length() ? source.charAt(index + 1) : '\0';
+
+      if (!inDoubleQuote && currentChar == '\'') {
+        current.append(currentChar);
+        if (inSingleQuote && nextChar == '\'') {
+          current.append(nextChar);
+          index++;
+        } else {
+          inSingleQuote = !inSingleQuote;
+        }
+        continue;
+      }
+
+      if (!inSingleQuote && currentChar == '"') {
+        inDoubleQuote = !inDoubleQuote;
+        current.append(currentChar);
+        continue;
+      }
+
+      if (!inSingleQuote && !inDoubleQuote) {
+        if (currentChar == '(') {
+          parenthesesDepth++;
+        } else if (currentChar == ')') {
+          parenthesesDepth = Math.max(0, parenthesesDepth - 1);
+        } else if (currentChar == ',' && parenthesesDepth == 0) {
+          String item = trimToNull(current.toString());
+          if (item != null) {
+            items.add(item);
+          }
+          current.setLength(0);
+          continue;
         }
       }
 
-      connection.commit();
-      return "{\"columns\":[\"Rows Affected\"],\"rows\":[{\"Rows Affected\":"
-          + statement.getUpdateCount()
-          + "}],\"execution_time\":"
-          + (System.currentTimeMillis() - startedAt)
-          + "}";
+      current.append(currentChar);
+    }
+
+    String tail = trimToNull(current.toString());
+    if (tail != null) {
+      items.add(tail);
+    }
+
+    return items;
+  }
+
+  private static String cleanSqlIdentifier(String value) {
+    String trimmed = trimToNull(value);
+    if (trimmed == null) {
+      return "";
+    }
+
+    if (trimmed.startsWith("\"") && trimmed.endsWith("\"") && trimmed.length() >= 2) {
+      return trimmed.substring(1, trimmed.length() - 1);
+    }
+
+    return trimmed.toUpperCase(Locale.ROOT);
+  }
+
+  private static String cleanInsertedValue(String value) {
+    String trimmed = trimToNull(value);
+    if (trimmed == null) {
+      return "null";
+    }
+
+    if (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length() >= 2) {
+      return trimmed.substring(1, trimmed.length() - 1).replace("''", "'");
+    }
+
+    return trimmed;
+  }
+
+  private static final class SelectResult {
+    final List<String> columns;
+    final List<String> rows;
+
+    SelectResult(List<String> columns, List<String> rows) {
+      this.columns = columns;
+      this.rows = rows;
     }
   }
 

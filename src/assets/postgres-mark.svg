@@ -1,0 +1,20 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="pgGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#pgGlow)" stroke="#5ED0FF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M35 40C35 29 44 22 56 22H75C89 22 98 28 98 42V55C98 64 94 72 88 78L82 84V103C82 110 77 116 69 116C61 116 56 111 56 103V88L50 96C45 103 36 103 31 97C26 91 26 82 31 76L37 69C40 66 42 61 42 56V43C42 37 39 34 35 40Z"/>
+    <path d="M52 52C52 48 55 45 59 45C63 45 66 48 66 52V71C66 75 63 78 59 78C55 78 52 75 52 71V52Z"/>
+    <path d="M82 52C82 48 85 45 89 45C93 45 96 48 96 52V69C96 74 92 78 87 78C84 78 81 76 79 73"/>
+    <path d="M56 87C62 87 67 89 71 93"/>
+    <path d="M74 86C81 88 89 88 96 86"/>
+    <circle cx="59" cy="50" r="1.5" fill="#B8ECFF" stroke="none"/>
+    <circle cx="88" cy="50" r="1.5" fill="#B8ECFF" stroke="none"/>
+  </g>
+</svg>

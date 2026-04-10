@@ -32,13 +32,7 @@ export function registerSqlAutocomplete(
       const normalizedToken = typedToken.toLowerCase();
       const suggestions = rankCandidates(candidates, normalizedToken)
         .slice(0, 80)
-        .map((candidate, index) => ({
-          label: candidate,
-          kind: monaco.languages.CompletionItemKind.Field,
-          insertText: candidate,
-          range: tokenRange,
-          sortText: `${String(index).padStart(2, '0')}-${candidate}`,
-        }));
+        .map((candidate, index) => buildSuggestion(monaco, candidate, tokenRange, index));
 
       return { suggestions };
     },
@@ -118,4 +112,30 @@ function rankCandidates(candidates: string[], normalizedToken: string): string[]
     .filter((entry) => entry.score < 3)
     .sort((left, right) => left.score - right.score || left.candidate.localeCompare(right.candidate))
     .map((entry) => entry.candidate);
+}
+
+function buildSuggestion(
+  monaco: typeof Monaco,
+  candidate: string,
+  tokenRange: Monaco.IRange,
+  index: number,
+): Monaco.languages.CompletionItem {
+  const [schemaName, tableName] = candidate.includes('.')
+    ? candidate.split('.', 2)
+    : [undefined, candidate];
+
+  return {
+    label: schemaName
+      ? {
+          label: tableName,
+          description: schemaName,
+        }
+      : candidate,
+    kind: monaco.languages.CompletionItemKind.Field,
+    insertText: candidate,
+    filterText: candidate,
+    detail: schemaName ? `${schemaName}.${tableName}` : 'Tabela do schema ativo',
+    range: tokenRange,
+    sortText: `${String(index).padStart(2, '0')}-${candidate}`,
+  };
 }

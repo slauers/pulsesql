@@ -35,6 +35,7 @@ struct OracleSuccessResponse {
     columns: Option<Vec<String>>,
     rows: Option<Vec<Value>>,
     execution_time: Option<u64>,
+    summary: Option<String>,
     column_defs: Option<Vec<ColumnDef>>,
 }
 
@@ -130,6 +131,7 @@ pub async fn execute_query(
         execution_time: response
             .execution_time
             .unwrap_or_else(|| started_at.elapsed().as_millis() as u64),
+        summary: response.summary,
     })
 }
 

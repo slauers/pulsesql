@@ -168,13 +168,13 @@ export default function ConnectionForm({
       </div>
 
       {showImportPanel ? (
-        <div className="mb-5 rounded-2xl border border-border/70 bg-surface/65 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
+        <div className="mb-5 rounded-lg border border-border/70 bg-surface/65 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
           <div className="mb-2 text-sm font-medium text-text">Import Connection String</div>
           <textarea
             value={connectionString}
             onChange={(event) => setConnectionString(event.target.value)}
             placeholder="postgresql://postgres:password@host:5432/postgres?sslmode=require"
-            className="min-h-24 w-full resize-y rounded-xl border border-border bg-background px-3 py-2 text-sm font-mono text-text outline-none transition-colors focus:border-primary"
+            className="min-h-24 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono text-text outline-none transition-colors focus:border-primary"
           />
           <div className="mt-3 flex items-center justify-between gap-3">
             <div className="text-xs text-muted">
@@ -192,7 +192,7 @@ export default function ConnectionForm({
         </div>
       ) : null}
 
-      <form onSubmit={handleSubmit} className="space-y-5 glass-panel p-4 md:p-6 rounded-2xl border border-border shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
+      <form onSubmit={handleSubmit} className="space-y-5 glass-panel p-4 md:p-6 rounded-lg border border-border shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm text-muted mb-1">Connection Name</label>
@@ -340,7 +340,7 @@ export default function ConnectionForm({
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 rounded-xl border border-border/60 bg-background/35 px-3 py-2">
+        <div className="flex items-center justify-end gap-3 rounded-lg border border-border/60 bg-background/35 px-3 py-2">
           {testState !== 'idle' ? (
             <div className="flex items-center gap-2 text-xs">
               {testState === 'testing' ? (
@@ -509,7 +509,7 @@ export default function ConnectionForm({
 
         {testMessage ? (
           <div
-            className={`rounded-xl border px-3 py-2 text-sm ${
+            className={`rounded-lg border px-3 py-2 text-sm ${
               testState === 'success'
                 ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
                 : testState === 'error'
