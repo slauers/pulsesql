@@ -1,3 +1,8 @@
+$Clean = $false
+if ($args -contains "-Clean") {
+  $Clean = $true
+}
+
 $ErrorActionPreference = "Stop"
 
 $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -18,5 +23,12 @@ if (-not (Test-Path $vcvars)) {
   throw "vcvars64.bat not found at $vcvars"
 }
 
-& cmd.exe /c "call `"$vcvars`" && set CARGO_BUILD_JOBS=1 && npm run tauri build"
+if ($Clean) {
+  & cmd.exe /c "call `"$vcvars`" && cd /d src-tauri && cargo clean"
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+}
+
+& cmd.exe /c "call `"$vcvars`" && set `"CARGO_BUILD_JOBS=1`" && npm run tauri build"
 exit $LASTEXITCODE

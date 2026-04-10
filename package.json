@@ -11,7 +11,8 @@
     "app:dev": "npm run tauri dev",
     "app:build": "npm run tauri build",
     "app:dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-tauri-dev.ps1",
-    "app:build:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-tauri-build.ps1"
+    "app:build:win": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-tauri-build.ps1",
+    "app:build:win:clean": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-tauri-build.ps1 -Clean"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
