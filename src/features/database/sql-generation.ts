@@ -27,36 +27,96 @@ export function buildCountRowsQuery(reference: TableReference): string {
 FROM ${formatTableReference(reference)};`;
 }
 
-export function buildInsertTemplate(reference: TableReference, columns?: MetadataColumn[]): string {
-  const selectedColumns = takeTemplateColumns(columns, ['column1', 'column2']);
-  const values = selectedColumns.map((_, index) => `value${index + 1}`);
+export function buildInsertTemplate(
+  engine: DatabaseEngine,
+  reference: TableReference,
+  columns?: MetadataColumn[],
+): string {
+  const selectedColumns = takeInsertColumns(columns);
+  const values = selectedColumns.map((column) => buildInsertValuePlaceholder(engine, column));
 
   return `INSERT INTO ${formatTableReference(reference)} (
-  ${selectedColumns.join(',\n  ')}
+  ${selectedColumns.map((column) => column.columnName).join(',\n  ')}
 ) VALUES (
   ${values.join(',\n  ')}
 );`;
 }
 
-export function buildUpdateTemplate(reference: TableReference, columns?: MetadataColumn[]): string {
-  const selectedColumns = takeTemplateColumns(columns, ['column1', 'column2']);
-  const assignments = selectedColumns.map((column, index) =>
-    index === 0 ? `${column} = value1` : `    ${column} = value${index + 1}`,
-  );
-
+export function buildUpdateTemplate(reference: TableReference): string {
   return `UPDATE ${formatTableReference(reference)}
-SET ${assignments.join(',\n')}
-WHERE condition;`;
+SET ? = ?
+WHERE id = ?;`;
 }
 
 export function formatTableReference(reference: TableReference): string {
   return reference.schema ? `${reference.schema}.${reference.table}` : reference.table;
 }
 
-function takeTemplateColumns(columns: MetadataColumn[] | undefined, fallback: string[]): string[] {
-  if (!columns?.length) {
-    return fallback;
+function takeInsertColumns(columns?: MetadataColumn[]): MetadataColumn[] {
+  const filteredColumns = columns?.filter((column) => !isPrimaryIdColumn(column.columnName)) ?? [];
+
+  if (filteredColumns.length) {
+    return filteredColumns;
   }
 
-  return columns.slice(0, 2).map((column) => column.columnName);
+  return [
+    createFallbackColumn('column1'),
+    createFallbackColumn('column2'),
+  ];
+}
+
+function buildInsertValuePlaceholder(engine: DatabaseEngine, column: MetadataColumn): string {
+  const dataType = column.dataType.toLowerCase();
+
+  if (isDateLikeType(dataType)) {
+    return engine === 'oracle' ? 'SYSDATE' : 'NOW()';
+  }
+
+  if (isNumericType(dataType)) {
+    return '0';
+  }
+
+  if (isBooleanType(dataType)) {
+    return engine === 'oracle' ? '0' : 'false';
+  }
+
+  return "''";
+}
+
+function isPrimaryIdColumn(columnName: string): boolean {
+  return columnName.trim().toLowerCase() === 'id';
+}
+
+function createFallbackColumn(columnName: string): MetadataColumn {
+  return {
+    columnName,
+    dataType: 'varchar',
+    nullable: null,
+    defaultValue: null,
+  };
+}
+
+function isDateLikeType(dataType: string): boolean {
+  return (
+    dataType.includes('date') ||
+    dataType.includes('time') ||
+    dataType.includes('timestamp')
+  );
+}
+
+function isNumericType(dataType: string): boolean {
+  return (
+    dataType.includes('int') ||
+    dataType.includes('number') ||
+    dataType.includes('numeric') ||
+    dataType.includes('decimal') ||
+    dataType.includes('float') ||
+    dataType.includes('double') ||
+    dataType.includes('real') ||
+    dataType.includes('serial')
+  );
+}
+
+function isBooleanType(dataType: string): boolean {
+  return dataType.includes('bool') || dataType === 'bit';
 }

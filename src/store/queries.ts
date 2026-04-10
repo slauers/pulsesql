@@ -9,18 +9,22 @@ export interface QueryTab {
 interface QueriesState {
   tabs: QueryTab[];
   activeTabId: string | null;
+  pendingExecutionTabId: string | null;
   addTab: () => void;
   addTabWithContent: (content: string, title?: string) => string;
   updateTabContent: (id: string, content: string) => void;
   replaceActiveTabContent: (content: string, title?: string) => string | null;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
+  requestTabExecution: (id: string) => void;
+  clearPendingExecution: () => void;
 }
 
 const QUERY_SESSION_STORAGE_KEY = 'query-session';
 
 export const useQueriesStore = create<QueriesState>((set) => ({
   ...readQueriesState(),
+  pendingExecutionTabId: null,
   
   addTab: () => set((state) => {
     const newId = crypto.randomUUID();
@@ -111,6 +115,14 @@ export const useQueriesStore = create<QueriesState>((set) => ({
     writeQueriesState(next);
     return next;
   }),
+  
+  requestTabExecution: (id) => set(() => ({
+    pendingExecutionTabId: id,
+  })),
+
+  clearPendingExecution: () => set(() => ({
+    pendingExecutionTabId: null,
+  })),
 }));
 
 function readQueriesState(): Pick<QueriesState, 'tabs' | 'activeTabId'> {

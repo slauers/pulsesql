@@ -3,6 +3,7 @@ use crate::db::{ColumnDef, QueryResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -139,6 +140,8 @@ pub fn init_sidecar_root(app: &AppHandle) -> Result<(), String> {
     let app_data_dir = app
         .path()
         .app_data_dir()
+        .or_else(|_| app.path().app_local_data_dir())
+        .or_else(|_| std::env::current_dir())
         .map_err(|error| format!("Failed to resolve Oracle app data directory: {error}"))?;
 
     let sidecar_root = app_data_dir.join("oracle-jdbc-sidecar");
@@ -350,7 +353,16 @@ fn ensure_oracle_driver(sidecar_root: &Path) -> Result<(), String> {
 }
 
 fn build_classpath(classes_dir: &Path, jar_path: &Path) -> String {
-    format!("{}:{}", classes_dir.display(), jar_path.display())
+    std::env::join_paths([classes_dir, jar_path])
+        .unwrap_or_else(|_| {
+            let mut fallback = OsString::from(classes_dir.as_os_str());
+            let separator = if cfg!(windows) { ";" } else { ":" };
+            fallback.push(separator);
+            fallback.push(jar_path.as_os_str());
+            fallback
+        })
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn merge_driver_properties(
@@ -387,10 +399,14 @@ fn oracle_sidecar_root() -> Result<PathBuf, String> {
         return Ok(path.clone());
     }
 
-    let current_dir = std::env::current_dir()
-        .map_err(|error| format!("Failed to resolve current directory: {error}"))?;
+    let fallback_root = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .or_else(|| std::env::current_dir().ok())
+        .map(|root| root.join("oracle-jdbc-sidecar"))
+        .ok_or_else(|| "Failed to resolve Oracle sidecar directory".to_string())?;
 
-    Ok(current_dir.join("target").join("oracle-jdbc-sidecar"))
+    Ok(fallback_root)
 }
 
 fn file_mtime(path: &Path) -> Result<SystemTime, String> {

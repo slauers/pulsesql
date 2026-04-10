@@ -91,6 +91,8 @@ export function DatabaseExplorer({
   const connection = useConnectionsStore((state) => state.connections.find((item) => item.id === connId) ?? null);
   const updateConnection = useConnectionsStore((state) => state.updateConnection);
   const addTabWithContent = useQueriesStore((state) => state.addTabWithContent);
+  const replaceActiveTabContent = useQueriesStore((state) => state.replaceActiveTabContent);
+  const requestTabExecution = useQueriesStore((state) => state.requestTabExecution);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -173,8 +175,16 @@ export function DatabaseExplorer({
         : action === 'countRows'
           ? buildCountRowsQuery(reference)
           : action === 'insert'
-            ? buildInsertTemplate(reference, columns)
-            : buildUpdateTemplate(reference, columns);
+            ? buildInsertTemplate(engine, reference, columns)
+            : buildUpdateTemplate(reference);
+
+    if (action === 'selectTop100') {
+      const tabId = replaceActiveTabContent(sql, `${table} ${resolveActionTitle(action)}`);
+      if (tabId) {
+        requestTabExecution(tabId);
+      }
+      return;
+    }
 
     addTabWithContent(sql, `${table} ${resolveActionTitle(action)}`);
   };

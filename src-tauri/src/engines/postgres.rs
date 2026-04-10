@@ -1,5 +1,6 @@
 use crate::connection::types::ConnectionConfig;
 use crate::db::{ColumnDef, QueryResult};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime, DateTime, FixedOffset, Utc};
 use serde_json::{json, Map, Value};
 use sqlx::{postgres::PgPoolOptions, Column, Executor, PgPool, Row};
 use std::time::{Duration, Instant};
@@ -182,6 +183,31 @@ fn pg_value_to_json(row: &sqlx::postgres::PgRow, index: usize) -> Value {
     }
     if let Ok(value) = row.try_get::<Option<String>, _>(index) {
         return value.map(Value::String).unwrap_or(Value::Null);
+    }
+    if let Ok(value) = row.try_get::<Option<NaiveDate>, _>(index) {
+        return value
+            .map(|item| Value::String(item.format("%Y-%m-%d").to_string()))
+            .unwrap_or(Value::Null);
+    }
+    if let Ok(value) = row.try_get::<Option<NaiveTime>, _>(index) {
+        return value
+            .map(|item| Value::String(item.format("%H:%M:%S").to_string()))
+            .unwrap_or(Value::Null);
+    }
+    if let Ok(value) = row.try_get::<Option<NaiveDateTime>, _>(index) {
+        return value
+            .map(|item| Value::String(item.format("%Y-%m-%d %H:%M:%S").to_string()))
+            .unwrap_or(Value::Null);
+    }
+    if let Ok(value) = row.try_get::<Option<DateTime<FixedOffset>>, _>(index) {
+        return value
+            .map(|item| Value::String(item.to_rfc3339()))
+            .unwrap_or(Value::Null);
+    }
+    if let Ok(value) = row.try_get::<Option<DateTime<Utc>>, _>(index) {
+        return value
+            .map(|item| Value::String(item.to_rfc3339()))
+            .unwrap_or(Value::Null);
     }
 
     match row.try_get::<Option<Value>, _>(index) {

@@ -3,6 +3,7 @@ import Editor from '@monaco-editor/react';
 import { useQueriesStore } from '../../store/queries';
 import { type DatabaseEngine, useConnectionsStore } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
+import { createPortal } from 'react-dom';
 import { ensureTablesCached } from '../database/metadata-cache';
 import {
   Plus,
@@ -51,12 +52,14 @@ export default function QueryWorkspace({
   const {
     tabs,
     activeTabId,
+    pendingExecutionTabId,
     addTab,
     addTabWithContent,
     setActiveTab,
     closeTab,
     updateTabContent,
     replaceActiveTabContent,
+    clearPendingExecution,
   } = useQueriesStore();
   const { activeConnectionId, connections, setActiveConnection } = useConnectionsStore();
   const runtimeStatus = useConnectionRuntimeStore((state) =>
@@ -78,6 +81,7 @@ export default function QueryWorkspace({
   const [quickFilter, setQuickFilter] = useState('');
   const [resultsHeight, setResultsHeight] = useState(34);
   const [resultsResizing, setResultsResizing] = useState(false);
+  const [pendingRiskyExecution, setPendingRiskyExecution] = useState<string[] | null>(null);
   const executeQueryRef = useRef<() => void>(() => {});
   const editorRef = useRef<any>(null);
   const lastCursorPositionRef = useRef<{ lineNumber: number; column: number } | null>(null);
@@ -167,7 +171,15 @@ export default function QueryWorkspace({
     }
   }, [setSemanticBackgroundState]);
 
-  const executeQuery = useCallback(async () => {
+  const executeStatements = useCallback(async (statements: string[]) => {
+    if (!activeConnectionId) {
+      return;
+    }
+
+    await runQueryBatch(statements, activeConnectionId);
+  }, [activeConnectionId, runQueryBatch]);
+
+  const executeQuery = useCallback(async (options?: { skipRiskConfirmation?: boolean }) => {
     if (!activeTab || !activeConnectionId) return;
 
     const executionTarget = resolveExecutionTarget(
@@ -179,8 +191,14 @@ export default function QueryWorkspace({
       return;
     }
 
-    await runQueryBatch(executionTarget.statements, activeConnectionId);
-  }, [activeTab, activeConnectionId, runQueryBatch]);
+    if (!options?.skipRiskConfirmation && hasUpdateWithoutWhere(executionTarget.statements)) {
+      setPendingRiskyExecution(executionTarget.statements);
+      return;
+    }
+
+    setPendingRiskyExecution(null);
+    await executeStatements(executionTarget.statements);
+  }, [activeTab, activeConnectionId, executeStatements]);
 
   const runHistoryItem = useCallback(async (item: QueryHistoryItem, replaceCurrent: boolean) => {
     const connection = connections.find((current) => current.id === item.connectionId);
@@ -246,6 +264,28 @@ export default function QueryWorkspace({
       void executeQuery();
     };
   }, [executeQuery]);
+
+  useEffect(() => {
+    if (!pendingExecutionTabId || pendingExecutionTabId !== activeTabId) {
+      return;
+    }
+
+    if (loading || !activeTab || !activeConnectionId || !isConnectionReady) {
+      return;
+    }
+
+    clearPendingExecution();
+    void executeQuery();
+  }, [
+    activeConnectionId,
+    activeTab,
+    activeTabId,
+    clearPendingExecution,
+    executeQuery,
+    isConnectionReady,
+    loading,
+    pendingExecutionTabId,
+  ]);
 
   useEffect(() => () => {
     if (semanticResetTimeoutRef.current) {
@@ -331,7 +371,7 @@ export default function QueryWorkspace({
 
             <div className="px-3 py-2.5 flex flex-wrap items-center gap-2">
               <button
-                onClick={executeQuery}
+                onClick={() => void executeQuery()}
                 disabled={loading || !activeTab || !activeConnectionId || !isConnectionReady}
                 className="flex items-center gap-1.5 bg-emerald-400/18 text-emerald-200 hover:bg-emerald-400/26 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-400/35 shadow-[0_0_18px_rgba(16,185,129,0.18)] hover:shadow-[0_0_24px_rgba(16,185,129,0.28)]"
               >
@@ -639,7 +679,63 @@ export default function QueryWorkspace({
         onReplaceCurrent={replaceCurrentWithHistory}
         onRunAgain={(item) => void runHistoryItem(item, true)}
       />
+
+      {pendingRiskyExecution ? (
+        <DangerousUpdateModal
+          onCancel={() => setPendingRiskyExecution(null)}
+          onConfirm={() => void executeQuery({ skipRiskConfirmation: true })}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function DangerousUpdateModal({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[160] flex items-center justify-center bg-background/76 p-6 backdrop-blur-sm"
+      onMouseDown={onCancel}
+    >
+      <div
+        className="w-full max-w-md rounded-lg border border-amber-400/30 bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="border-b border-border px-5 py-4">
+          <div className="text-sm font-semibold text-text">Confirmar update sem where</div>
+          <div className="mt-1 text-xs text-muted">
+            Essa query parece executar um `UPDATE` sem `WHERE` e pode alterar todas as linhas da tabela.
+          </div>
+        </div>
+
+        <div className="px-5 py-4 text-sm text-amber-100/90">
+          Deseja executar mesmo assim?
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-lg border border-amber-400/40 bg-amber-400/12 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-400/18"
+          >
+            Executar mesmo assim
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -691,6 +787,77 @@ function resolveExecutionTarget(
 
 function splitSqlStatements(sql: string) {
   return splitSqlStatementsWithRange(sql).map((item) => item.text);
+}
+
+function hasUpdateWithoutWhere(statements: string[]) {
+  return statements.some((statement) => isUpdateWithoutWhere(statement));
+}
+
+function isUpdateWithoutWhere(sql: string) {
+  const normalized = stripSqlCommentsAndStrings(sql).replace(/\s+/g, ' ').trim().toUpperCase();
+  return normalized.startsWith('UPDATE ') && !normalized.includes(' WHERE ');
+}
+
+function stripSqlCommentsAndStrings(sql: string) {
+  let result = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < sql.length; index++) {
+    const currentChar = sql[index];
+    const nextChar = sql[index + 1] ?? '';
+
+    if (inLineComment) {
+      if (currentChar === '\n') {
+        inLineComment = false;
+        result += currentChar;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (currentChar === '*' && nextChar === '/') {
+        index += 1;
+        inBlockComment = false;
+      }
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && currentChar === '-' && nextChar === '-') {
+      index += 1;
+      inLineComment = true;
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && currentChar === '/' && nextChar === '*') {
+      index += 1;
+      inBlockComment = true;
+      continue;
+    }
+
+    if (!inDoubleQuote && currentChar === "'") {
+      if (inSingleQuote && nextChar === "'") {
+        index += 1;
+        continue;
+      }
+
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+
+    if (!inSingleQuote && currentChar === '"') {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote) {
+      result += currentChar;
+    }
+  }
+
+  return result;
 }
 
 function splitSqlStatementsWithRange(sql: string) {
