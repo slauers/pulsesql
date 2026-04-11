@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { readSystemConfig, updateSystemConfig } from './systemConfig';
 
 export type DatabaseEngine = 'postgres' | 'mysql' | 'oracle';
 export type SshAuthMethod = 'password' | 'privateKey';
@@ -37,15 +38,16 @@ export interface ConnectionConfig {
 interface ConnectionsState {
   connections: ConnectionConfig[];
   activeConnectionId: string | null;
+  favoriteConnectionId: string | null;
   addConnection: (conn: ConnectionConfig) => void;
   updateConnection: (conn: ConnectionConfig) => void;
   removeConnection: (id: string) => void;
   setActiveConnection: (id: string | null) => void;
+  setFavoriteConnection: (id: string | null) => void;
 }
 
 const CONNECTIONS_STORAGE_KEY = 'connections';
 const ACTIVE_CONNECTION_STORAGE_KEY = 'active-connection-id';
-
 const DEV_TEST_CONNECTIONS: ConnectionConfig[] = [
   {
     id: 'dev-supabase-test',
@@ -85,6 +87,7 @@ const DEV_TEST_CONNECTIONS: ConnectionConfig[] = [
 export const useConnectionsStore = create<ConnectionsState>((set) => ({
   connections: readConnections(),
   activeConnectionId: readActiveConnectionId(),
+  favoriteConnectionId: readFavoriteConnectionId(),
   addConnection: (conn) =>
     set((state) => {
       const newConns = [...state.connections, conn];
@@ -106,14 +109,34 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
       if (state.activeConnectionId === id) {
         writeActiveConnectionId(null);
       }
+      if (state.favoriteConnectionId === id) {
+        updateSystemConfig((current) => ({
+          ...current,
+          startup: {
+            ...current.startup,
+            favoriteConnectionId: null,
+          },
+        }));
+      }
       return { 
         connections: newConns,
-        activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId
+        activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
+        favoriteConnectionId: state.favoriteConnectionId === id ? null : state.favoriteConnectionId,
       };
     }),
   setActiveConnection: (id) => set(() => {
     writeActiveConnectionId(id);
     return { activeConnectionId: id };
+  }),
+  setFavoriteConnection: (id) => set(() => {
+    updateSystemConfig((current) => ({
+      ...current,
+      startup: {
+        ...current.startup,
+        favoriteConnectionId: id,
+      },
+    }));
+    return { favoriteConnectionId: id };
   }),
 }));
 
@@ -151,6 +174,10 @@ function writeActiveConnectionId(id: string | null) {
   }
 
   localStorage.removeItem(ACTIVE_CONNECTION_STORAGE_KEY);
+}
+
+function readFavoriteConnectionId(): string | null {
+  return readSystemConfig().startup.favoriteConnectionId;
 }
 
 function normalizeConnection(input: unknown): ConnectionConfig | null {

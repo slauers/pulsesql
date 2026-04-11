@@ -5,6 +5,7 @@ export interface ColumnDef {
   data_type: string;
   nullable?: boolean | null;
   default_value?: string | null;
+  is_auto_increment?: boolean | null;
 }
 
 export interface MetadataColumn {
@@ -12,6 +13,7 @@ export interface MetadataColumn {
   dataType: string;
   nullable: boolean | null;
   defaultValue: string | null;
+  isAutoIncrement: boolean | null;
 }
 
 export interface MetadataTableEntry {
@@ -44,5 +46,6 @@ export function normalizeColumnDef(column: ColumnDef): MetadataColumn {
     dataType: column.data_type,
     nullable: typeof column.nullable === 'boolean' ? column.nullable : null,
     defaultValue: typeof column.default_value === 'string' ? column.default_value.trim() || null : null,
+    isAutoIncrement: typeof column.is_auto_increment === 'boolean' ? column.is_auto_increment : null,
   };
 }

@@ -1,14 +1,20 @@
 import type * as Monaco from 'monaco-editor';
+import { ensureTablesCached } from '../database/metadata-cache';
+import type { DatabaseEngine } from '../../store/connections';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
 
 export function registerSqlAutocomplete(
   monaco: typeof Monaco,
-  getContext: () => { connectionId?: string | null; activeSchema?: string | null },
+  getContext: () => {
+    connectionId?: string | null;
+    activeSchema?: string | null;
+    engine?: DatabaseEngine | null;
+  },
 ) {
   return monaco.languages.registerCompletionItemProvider('sql', {
     triggerCharacters: [' ', '.', '_'],
-    provideCompletionItems(model, position) {
-      const { connectionId, activeSchema } = getContext();
+    async provideCompletionItems(model, position) {
+      const { connectionId, activeSchema, engine } = getContext();
       if (!connectionId) {
         return { suggestions: [] };
       }
@@ -28,7 +34,16 @@ export function registerSqlAutocomplete(
         endColumn: position.column,
       };
 
-      const candidates = getTableCandidates(connectionId, activeSchema, typedToken.includes('.'));
+      let candidates = getTableCandidates(connectionId, activeSchema, typedToken.includes('.'));
+      if (!candidates.length && activeSchema && engine) {
+        try {
+          await ensureTablesCached(connectionId, engine, activeSchema);
+          candidates = getTableCandidates(connectionId, activeSchema, typedToken.includes('.'));
+        } catch {
+          return { suggestions: [] };
+        }
+      }
+
       const normalizedToken = typedToken.toLowerCase();
       const suggestions = rankCandidates(candidates, normalizedToken)
         .slice(0, 80)

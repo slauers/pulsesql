@@ -16,14 +16,25 @@ pub struct ColumnDef {
     pub data_type: String,
     pub nullable: Option<bool>,
     pub default_value: Option<String>,
+    pub is_auto_increment: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct QueryColumnMeta {
+    pub name: String,
+    pub data_type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct QueryResult {
     pub columns: Vec<String>,
+    pub column_meta: Vec<QueryColumnMeta>,
     pub rows: Vec<Value>,
     pub execution_time: u64,
     pub summary: Option<String>,
+    pub total_rows: Option<u64>,
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -268,12 +279,18 @@ pub async fn execute_query(
     history: tauri::State<'_, HistoryState>,
     conn_id: String,
     query: String,
+    page: Option<u32>,
+    page_size: Option<u32>,
 ) -> Result<ExecuteQueryPayload, String> {
     let pool = get_connection_pool(&state, &conn_id).await?;
     let execution = match pool {
-        ConnectionPool::Postgres(pool) => postgres::execute_query(&pool, &query).await,
-        ConnectionPool::Mysql(pool) => mysql::execute_query(&pool, &query).await,
-        ConnectionPool::Oracle(connection) => oracle::execute_query(&connection, &query).await,
+        ConnectionPool::Postgres(pool) => {
+            postgres::execute_query(&pool, &query, page, page_size).await
+        }
+        ConnectionPool::Mysql(pool) => mysql::execute_query(&pool, &query, page, page_size).await,
+        ConnectionPool::Oracle(connection) => {
+            oracle::execute_query(&connection, &query, page, page_size).await
+        }
     };
 
     let now = now_iso_like();
@@ -282,7 +299,8 @@ pub async fn execute_query(
 
     match execution {
         Ok(result) => {
-            let row_count = i64::try_from(result.rows.len()).unwrap_or(i64::MAX);
+            let row_count = i64::try_from(result.total_rows.unwrap_or(result.rows.len() as u64))
+                .unwrap_or(i64::MAX);
             history
                 .record(NewQueryHistoryItem {
                     id: history_item_id.clone(),

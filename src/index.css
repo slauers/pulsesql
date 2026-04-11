@@ -4,7 +4,18 @@
 
 @layer base {
   :root {
-    color-scheme: dark;
+    color-scheme: var(--bt-color-scheme, dark);
+    --bt-background: #050913;
+    --bt-surface: #0b1220;
+    --bt-border: #1a2840;
+    --bt-primary: #22c7ff;
+    --bt-text: #ecf7ff;
+    --bt-muted: #8093b1;
+    --bt-body-background:
+      radial-gradient(circle at top center, rgba(34, 199, 255, 0.16), transparent 34%),
+      radial-gradient(circle at 18% 18%, rgba(34, 199, 255, 0.08), transparent 24%),
+      linear-gradient(180deg, #08101c 0%, #050913 48%, #04070f 100%);
+    --bt-glass-panel: rgba(11, 18, 32, 0.78);
   }
 
   html,
@@ -18,10 +29,7 @@
     font-family: "SF Pro Display", "Segoe UI", "Helvetica Neue", sans-serif;
     margin: 0;
     padding: 0;
-    background:
-      radial-gradient(circle at top center, rgba(34, 199, 255, 0.16), transparent 34%),
-      radial-gradient(circle at 18% 18%, rgba(34, 199, 255, 0.08), transparent 24%),
-      linear-gradient(180deg, #08101c 0%, #050913 48%, #04070f 100%);
+    background: var(--bt-body-background);
   }
 }
 
@@ -46,12 +54,27 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-border rounded hover:bg-muted/50;
+  background-color: var(--bt-border);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--bt-muted) 50%, transparent);
 }
 
 .glass-panel {
-  background: rgba(11, 18, 32, 0.78);
+  background: var(--bt-glass-panel);
   backdrop-filter: blur(18px);
+}
+
+body[data-density='compact'] .bt-density-panel {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+body[data-density='compact'] .bt-density-chip {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
 }
 
 .grid-sheen {
@@ -72,12 +95,12 @@ textarea {
   border: 1px solid rgba(126, 152, 184, 0.2);
   border-radius: 0.5rem;
   background:
-    radial-gradient(circle at center, rgba(110, 72, 255, 0.08), transparent 34%),
+    radial-gradient(circle at center, rgba(34, 199, 255, 0.06), transparent 34%),
     linear-gradient(180deg, rgba(9, 17, 29, 0.82) 0%, rgba(7, 13, 23, 0.72) 100%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.03),
     0 18px 40px rgba(0, 0, 0, 0.24),
-    0 0 0 1px rgba(110, 72, 255, 0.06);
+    0 0 0 1px rgba(34, 199, 255, 0.04);
   transition:
     border-color 220ms ease,
     box-shadow 220ms ease,
@@ -95,21 +118,21 @@ textarea {
 }
 
 .sql-workspace-shell--idle {
-  border-color: rgba(110, 72, 255, 0.24);
+  border-color: rgba(126, 152, 184, 0.18);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.03),
     0 18px 40px rgba(0, 0, 0, 0.24),
-    0 0 26px rgba(110, 72, 255, 0.14),
-    0 0 56px rgba(110, 72, 255, 0.06);
+    0 0 18px rgba(34, 199, 255, 0.06),
+    0 0 36px rgba(34, 199, 255, 0.03);
 }
 
 .sql-workspace-shell--running {
-  border-color: rgba(110, 72, 255, 0.54);
+  border-color: rgba(34, 199, 255, 0.34);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 18px 42px rgba(0, 0, 0, 0.26),
-    0 0 42px rgba(110, 72, 255, 0.28),
-    0 0 84px rgba(110, 72, 255, 0.14);
+    0 0 28px rgba(34, 199, 255, 0.16),
+    0 0 58px rgba(34, 199, 255, 0.08);
   animation: sqlWorkspacePulse 2.2s ease-in-out infinite;
 }
 
@@ -120,7 +143,7 @@ textarea {
     0 18px 42px rgba(0, 0, 0, 0.26),
     0 0 42px rgba(29, 185, 84, 0.26),
     0 0 84px rgba(29, 185, 84, 0.12);
-  animation: sqlWorkspaceSuccessFlash 5s ease-out forwards;
+  animation: sqlWorkspaceSuccessFlash 3.6s ease-out forwards;
 }
 
 .sql-workspace-shell--error {
@@ -130,7 +153,17 @@ textarea {
     0 18px 42px rgba(0, 0, 0, 0.26),
     0 0 42px rgba(255, 75, 75, 0.28),
     0 0 84px rgba(255, 75, 75, 0.14);
-  animation: sqlWorkspaceErrorFlash 5s ease-out forwards;
+  animation: sqlWorkspaceErrorFlash 6.2s ease-out forwards;
+}
+
+.sql-workspace-shell--warning {
+  border-color: rgba(251, 191, 36, 0.56);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 18px 42px rgba(0, 0, 0, 0.26),
+    0 0 42px rgba(251, 191, 36, 0.24),
+    0 0 84px rgba(249, 115, 22, 0.12);
+  animation: sqlWorkspaceWarningFlash 6.2s ease-out forwards;
 }
 
 .semantic-ambient {
@@ -153,49 +186,72 @@ textarea {
 
 .semantic-ambient--running::before {
   background:
-    radial-gradient(circle at center, rgba(110, 72, 255, 0.34) 0%, rgba(110, 72, 255, 0.18) 20%, rgba(110, 72, 255, 0.08) 42%, transparent 72%);
+    radial-gradient(circle at center, rgba(34, 199, 255, 0.24) 0%, rgba(34, 199, 255, 0.12) 20%, rgba(34, 199, 255, 0.05) 42%, transparent 72%);
   animation: semanticCenterPulse 2.1s ease-in-out infinite;
   filter: blur(8px);
 }
 
 .semantic-ambient--running::after {
   background:
-    radial-gradient(circle at center, rgba(110, 72, 255, 0.18) 0%, rgba(110, 72, 255, 0.08) 30%, transparent 70%);
+    radial-gradient(circle at center, rgba(120, 220, 255, 0.12) 0%, rgba(34, 199, 255, 0.06) 30%, transparent 70%);
   animation: semanticCenterPulse 2.8s ease-in-out infinite reverse;
   filter: blur(22px);
 }
 
 .semantic-ambient--success,
+.semantic-ambient--warning,
 .semantic-ambient--error {
   opacity: 1;
-  animation: semanticFlashFade 5s ease-out forwards;
+}
+
+.semantic-ambient--success {
+  animation: semanticFlashFade 3.6s ease-out forwards;
+}
+
+.semantic-ambient--warning,
+.semantic-ambient--error {
+  animation: semanticFlashFade 6.2s ease-out forwards;
 }
 
 .semantic-ambient--success::before {
   background:
     radial-gradient(circle at center, rgba(29, 185, 84, 0.34) 0%, rgba(29, 185, 84, 0.2) 18%, rgba(29, 185, 84, 0.08) 40%, transparent 70%);
-  animation: semanticCenterBloom 5s ease-out forwards;
+  animation: semanticCenterBloom 3.6s ease-out forwards;
   filter: blur(6px);
 }
 
 .semantic-ambient--success::after {
   background:
     radial-gradient(circle at center, rgba(92, 255, 195, 0.2) 0%, rgba(92, 255, 195, 0.08) 30%, transparent 72%);
-  animation: semanticCenterBloom 5s ease-out forwards;
+  animation: semanticCenterBloom 3.6s ease-out forwards;
   filter: blur(18px);
 }
 
 .semantic-ambient--error::before {
   background:
     radial-gradient(circle at center, rgba(255, 75, 75, 0.38) 0%, rgba(255, 75, 75, 0.22) 20%, rgba(255, 75, 75, 0.08) 40%, transparent 68%);
-  animation: semanticCenterBloom 5s ease-out forwards;
+  animation: semanticCenterBloom 6.2s ease-out forwards;
   filter: blur(6px);
 }
 
 .semantic-ambient--error::after {
   background:
     radial-gradient(circle at center, rgba(255, 140, 120, 0.16) 0%, rgba(255, 140, 120, 0.08) 28%, transparent 70%);
-  animation: semanticCenterBloom 5s ease-out forwards;
+  animation: semanticCenterBloom 6.2s ease-out forwards;
+  filter: blur(18px);
+}
+
+.semantic-ambient--warning::before {
+  background:
+    radial-gradient(circle at center, rgba(251, 191, 36, 0.38) 0%, rgba(251, 191, 36, 0.22) 18%, rgba(249, 115, 22, 0.1) 40%, transparent 70%);
+  animation: semanticCenterBloom 6.2s ease-out forwards;
+  filter: blur(6px);
+}
+
+.semantic-ambient--warning::after {
+  background:
+    radial-gradient(circle at center, rgba(249, 115, 22, 0.18) 0%, rgba(249, 115, 22, 0.08) 28%, transparent 70%);
+  animation: semanticCenterBloom 6.2s ease-out forwards;
   filter: blur(18px);
 }
 
@@ -205,8 +261,8 @@ textarea {
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.04),
       0 18px 42px rgba(0, 0, 0, 0.26),
-      0 0 34px rgba(110, 72, 255, 0.2),
-      0 0 68px rgba(110, 72, 255, 0.1);
+      0 0 24px rgba(34, 199, 255, 0.12),
+      0 0 48px rgba(34, 199, 255, 0.05);
   }
 
   50% {
@@ -214,8 +270,8 @@ textarea {
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.04),
       0 22px 46px rgba(0, 0, 0, 0.28),
-      0 0 46px rgba(110, 72, 255, 0.34),
-      0 0 94px rgba(110, 72, 255, 0.18);
+      0 0 34px rgba(34, 199, 255, 0.2),
+      0 0 70px rgba(34, 199, 255, 0.08);
   }
 
   100% {
@@ -223,8 +279,8 @@ textarea {
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.04),
       0 18px 42px rgba(0, 0, 0, 0.26),
-      0 0 34px rgba(110, 72, 255, 0.2),
-      0 0 68px rgba(110, 72, 255, 0.1);
+      0 0 24px rgba(34, 199, 255, 0.12),
+      0 0 48px rgba(34, 199, 255, 0.05);
   }
 }
 
@@ -257,12 +313,12 @@ textarea {
   }
 
   100% {
-    border-color: rgba(110, 72, 255, 0.24);
+    border-color: rgba(126, 152, 184, 0.18);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.03),
       0 18px 40px rgba(0, 0, 0, 0.24),
-      0 0 26px rgba(110, 72, 255, 0.14),
-      0 0 56px rgba(110, 72, 255, 0.06);
+      0 0 18px rgba(34, 199, 255, 0.06),
+      0 0 36px rgba(34, 199, 255, 0.03);
   }
 }
 
@@ -278,12 +334,12 @@ textarea {
   }
 
   100% {
-    border-color: rgba(110, 72, 255, 0.24);
+    border-color: rgba(126, 152, 184, 0.18);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.03),
       0 18px 40px rgba(0, 0, 0, 0.24),
-      0 0 26px rgba(110, 72, 255, 0.14),
-      0 0 56px rgba(110, 72, 255, 0.06);
+      0 0 18px rgba(34, 199, 255, 0.06),
+      0 0 36px rgba(34, 199, 255, 0.03);
   }
 }
 
@@ -315,6 +371,32 @@ textarea {
 
   100% {
     opacity: 0;
+  }
+}
+
+@keyframes sqlWorkspaceWarningFlash {
+  0% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 18px 42px rgba(0, 0, 0, 0.26),
+      0 0 44px rgba(251, 191, 36, 0.24),
+      0 0 84px rgba(249, 115, 22, 0.12);
+  }
+
+  12% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 20px 46px rgba(0, 0, 0, 0.28),
+      0 0 56px rgba(251, 191, 36, 0.3),
+      0 0 110px rgba(249, 115, 22, 0.16);
+  }
+
+  100% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.03),
+      0 18px 40px rgba(0, 0, 0, 0.24),
+      0 0 20px rgba(251, 191, 36, 0.08),
+      0 0 48px rgba(249, 115, 22, 0.04);
   }
 }
 

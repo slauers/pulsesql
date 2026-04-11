@@ -79,7 +79,7 @@ public class OracleJdbcRunner {
 
   private static String listColumns(Request request) throws Exception {
     String sql =
-        "SELECT column_name, data_type, nullable, data_default FROM all_tab_columns WHERE owner = '" + escapeSql(request.schema) +
+        "SELECT column_name, data_type, nullable, data_default, identity_column FROM all_tab_columns WHERE owner = '" + escapeSql(request.schema) +
         "' AND table_name = '" + escapeSql(request.table) + "' ORDER BY column_id";
 
     try (Connection connection = DriverManager.getConnection(request.jdbcUrl(), request.properties());
@@ -102,6 +102,8 @@ public class OracleJdbcRunner {
             .append(String.valueOf("Y".equalsIgnoreCase(resultSet.getString(3))))
             .append(",\"default_value\":")
             .append(quote(trimToNull(resultSet.getString(4))))
+            .append(",\"is_auto_increment\":")
+            .append(String.valueOf("YES".equalsIgnoreCase(resultSet.getString(5))))
             .append('}');
       }
 
@@ -125,17 +127,36 @@ public class OracleJdbcRunner {
         List<String> summaryParts = new ArrayList<>();
         List<String> lastColumns = new ArrayList<>();
         List<String> lastRows = new ArrayList<>();
+        List<String> lastColumnMeta = new ArrayList<>();
+        Long totalRows = null;
+        Integer page = null;
+        Integer pageSize = null;
 
         for (String statementSql : statements) {
+          if (isPaginableResultQuery(statementSql)) {
+            SelectResult selectResult = readPagedSelectResult(connection, statementSql, request);
+            lastColumns = selectResult.columns;
+            lastColumnMeta = selectResult.columnMeta;
+            lastRows = selectResult.rows;
+            totalRows = selectResult.totalRows;
+            page = selectResult.page;
+            pageSize = selectResult.pageSize;
+            continue;
+          }
+
           try (Statement statement = connection.createStatement()) {
             statement.setQueryTimeout(30);
             boolean hasResultSet = statement.execute(statementSql);
 
             if (hasResultSet) {
               try (ResultSet resultSet = statement.getResultSet()) {
-                SelectResult selectResult = readSelectResult(resultSet);
+                SelectResult selectResult = readResultSet(resultSet, null, null, null);
                 lastColumns = selectResult.columns;
+                lastColumnMeta = selectResult.columnMeta;
                 lastRows = selectResult.rows;
+                totalRows = selectResult.totalRows;
+                page = selectResult.page;
+                pageSize = selectResult.pageSize;
               }
               continue;
             }
@@ -151,9 +172,13 @@ public class OracleJdbcRunner {
 
         return buildExecuteResponseJson(
             lastColumns,
+            lastColumnMeta,
             lastRows,
             summaryParts.isEmpty() ? null : String.join("\n\n", summaryParts),
-            System.currentTimeMillis() - startedAt
+            System.currentTimeMillis() - startedAt,
+            totalRows,
+            page,
+            pageSize
         );
       } catch (Exception error) {
         connection.rollback();
@@ -162,14 +187,44 @@ public class OracleJdbcRunner {
     }
   }
 
-  private static SelectResult readSelectResult(ResultSet resultSet) throws Exception {
+  private static SelectResult readPagedSelectResult(Connection connection, String statementSql, Request request) throws Exception {
+    int normalizedPage = Math.max(1, request.page == null ? 1 : request.page);
+    int normalizedPageSize = Math.max(1, Math.min(1000, request.pageSize == null ? 100 : request.pageSize));
+    long offset = (long) (normalizedPage - 1) * normalizedPageSize;
+    String pagedSql = "SELECT * FROM (" + statementSql + ") blacktable_page OFFSET " + offset + " ROWS FETCH NEXT " + normalizedPageSize + " ROWS ONLY";
+    String countSql = "SELECT COUNT(*) AS blacktable_total FROM (" + statementSql + ") blacktable_count";
+
+    long totalRows;
+    try (Statement countStatement = connection.createStatement()) {
+      countStatement.setQueryTimeout(30);
+      try (ResultSet countResult = countStatement.executeQuery(countSql)) {
+        countResult.next();
+        totalRows = countResult.getLong(1);
+      }
+    }
+
+    try (Statement pageStatement = connection.createStatement()) {
+      pageStatement.setQueryTimeout(30);
+      try (ResultSet pageResult = pageStatement.executeQuery(pagedSql)) {
+        return readResultSet(pageResult, totalRows, normalizedPage, normalizedPageSize);
+      }
+    }
+  }
+
+  private static SelectResult readResultSet(ResultSet resultSet, Long totalRows, Integer page, Integer pageSize) throws Exception {
     ResultSetMetaData metaData = resultSet.getMetaData();
     int columnCount = metaData.getColumnCount();
     List<String> columns = new ArrayList<>();
     List<String> rows = new ArrayList<>();
+    List<String> columnMeta = new ArrayList<>();
 
     for (int index = 1; index <= columnCount; index++) {
       columns.add(metaData.getColumnLabel(index));
+      columnMeta.add("{\"name\":"
+          + quote(metaData.getColumnLabel(index))
+          + ",\"data_type\":"
+          + quote(metaData.getColumnTypeName(index))
+          + "}");
     }
 
     while (resultSet.next()) {
@@ -190,13 +245,21 @@ public class OracleJdbcRunner {
       rows.add(rowJson.toString());
     }
 
-    return new SelectResult(columns, rows);
+    return new SelectResult(columns, columnMeta, rows, totalRows, page, pageSize);
   }
 
-  private static String buildExecuteResponseJson(List<String> columns, List<String> rows, String summary, long executionTime) {
+  private static String buildExecuteResponseJson(List<String> columns, List<String> columnMeta, List<String> rows, String summary, long executionTime, Long totalRows, Integer page, Integer pageSize) {
     StringBuilder json = new StringBuilder();
     json.append("{\"columns\":");
     appendJsonStringArray(json, columns);
+    json.append(",\"column_meta\":[");
+    for (int index = 0; index < columnMeta.size(); index++) {
+      if (index > 0) {
+        json.append(',');
+      }
+      json.append(columnMeta.get(index));
+    }
+    json.append(']');
     json.append(",\"rows\":[");
     for (int index = 0; index < rows.size(); index++) {
       if (index > 0) {
@@ -208,6 +271,12 @@ public class OracleJdbcRunner {
         .append(executionTime)
         .append(",\"summary\":")
         .append(quote(summary))
+        .append(",\"total_rows\":")
+        .append(totalRows == null ? "null" : totalRows)
+        .append(",\"page\":")
+        .append(page == null ? "null" : page)
+        .append(",\"page_size\":")
+        .append(pageSize == null ? "null" : pageSize)
         .append('}');
     return json.toString();
   }
@@ -555,12 +624,25 @@ public class OracleJdbcRunner {
 
   private static final class SelectResult {
     final List<String> columns;
+    final List<String> columnMeta;
     final List<String> rows;
+    final Long totalRows;
+    final Integer page;
+    final Integer pageSize;
 
-    SelectResult(List<String> columns, List<String> rows) {
+    SelectResult(List<String> columns, List<String> columnMeta, List<String> rows, Long totalRows, Integer page, Integer pageSize) {
       this.columns = columns;
+      this.columnMeta = columnMeta;
       this.rows = rows;
+      this.totalRows = totalRows;
+      this.page = page;
+      this.pageSize = pageSize;
     }
+  }
+
+  private static boolean isPaginableResultQuery(String sql) {
+    String normalized = normalizeExecutableSql(sql).toUpperCase(Locale.ROOT);
+    return normalized.startsWith("SELECT") || normalized.startsWith("WITH");
   }
 
   private static String toJsonArray(List<String> items) {
@@ -790,10 +872,12 @@ public class OracleJdbcRunner {
     final String password;
     final String oracleDriverProperties;
     final String query;
+    final Integer page;
+    final Integer pageSize;
     final String schema;
     final String table;
 
-    Request(String host, int port, String database, String oracleConnectionType, String user, String password, String oracleDriverProperties, String query, String schema, String table) {
+    Request(String host, int port, String database, String oracleConnectionType, String user, String password, String oracleDriverProperties, String query, Integer page, Integer pageSize, String schema, String table) {
       this.host = host;
       this.port = port;
       this.database = database;
@@ -802,6 +886,8 @@ public class OracleJdbcRunner {
       this.password = password;
       this.oracleDriverProperties = oracleDriverProperties;
       this.query = query;
+      this.page = page;
+      this.pageSize = pageSize;
       this.schema = schema;
       this.table = table;
     }
@@ -855,6 +941,8 @@ public class OracleJdbcRunner {
           extractString(json, "password"),
           extractNullableString(json, "oracle_driver_properties"),
           extractNullableString(json, "query"),
+          extractNullableNumber(json, "page"),
+          extractNullableNumber(json, "page_size"),
           extractNullableString(json, "schema"),
           extractNullableString(json, "table")
       );
@@ -927,6 +1015,34 @@ public class OracleJdbcRunner {
       }
 
       return json.substring(valueStart, valueEnd);
+    }
+
+    private static Integer extractNullableNumber(String json, String field) {
+      String needle = "\"" + field + "\":";
+      int start = json.indexOf(needle);
+      if (start < 0) {
+        return null;
+      }
+
+      int valueStart = start + needle.length();
+      while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) {
+        valueStart++;
+      }
+
+      if (json.startsWith("null", valueStart)) {
+        return null;
+      }
+
+      int valueEnd = valueStart;
+      while (valueEnd < json.length() && Character.isDigit(json.charAt(valueEnd))) {
+        valueEnd++;
+      }
+
+      if (valueEnd == valueStart) {
+        throw new IllegalArgumentException("Invalid numeric field " + field);
+      }
+
+      return Integer.parseInt(json.substring(valueStart, valueEnd));
     }
   }
 }

@@ -1,10 +1,12 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { useQueriesStore } from '../../store/queries';
 import { type DatabaseEngine, useConnectionsStore } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
 import { createPortal } from 'react-dom';
-import { ensureTablesCached } from '../database/metadata-cache';
+import { ensureColumnsCached, ensureTablesCached } from '../database/metadata-cache';
+import { useDatabaseSessionStore } from '../../store/databaseSession';
+import type { MetadataColumn } from '../database/types';
 import {
   Plus,
   X,
@@ -15,19 +17,40 @@ import {
   Download,
   FileJson,
   Search,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import ResultGrid from './ResultGrid';
 import QueryHistoryDrawer from '../history/components/QueryHistoryDrawer';
 import type { QueryHistoryItem } from '../history/types';
 import { isTableSuggestionContext, registerSqlAutocomplete } from './sql-autocomplete';
+import {
+  buildQueryErrorPresentation,
+  extractErrorMessage,
+  type QueryErrorPresentation,
+} from './query-error-utils';
 import { useConnectionRuntimeStore } from '../../store/connectionRuntime';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
 
 interface QueryResult {
   columns: string[];
+  column_meta?: QueryColumnMeta[];
   rows: any[];
   execution_time: number;
   summary?: string | null;
+  total_rows?: number | null;
+  page?: number | null;
+  page_size?: number | null;
+}
+
+interface QueryColumnMeta {
+  name: string;
+  data_type: string;
+}
+
+interface ResultGridColumn {
+  name: string;
+  subtitle?: string | null;
 }
 
 interface QueryExecutionResult extends QueryResult {
@@ -39,6 +62,10 @@ interface ExecuteQueryPayload {
   result: QueryResult;
   history_item_id: string;
 }
+
+const SEMANTIC_SUCCESS_DURATION_MS = 3600;
+const SEMANTIC_ERROR_DURATION_MS = 6200;
+const SEMANTIC_WARNING_DURATION_MS = 6200;
 
 export default function QueryWorkspace({
   connectionLabel,
@@ -65,16 +92,22 @@ export default function QueryWorkspace({
   const runtimeStatus = useConnectionRuntimeStore((state) =>
     activeConnectionId ? state.runtimeStatus[activeConnectionId] : undefined,
   );
+  const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
   const semanticBackgroundState = useUiPreferencesStore((state) => state.semanticBackgroundState);
   const semanticBackgroundVersion = useUiPreferencesStore((state) => state.semanticBackgroundVersion);
   const setSemanticBackgroundState = useUiPreferencesStore((state) => state.setSemanticBackgroundState);
+  const resultPageSize = useUiPreferencesStore((state) => state.resultPageSize);
+  const setResultPageSize = useUiPreferencesStore((state) => state.setResultPageSize);
+  const editorFontSize = useUiPreferencesStore((state) => state.editorFontSize);
+  const density = useUiPreferencesStore((state) => state.density);
+  const metadataByConnection = useDatabaseSessionStore((state) => state.metadataByConnection);
   
   const activeTab = tabs.find(t => t.id === activeTabId);
   const isConnectionReady = runtimeStatus === 'connected';
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<QueryErrorPresentation | null>(null);
   const [results, setResults] = useState<QueryExecutionResult[]>([]);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -82,23 +115,30 @@ export default function QueryWorkspace({
   const [resultsHeight, setResultsHeight] = useState(34);
   const [resultsResizing, setResultsResizing] = useState(false);
   const [pendingRiskyExecution, setPendingRiskyExecution] = useState<string[] | null>(null);
+  const [pageSizeDraft, setPageSizeDraft] = useState(String(resultPageSize));
   const executeQueryRef = useRef<() => void>(() => {});
   const editorRef = useRef<any>(null);
   const lastCursorPositionRef = useRef<{ lineNumber: number; column: number } | null>(null);
   const autocompleteDisposableRef = useRef<{ dispose(): void } | null>(null);
   const suggestTimeoutRef = useRef<number | null>(null);
   const semanticResetTimeoutRef = useRef<number | null>(null);
-  const autocompleteContextRef = useRef<{ connectionId?: string | null; activeSchema?: string | null }>({
+  const autocompleteContextRef = useRef<{
+    connectionId?: string | null;
+    activeSchema?: string | null;
+    engine?: DatabaseEngine | null;
+  }>({
     connectionId: activeConnectionId,
     activeSchema: schemaLabel,
+    engine,
   });
 
   useEffect(() => {
     autocompleteContextRef.current = {
       connectionId: activeConnectionId,
       activeSchema: schemaLabel,
+      engine,
     };
-  }, [activeConnectionId, schemaLabel]);
+  }, [activeConnectionId, engine, schemaLabel]);
 
   useEffect(() => {
     if (!activeConnectionId || !engine || !schemaLabel) {
@@ -117,6 +157,17 @@ export default function QueryWorkspace({
       window.clearTimeout(semanticResetTimeoutRef.current);
     }
   }, []);
+
+  const scheduleSemanticReset = useCallback((durationMs: number) => {
+    if (semanticResetTimeoutRef.current) {
+      window.clearTimeout(semanticResetTimeoutRef.current);
+    }
+
+    semanticResetTimeoutRef.current = window.setTimeout(() => {
+      setSemanticBackgroundState('idle');
+      semanticResetTimeoutRef.current = null;
+    }, durationMs);
+  }, [setSemanticBackgroundState]);
 
   const runQueryBatch = useCallback(async (queries: string[], connectionId: string) => {
     const statements = queries.map((item) => item.trim()).filter(Boolean);
@@ -143,6 +194,8 @@ export default function QueryWorkspace({
         const payload = await invoke<ExecuteQueryPayload>('execute_query', {
           connId: connectionId,
           query: statement,
+          page: 1,
+          pageSize: resultPageSize,
         });
 
         nextResults.push({
@@ -150,26 +203,33 @@ export default function QueryWorkspace({
           statement,
           title: `Result ${index + 1}`,
         });
+
+        appendLog(
+          connectionId,
+          `Query executada com sucesso (${payload.result.execution_time}ms): ${summarizeStatementForLog(statement)}`,
+        );
       }
 
       setResults(nextResults);
       setActiveResultIndex(0);
       setSemanticBackgroundState('success');
-      semanticResetTimeoutRef.current = window.setTimeout(() => {
-        setSemanticBackgroundState('idle');
-        semanticResetTimeoutRef.current = null;
-      }, 5000);
+      scheduleSemanticReset(SEMANTIC_SUCCESS_DURATION_MS);
     } catch (e: any) {
-      setError(formatQueryError(e));
+      const nextError = buildQueryErrorPresentation({
+        error: e,
+        engine,
+        statement: statements[0] ?? null,
+        activeSchema: schemaLabel,
+        metadataConnection: metadataByConnection[connectionId],
+      });
+      setError(nextError);
+      appendLog(connectionId, `Erro de query: ${extractErrorMessage(e).trim()}`);
       setSemanticBackgroundState('error');
-      semanticResetTimeoutRef.current = window.setTimeout(() => {
-        setSemanticBackgroundState('idle');
-        semanticResetTimeoutRef.current = null;
-      }, 5000);
+      scheduleSemanticReset(SEMANTIC_ERROR_DURATION_MS);
     } finally {
       setLoading(false);
     }
-  }, [setSemanticBackgroundState]);
+  }, [appendLog, engine, metadataByConnection, resultPageSize, scheduleSemanticReset, schemaLabel, setSemanticBackgroundState]);
 
   const executeStatements = useCallback(async (statements: string[]) => {
     if (!activeConnectionId) {
@@ -193,18 +253,25 @@ export default function QueryWorkspace({
 
     if (!options?.skipRiskConfirmation && hasUpdateWithoutWhere(executionTarget.statements)) {
       setPendingRiskyExecution(executionTarget.statements);
+      setSemanticBackgroundState('warning');
+      scheduleSemanticReset(SEMANTIC_WARNING_DURATION_MS);
       return;
     }
 
     setPendingRiskyExecution(null);
     await executeStatements(executionTarget.statements);
-  }, [activeTab, activeConnectionId, executeStatements]);
+  }, [activeTab, activeConnectionId, executeStatements, scheduleSemanticReset, setSemanticBackgroundState]);
 
   const runHistoryItem = useCallback(async (item: QueryHistoryItem, replaceCurrent: boolean) => {
     const connection = connections.find((current) => current.id === item.connectionId);
 
     if (!connection) {
-      setError('A conexao salva para este historico nao existe mais.');
+      setError({
+        title: 'Falha ao abrir o histórico',
+        summary: 'A conexão salva para este item de histórico não existe mais.',
+        technicalMessage: 'A configuração da conexão vinculada ao item de histórico não foi encontrada.',
+        suggestions: [],
+      });
       return;
     }
 
@@ -219,9 +286,16 @@ export default function QueryWorkspace({
       setActiveConnection(connection.id);
       await runQueryBatch(splitSqlStatements(item.queryText), connection.id);
     } catch (runError) {
-      setError(formatQueryError(runError));
+      setError(
+        buildQueryErrorPresentation({
+          error: runError,
+          engine: connection.engine,
+          statement: item.queryText,
+          activeSchema: connection.preferredSchema ?? schemaLabel,
+        }),
+      );
     }
-  }, [addTabWithContent, connections, replaceActiveTabContent, runQueryBatch, setActiveConnection]);
+  }, [addTabWithContent, connections, replaceActiveTabContent, runQueryBatch, schemaLabel, setActiveConnection]);
 
   const openHistoryInNewTab = useCallback((item: QueryHistoryItem) => {
     addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText));
@@ -258,6 +332,54 @@ export default function QueryWorkspace({
       return next;
     });
   }, []);
+
+  const loadResultPage = useCallback(async (resultIndex: number, nextPage: number) => {
+    const targetResult = results[resultIndex];
+    if (!targetResult || !activeConnectionId) {
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const payload = await invoke<ExecuteQueryPayload>('execute_query', {
+        connId: activeConnectionId,
+        query: targetResult.statement,
+        page: nextPage,
+        pageSize: targetResult.page_size ?? resultPageSize,
+      });
+
+      setResults((current) =>
+        current.map((item, index) =>
+          index === resultIndex
+            ? {
+                ...payload.result,
+                statement: item.statement,
+                title: item.title,
+              }
+            : item,
+        ),
+      );
+      setActiveResultIndex(resultIndex);
+    } catch (pageError) {
+      setError(
+        buildQueryErrorPresentation({
+          error: pageError,
+          engine,
+          statement: targetResult.statement,
+          activeSchema: schemaLabel,
+          metadataConnection: activeConnectionId ? metadataByConnection[activeConnectionId] : undefined,
+        }),
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [activeConnectionId, engine, metadataByConnection, resultPageSize, results, schemaLabel]);
+
+  useEffect(() => {
+    setPageSizeDraft(String(resultPageSize));
+  }, [resultPageSize]);
 
   useEffect(() => {
     executeQueryRef.current = () => {
@@ -323,6 +445,82 @@ export default function QueryWorkspace({
     ? applyQuickFilter(activeResult.rows, activeResult.columns, quickFilter)
     : [];
   const hasGridResult = Boolean(activeResult?.columns.length);
+  const activeSourceTable = useMemo(
+    () => resolveSimpleSourceTable(activeResult?.statement, schemaLabel),
+    [activeResult?.statement, schemaLabel],
+  );
+  const cachedSourceColumns = activeConnectionId && activeSourceTable?.schemaName && activeSourceTable.tableName
+    ? metadataByConnection[activeConnectionId]?.schemasByName[activeSourceTable.schemaName]?.tablesByName[activeSourceTable.tableName]?.columns
+    : undefined;
+  const totalRows = activeResult?.total_rows ?? activeResult?.rows.length ?? 0;
+  const currentPage = activeResult?.page ?? 1;
+  const pageSize = activeResult?.page_size ?? resultPageSize;
+  const totalPages = Math.max(1, Math.ceil(totalRows / Math.max(pageSize, 1)));
+  const canPaginate = hasGridResult && activeResult?.page != null && activeResult?.page_size != null;
+  const rowNumberOffset = canPaginate ? (currentPage - 1) * pageSize : 0;
+  const gridColumns = useMemo(
+    () => buildGridColumns(activeResult, cachedSourceColumns),
+    [activeResult, cachedSourceColumns],
+  );
+
+  useEffect(() => {
+    if (!activeConnectionId || !engine || !activeSourceTable?.schemaName || !activeSourceTable.tableName) {
+      return;
+    }
+
+    if (cachedSourceColumns?.length) {
+      return;
+    }
+
+    void ensureColumnsCached(activeConnectionId, engine, activeSourceTable.schemaName, activeSourceTable.tableName).catch(() => null);
+  }, [activeConnectionId, activeSourceTable, cachedSourceColumns, engine]);
+
+  const applyPageSize = useCallback(async () => {
+    const parsed = Number(pageSizeDraft);
+    const normalized = Math.min(1000, Math.max(1, Number.isFinite(parsed) ? Math.round(parsed) : resultPageSize));
+    setPageSizeDraft(String(normalized));
+    setResultPageSize(normalized);
+
+    if (!activeResult || !activeConnectionId) {
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const payload = await invoke<ExecuteQueryPayload>('execute_query', {
+        connId: activeConnectionId,
+        query: activeResult.statement,
+        page: 1,
+        pageSize: normalized,
+      });
+
+      setResults((current) =>
+        current.map((item, index) =>
+          index === activeResultIndex
+            ? {
+                ...payload.result,
+                statement: item.statement,
+                title: item.title,
+              }
+            : item,
+        ),
+      );
+    } catch (pageSizeError) {
+      setError(
+        buildQueryErrorPresentation({
+          error: pageSizeError,
+          engine,
+          statement: activeResult.statement,
+          activeSchema: schemaLabel,
+          metadataConnection: activeConnectionId ? metadataByConnection[activeConnectionId] : undefined,
+        }),
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [activeConnectionId, activeResult, activeResultIndex, engine, metadataByConnection, pageSizeDraft, resultPageSize, schemaLabel, setResultPageSize]);
 
   return (
     <div className="flex flex-col h-full bg-transparent overflow-hidden relative min-h-0">
@@ -376,7 +574,7 @@ export default function QueryWorkspace({
                 className="flex items-center gap-1.5 bg-emerald-400/18 text-emerald-200 hover:bg-emerald-400/26 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-400/35 shadow-[0_0_18px_rgba(16,185,129,0.18)] hover:shadow-[0_0_24px_rgba(16,185,129,0.28)]"
               >
                 {loading ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} className="fill-green-400/50" />}
-                Run
+                Executar
               </button>
               <span className="rounded-full border border-border/70 bg-background/22 px-2.5 py-1 text-[11px] text-muted">
                 Cmd+Enter
@@ -390,7 +588,7 @@ export default function QueryWorkspace({
                 }`}
               >
                 <Clock3 size={13} />
-                History
+                Histórico
               </button>
               {connectionLabel && engine ? (
                 <div className="ml-auto flex min-w-0 items-center gap-2 rounded-lg border border-border/70 bg-background/22 px-3 py-1.5">
@@ -450,7 +648,7 @@ export default function QueryWorkspace({
                   options={{
                     minimap: { enabled: false },
                     padding: { top: 18 },
-                    fontSize: 14,
+                    fontSize: editorFontSize,
                     fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
                     scrollBeyondLastLine: false,
                     roundedSelection: false,
@@ -523,9 +721,9 @@ export default function QueryWorkspace({
             ) : (
               <div className="h-full flex items-center justify-center text-muted bg-background/40">
                 <div className="text-center">
-                  <p className="mb-2">No active queries.</p>
+                  <p className="mb-2">Nenhuma query ativa.</p>
                   <button onClick={addTab} className="px-4 py-2 glass-panel border border-border rounded-lg text-sm hover:text-text flex items-center gap-2 mx-auto">
-                    <Plus size={16} /> Create new query
+                    <Plus size={16} /> Nova query
                   </button>
                 </div>
               </div>
@@ -552,7 +750,7 @@ export default function QueryWorkspace({
           >
             <div className="p-2 border-b border-border text-sm font-medium text-muted flex justify-between items-center bg-background/42">
               <div className="flex gap-2 px-2 shrink-0 overflow-x-auto scrollbar-hide">
-                {(results.length ? results : [{ title: 'Result Grid' } as QueryExecutionResult]).map((item, index) => (
+                {(results.length ? results : [{ title: 'Resultado' } as QueryExecutionResult]).map((item, index) => (
                   <div
                     key={`${item.title}-${index}`}
                     className={`rounded-t-lg border-b-2 px-2.5 pb-1 pt-0.5 text-xs transition-colors ${
@@ -565,7 +763,7 @@ export default function QueryWorkspace({
                       onClick={() => setActiveResultIndex(index)}
                       className="inline-flex items-center gap-1.5"
                     >
-                      <span>{results.length <= 1 ? 'Result Grid' : item.title}</span>
+                      <span>{results.length <= 1 ? 'Resultado' : item.title}</span>
                     </button>
                     {results.length > 1 ? (
                       <button
@@ -591,10 +789,53 @@ export default function QueryWorkspace({
                         {quickFilter ? ` / ${activeResult.rows.length}` : ''} rows
                       </span>
                     ) : null}
+                    {hasGridResult ? <span>total {totalRows} registros</span> : null}
+                    {canPaginate ? <span>pagina {currentPage} de {totalPages}</span> : null}
                     <span>{activeResult.execution_time}ms</span>
                   </div>
                   {hasGridResult ? (
                     <>
+                      {canPaginate ? (
+                        <div className="flex items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
+                          <label className="inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-muted">
+                            <input
+                              type="number"
+                              min={1}
+                              max={1000}
+                              value={pageSizeDraft}
+                              onChange={(event) => setPageSizeDraft(event.target.value)}
+                              onBlur={() => void applyPageSize()}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault();
+                                  void applyPageSize();
+                                }
+                              }}
+                              className="w-14 rounded border border-border/70 bg-background/35 px-1.5 py-1 text-right text-[11px] text-text outline-none focus:border-primary"
+                            />
+                        <span>linhas</span>
+                          </label>
+                          <button
+                            onClick={() => void loadResultPage(activeResultIndex, currentPage - 1)}
+                            disabled={loading || currentPage <= 1}
+                            className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label="Pagina anterior"
+                          >
+                            <ChevronLeft size={14} />
+                          </button>
+                          <span className="px-1 text-[11px] text-muted">
+                            {currentPage}/{totalPages}
+                          </span>
+                          <button
+                            onClick={() => void loadResultPage(activeResultIndex, currentPage + 1)}
+                            disabled={loading || currentPage >= totalPages}
+                            className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label="Proxima pagina"
+                          >
+                            <ChevronRight size={14} />
+                          </button>
+                        </div>
+                      ) : null}
                       <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5 min-w-[180px] md:min-w-[220px]">
                         <Search size={13} className="shrink-0 text-muted" />
                         <input
@@ -630,15 +871,12 @@ export default function QueryWorkspace({
                   <div className="flex items-center gap-3">
                     <LoaderCircle size={16} className="animate-spin text-primary" />
                     <span className="text-[10px] uppercase tracking-[0.14em] text-primary/70">
-                      Retrieving data...
+                      Carregando resultados...
                     </span>
                   </div>
                 </div>
               ) : error ? (
-                <div className="p-4 flex items-start gap-3 text-red-400">
-                  <AlertCircle size={18} className="mt-0.5 shrink-0" />
-                  <div className="text-sm font-mono whitespace-pre-wrap">{error}</div>
-                </div>
+                <QueryErrorPanel error={error} activeSchema={schemaLabel} />
               ) : activeResult ? (
                 <div className="flex h-full min-h-0 flex-col">
                   {activeResult.summary ? (
@@ -653,7 +891,12 @@ export default function QueryWorkspace({
                   ) : null}
                   <div className="min-h-0 flex-1">
                     {hasGridResult ? (
-                      <ResultGrid columns={activeResult.columns} rows={filteredRows} />
+                      <ResultGrid
+                        columns={gridColumns}
+                        rows={filteredRows}
+                        rowNumberOffset={quickFilter ? 0 : rowNumberOffset}
+                        density={density}
+                      />
                     ) : (
                       <div className="h-full flex items-center justify-center text-muted/50 text-sm">
                         Execucao concluida sem result set.
@@ -663,7 +906,7 @@ export default function QueryWorkspace({
                 </div>
               ) : (
                 <div className="h-full flex items-center justify-center text-muted/50 text-sm">
-                  Run a query to see results
+                  Execute uma query para ver os resultados.
                 </div>
               )}
             </div>
@@ -682,7 +925,14 @@ export default function QueryWorkspace({
 
       {pendingRiskyExecution ? (
         <DangerousUpdateModal
-          onCancel={() => setPendingRiskyExecution(null)}
+          onCancel={() => {
+            setPendingRiskyExecution(null);
+            if (semanticResetTimeoutRef.current) {
+              window.clearTimeout(semanticResetTimeoutRef.current);
+              semanticResetTimeoutRef.current = null;
+            }
+            setSemanticBackgroundState('idle');
+          }}
           onConfirm={() => void executeQuery({ skipRiskConfirmation: true })}
         />
       ) : null}
@@ -739,6 +989,59 @@ function DangerousUpdateModal({
   );
 }
 
+function QueryErrorPanel({
+  error,
+  activeSchema,
+}: {
+  error: QueryErrorPresentation;
+  activeSchema?: string;
+}) {
+  return (
+    <div className="p-4 md:p-5">
+      <div className="rounded-xl border border-red-400/22 bg-red-400/7 px-4 py-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 rounded-lg border border-red-400/18 bg-red-400/10 p-2 text-red-300">
+            <AlertCircle size={16} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-red-200">{error.title}</div>
+            <div className="mt-1 text-sm text-red-100/95">{error.summary}</div>
+
+            {error.suggestions.length ? (
+              <div className="mt-4 rounded-lg border border-amber-300/16 bg-amber-300/6 px-3 py-3">
+                <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-amber-200/80">
+                  Você quis dizer
+                </div>
+                <div className="mt-2 space-y-1.5">
+                  {error.suggestions.map((suggestion) => (
+                    <div
+                      key={`${suggestion.schemaName ?? 'schema'}.${suggestion.tableName}`}
+                      className="rounded-md border border-border/60 bg-background/26 px-2.5 py-2 text-sm text-text"
+                    >
+                      {suggestion.schemaName && suggestion.schemaName !== activeSchema
+                        ? `${suggestion.schemaName}.${suggestion.tableName}`
+                        : suggestion.tableName}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-4 rounded-lg border border-border/60 bg-background/34 px-3 py-3">
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+                Mensagem técnica
+              </div>
+              <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-muted/85">
+                {error.technicalMessage}
+              </pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function deriveHistoryTabTitle(queryText: string): string {
   const firstLine = queryText
     .split('\n')
@@ -746,7 +1049,7 @@ function deriveHistoryTabTitle(queryText: string): string {
     .find(Boolean);
 
   if (!firstLine) {
-    return 'History Query';
+    return 'Query do histórico';
   }
 
   return firstLine.slice(0, 36);
@@ -955,6 +1258,71 @@ function splitSqlStatementsWithRange(sql: string) {
   return statements;
 }
 
+function buildGridColumns(
+  result: QueryResult | null,
+  metadataColumns?: MetadataColumn[],
+): ResultGridColumn[] {
+  if (!result) {
+    return [];
+  }
+
+  return result.columns.map((name, index) => {
+    const resultMeta = result.column_meta?.[index];
+    const metadataMatch = metadataColumns?.find(
+      (column) => column.columnName.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0,
+    );
+    const subtitle = formatColumnSubtitle(resultMeta?.data_type ?? metadataMatch?.dataType, metadataMatch);
+
+    return {
+      name,
+      subtitle,
+    };
+  });
+}
+
+function formatColumnSubtitle(dataType?: string | null, metadataColumn?: MetadataColumn) {
+  const parts = [
+    dataType?.trim() || null,
+    metadataColumn?.isAutoIncrement ? 'autoincrement' : null,
+  ].filter(Boolean);
+
+  return parts.length ? parts.join(' • ') : null;
+}
+
+function resolveSimpleSourceTable(statement?: string | null, fallbackSchema?: string | null) {
+  if (!statement) {
+    return null;
+  }
+
+  const normalized = statement
+    .replace(/--.*$/gm, ' ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const match = normalized.match(/^\s*select\b[\s\S]*?\bfrom\s+((?:"[^"]+"|[a-zA-Z0-9_$#]+)(?:\.(?:"[^"]+"|[a-zA-Z0-9_$#]+))?)/i);
+  if (!match) {
+    return null;
+  }
+
+  const parts = match[1]
+    .split('.')
+    .map((part) => part.trim().replace(/^"|"$/g, ''))
+    .filter(Boolean);
+
+  if (parts.length === 1) {
+    return {
+      schemaName: fallbackSchema ?? null,
+      tableName: parts[0] ?? null,
+    };
+  }
+
+  return {
+    schemaName: parts[0] ?? fallbackSchema ?? null,
+    tableName: parts[1] ?? null,
+  };
+}
+
 function applyQuickFilter(rows: any[], columns: string[], quickFilter: string) {
   const normalizedFilter = quickFilter.trim().toLowerCase();
 
@@ -1005,54 +1373,9 @@ function buildExportBaseName(connectionLabel?: string) {
   return `${safeConnection || 'results'}-${Date.now()}`;
 }
 
-function formatQueryError(error: unknown): string {
-  const raw = extractErrorMessage(error).trim();
-  const lower = raw.toLowerCase();
-
-  if (lower.includes('connection not found')) {
-    return 'A conexao ativa nao esta disponivel. Abra ou reconecte a conexao antes de executar a query.';
-  }
-
-  if (lower.includes('timed out')) {
-    return 'A query excedeu o tempo limite configurado.';
-  }
-
-  if (lower.includes('ora-00933')) {
-    return 'Oracle: comando SQL nao encerrado adequadamente.';
-  }
-
-  if (lower.includes('ora-00942')) {
-    return 'Oracle: tabela ou view nao existe.';
-  }
-
-  if (lower.includes('ora-01017')) {
-    return 'Oracle: usuario ou senha invalidos.';
-  }
-
-  if (lower.includes('permission denied') || lower.includes('not authorized')) {
-    return 'Permissao insuficiente para executar esta operacao.';
-  }
-
-  return raw;
-}
-
-function extractErrorMessage(error: unknown): string {
-  if (typeof error === 'string') {
-    return error;
-  }
-
-  if (error && typeof error === 'object') {
-    if ('message' in error && typeof error.message === 'string') {
-      return error.message;
-    }
-
-    if ('toString' in error && typeof error.toString === 'function') {
-      const asString = error.toString();
-      if (asString && asString !== '[object Object]') {
-        return asString;
-      }
-    }
-  }
-
-  return 'Erro desconhecido ao executar a query.';
+function summarizeStatementForLog(statement: string) {
+  return statement
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 140);
 }

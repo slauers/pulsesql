@@ -93,6 +93,7 @@ function createFallbackColumn(columnName: string): MetadataColumn {
     dataType: 'varchar',
     nullable: null,
     defaultValue: null,
+    isAutoIncrement: null,
   };
 }
 

@@ -1,5 +1,5 @@
 use crate::connection::types::{ConnectionConfig, OracleConnectionType};
-use crate::db::{ColumnDef, QueryResult};
+use crate::db::{ColumnDef, QueryColumnMeta, QueryResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -34,9 +34,13 @@ struct OracleSuccessResponse {
     message: Option<String>,
     items: Option<Vec<String>>,
     columns: Option<Vec<String>>,
+    column_meta: Option<Vec<QueryColumnMeta>>,
     rows: Option<Vec<Value>>,
     execution_time: Option<u64>,
     summary: Option<String>,
+    total_rows: Option<u64>,
+    page: Option<u32>,
+    page_size: Option<u32>,
     column_defs: Option<Vec<ColumnDef>>,
 }
 
@@ -50,6 +54,8 @@ struct OracleRequest<'a> {
     password: &'a str,
     oracle_driver_properties: Option<&'a str>,
     query: Option<&'a str>,
+    page: Option<u32>,
+    page_size: Option<u32>,
     schema: Option<&'a str>,
     table: Option<&'a str>,
 }
@@ -82,23 +88,23 @@ pub fn create_handle(
 }
 
 pub async fn test_connection(handle: &OracleConnectionHandle) -> Result<(), String> {
-    invoke_sidecar("test", handle, None, None, None).map(|_| ())
+    invoke_sidecar("test", handle, None, None, None, None, None).map(|_| ())
 }
 
 pub async fn open_connection(
     handle: &OracleConnectionHandle,
 ) -> Result<OracleConnectionHandle, String> {
-    invoke_sidecar("open", handle, None, None, None)?;
+    invoke_sidecar("open", handle, None, None, None, None, None)?;
     Ok(handle.clone())
 }
 
 pub async fn list_databases(handle: &OracleConnectionHandle) -> Result<Vec<String>, String> {
-    let response = invoke_sidecar("listDatabases", handle, None, None, None)?;
+    let response = invoke_sidecar("listDatabases", handle, None, None, None, None, None)?;
     Ok(response.items.unwrap_or_default())
 }
 
 pub async fn list_schemas(handle: &OracleConnectionHandle) -> Result<Vec<String>, String> {
-    let response = invoke_sidecar("listSchemas", handle, None, None, None)?;
+    let response = invoke_sidecar("listSchemas", handle, None, None, None, None, None)?;
     Ok(response.items.unwrap_or_default())
 }
 
@@ -106,7 +112,7 @@ pub async fn list_tables(
     handle: &OracleConnectionHandle,
     schema: &str,
 ) -> Result<Vec<String>, String> {
-    let response = invoke_sidecar("listTables", handle, None, Some(schema), None)?;
+    let response = invoke_sidecar("listTables", handle, None, None, None, Some(schema), None)?;
     Ok(response.items.unwrap_or_default())
 }
 
@@ -115,24 +121,38 @@ pub async fn list_columns(
     schema: &str,
     table: &str,
 ) -> Result<Vec<ColumnDef>, String> {
-    let response = invoke_sidecar("listColumns", handle, None, Some(schema), Some(table))?;
+    let response = invoke_sidecar("listColumns", handle, None, None, None, Some(schema), Some(table))?;
     Ok(response.column_defs.unwrap_or_default())
 }
 
 pub async fn execute_query(
     handle: &OracleConnectionHandle,
     query: &str,
+    page: Option<u32>,
+    page_size: Option<u32>,
 ) -> Result<QueryResult, String> {
     let started_at = Instant::now();
-    let response = invoke_sidecar("executeQuery", handle, Some(query), None, None)?;
+    let response = invoke_sidecar(
+        "executeQuery",
+        handle,
+        Some(query),
+        page,
+        page_size,
+        None,
+        None,
+    )?;
 
     Ok(QueryResult {
         columns: response.columns.unwrap_or_default(),
+        column_meta: response.column_meta.unwrap_or_default(),
         rows: response.rows.unwrap_or_default(),
         execution_time: response
             .execution_time
             .unwrap_or_else(|| started_at.elapsed().as_millis() as u64),
         summary: response.summary,
+        total_rows: response.total_rows,
+        page: response.page,
+        page_size: response.page_size,
     })
 }
 
@@ -155,6 +175,8 @@ fn invoke_sidecar(
     command: &str,
     handle: &OracleConnectionHandle,
     query: Option<&str>,
+    page: Option<u32>,
+    page_size: Option<u32>,
     schema: Option<&str>,
     table: Option<&str>,
 ) -> Result<OracleSuccessResponse, String> {
@@ -182,6 +204,8 @@ fn invoke_sidecar(
         password: &handle.password,
         oracle_driver_properties: handle.driver_properties.as_deref(),
         query,
+        page,
+        page_size,
         schema,
         table,
     };

@@ -5,15 +5,19 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Copy,
+  CircleAlert,
   Eye,
   EyeOff,
   Expand,
   FileText,
+  Info,
+  CheckCircle2,
   LoaderCircle,
   Plus,
   Plug,
   PlugZap,
   Server,
+  Star,
   XCircle,
   Dot,
 } from 'lucide-react';
@@ -29,7 +33,6 @@ import QueryWorkspace from '../query/QueryWorkspace';
 import ConnectionForm from './ConnectionForm';
 
 const RECONNECT_DELAYS_MS = [800, 1600, 3200];
-const SIDEBAR_UI_STORAGE_KEY = 'connection-sidebar-ui';
 const CONNECTION_MENU_WIDTH = 180;
 
 type ConnectionContextMenuState = {
@@ -39,7 +42,7 @@ type ConnectionContextMenuState = {
 };
 
 export default function ConnectionManager() {
-  const { connections, activeConnectionId, removeConnection, setActiveConnection } =
+  const { connections, activeConnectionId, favoriteConnectionId, removeConnection, setActiveConnection, setFavoriteConnection } =
     useConnectionsStore();
   const activeSchema = useDatabaseSessionStore(
     (state) => (activeConnectionId ? state.activeSchemaByConnection[activeConnectionId] ?? null : null),
@@ -61,11 +64,14 @@ export default function ConnectionManager() {
   const removeConnectionRuntime = useConnectionRuntimeStore((state) => state.removeConnectionRuntime);
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
+  const sidebarWidth = useUiPreferencesStore((state) => state.sidebarWidth);
+  const setSidebarWidth = useUiPreferencesStore((state) => state.setSidebarWidth);
+  const sidebarCollapsed = useUiPreferencesStore((state) => state.sidebarCollapsed);
+  const setSidebarCollapsed = useUiPreferencesStore((state) => state.setSidebarCollapsed);
+  const logsExpandedByDefault = useUiPreferencesStore((state) => state.logsExpandedByDefault);
   const [showForm, setShowForm] = useState(false);
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
-  const [sidebarWidth, setSidebarWidth] = useState(readSidebarUiState().width);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarUiState().collapsed);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [connectionContextMenu, setConnectionContextMenu] = useState<ConnectionContextMenuState | null>(null);
   const [expandedLogsConnectionId, setExpandedLogsConnectionId] = useState<string | null>(null);
@@ -81,16 +87,16 @@ export default function ConnectionManager() {
   const statusBarState = statusBarConnection ? resolveRuntimeConnectionState(runtimeStatus, statusBarConnection.id) : 'disconnected';
   const statusBarText =
     activeSchema && !activeSchemaMetadata?.tablesLoadedAt && !activeSchemaMetadata?.tablesError
-      ? `Loading tables • ${activeSchema}`
+      ? `Carregando tabelas • ${activeSchema}`
       : metadataActivity?.phase === 'loadingTables'
-        ? `Loading tables • ${metadataActivity.schemaName ?? 'schema'}`
+        ? `Carregando tabelas • ${metadataActivity.schemaName ?? 'schema'}`
         : metadataActivity?.phase === 'loadingSchemas'
-          ? 'Loading schemas'
+          ? 'Carregando schemas'
           : metadataActivity?.phase === 'loadingColumns'
-            ? `Loading columns • ${metadataActivity.schemaName ?? ''}${metadataActivity.tableName ? `.${metadataActivity.tableName}` : ''}`
+            ? `Carregando colunas • ${metadataActivity.schemaName ?? ''}${metadataActivity.tableName ? `.${metadataActivity.tableName}` : ''}`
             : activeConnectionId
-              ? 'Ready'
-              : 'Sem conexao ativa';
+              ? 'Pronto'
+              : 'Sem conex?o ativa';
 
   useEffect(() => {
     if (activeConnectionId && !activeConnection) {
@@ -109,6 +115,28 @@ export default function ConnectionManager() {
       window.removeEventListener('mousedown', handlePointerDown);
     };
   }, []);
+
+  useEffect(() => {
+    const handleToggleSidebar = () => {
+      toggleSidebarCollapsed();
+    };
+
+    const handleNewConnection = () => {
+      setEditingConnectionId(null);
+      setShowForm(true);
+      if (sidebarCollapsed) {
+        setSidebarCollapsed(false);
+      }
+    };
+
+    window.addEventListener('blacktable:toggle-sidebar', handleToggleSidebar as EventListener);
+    window.addEventListener('blacktable:new-connection', handleNewConnection as EventListener);
+
+    return () => {
+      window.removeEventListener('blacktable:toggle-sidebar', handleToggleSidebar as EventListener);
+      window.removeEventListener('blacktable:new-connection', handleNewConnection as EventListener);
+    };
+  }, [sidebarCollapsed, sidebarWidth]);
 
   const resolveConnectionState = (connId: string): RuntimeConnectionState => {
     return resolveRuntimeConnectionState(runtimeStatus, connId);
@@ -197,16 +225,11 @@ export default function ConnectionManager() {
   };
 
   const toggleSidebarCollapsed = () => {
-    setSidebarCollapsed((current) => {
-      const next = !current;
-      writeSidebarUiState({ collapsed: next, width: sidebarWidth });
-      return next;
-    });
+    setSidebarCollapsed(!sidebarCollapsed);
   };
 
   const handleSidebarWidthChange = (nextWidth: number) => {
     setSidebarWidth(nextWidth);
-    writeSidebarUiState({ collapsed: sidebarCollapsed, width: nextWidth });
   };
 
   const handleRemoveConnection = (connId: string) => {
@@ -281,20 +304,20 @@ export default function ConnectionManager() {
   }, [sidebarCollapsed, sidebarResizing, sidebarWidth]);
 
   return (
-    <div className="flex h-full w-full flex-col gap-3">
-      <div className="flex min-h-0 flex-1 w-full gap-3 max-[900px]:flex-col">
+    <div className="flex h-full w-full flex-col">
+      <div className="flex min-h-0 flex-1 w-full max-[900px]:flex-col">
         <div
-          className="shrink-0 rounded-lg border border-border/80 bg-surface/58 backdrop-blur-xl flex flex-col overflow-hidden shadow-[0_20px_56px_rgba(0,0,0,0.24)] max-[900px]:w-full max-[900px]:max-h-[42vh]"
+          className="shrink-0 border-r border-border/80 bg-surface/92 flex flex-col overflow-hidden max-[900px]:w-full max-[900px]:max-h-[42vh]"
           style={{ width: `${sidebarCollapsed ? 68 : sidebarWidth}px` }}
         >
-          <div className="p-4 border-b border-border/70 flex justify-between items-center sticky top-0 bg-surface/72 backdrop-blur-xl">
+          <div className="px-3 py-2 border-b border-border/80 flex justify-between items-center sticky top-0 bg-surface/95">
             {sidebarCollapsed ? (
               <div className="flex w-full flex-col items-center gap-3">
                 <button
                   type="button"
                   onClick={toggleSidebarCollapsed}
-                  className="rounded-lg border border-border/70 p-2 text-muted hover:bg-border/30 hover:text-text"
-                  title="Expandir sidebar"
+                  className="p-2 text-muted hover:bg-background/45 hover:text-text"
+                  title="Expandir lateral"
                 >
                   <ChevronsRight size={16} />
                 </button>
@@ -304,16 +327,16 @@ export default function ConnectionManager() {
                     setEditingConnectionId(null);
                     setShowForm(true);
                   }}
-                  className="rounded-lg border border-border/70 p-2 text-muted hover:bg-border/30 hover:text-text"
-                  title="Nova conexao"
+                  className="p-2 text-muted hover:bg-background/45 hover:text-text"
+                  title="Nova conex?o"
                 >
                   <Plus size={16} />
                 </button>
               </div>
             ) : (
               <>
-                <h2 className="font-semibold text-text/90 flex items-center gap-2">
-                  <Server size={18} /> Connections
+                <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-text flex items-center gap-2">
+                  <Server size={14} /> Explorer
                 </h2>
                 <div className="flex items-center gap-2">
                   <button
@@ -322,16 +345,16 @@ export default function ConnectionManager() {
                       setEditingConnectionId(null);
                       setShowForm(true);
                     }}
-                    className="rounded-lg border border-border/70 p-2 text-muted hover:bg-border/30 hover:text-text"
-                    title="Nova conexao"
+                    className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
+                    title="Nova conex?o"
                   >
                     <Plus size={16} />
                   </button>
                   <button
                     type="button"
                     onClick={toggleSidebarCollapsed}
-                    className="rounded-lg border border-border/70 p-2 text-muted hover:bg-border/30 hover:text-text"
-                    title="Ocultar sidebar"
+                    className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
+                    title="Ocultar lateral"
                   >
                     <ChevronsLeft size={16} />
                   </button>
@@ -341,7 +364,7 @@ export default function ConnectionManager() {
           </div>
 
           {sidebarCollapsed ? (
-            <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-0">
+            <div className="flex-1 overflow-y-auto p-2 space-y-1 min-h-0">
               {connections.map((conn) => {
                 const isSelected = selectedConnectionId === conn.id || activeConnectionId === conn.id;
                 const state = resolveConnectionState(conn.id);
@@ -352,13 +375,12 @@ export default function ConnectionManager() {
                     onClick={() => {
                       setSelectedConnectionId(conn.id);
                       setSidebarCollapsed(false);
-                      writeSidebarUiState({ collapsed: false, width: sidebarWidth });
                     }}
                     title={`${conn.name} • ${state}`}
-                    className={`relative flex w-full items-center justify-center rounded-lg border px-0 py-1.5 text-xs transition-colors ${
+                    className={`relative flex w-full items-center justify-center border px-0 py-1.5 text-xs transition-colors ${
                       isSelected
-                        ? 'border-primary/60 bg-primary/10 text-primary'
-                        : 'border-border/70 bg-background/28 text-muted hover:bg-border/20 hover:text-text'
+                        ? 'border-primary/40 bg-primary/16 text-text'
+                        : 'border-transparent bg-transparent text-muted hover:bg-background/45 hover:text-text'
                     }`}
                   >
                     {collapsedConnectionMark(conn.engine) ? (
@@ -378,17 +400,18 @@ export default function ConnectionManager() {
               })}
             </div>
           ) : (
-            <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
-              <div className="space-y-2">
+            <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-0">
+              <div className="space-y-1">
                 {connections.length === 0 ? (
-                  <p className="rounded-lg border border-border/70 bg-background/20 px-3 py-4 text-center text-sm text-muted">
-                    No connections saved.
+                  <p className="border border-border/70 bg-background/24 px-3 py-4 text-center text-sm text-muted">
+                    Nenhuma conex?o salva.
                   </p>
                 ) : (
                   connections.map((conn) => {
                     const isSelected = selectedConnectionId === conn.id;
+                    const isFavorite = favoriteConnectionId === conn.id;
                     const connectionState = resolveConnectionState(conn.id);
-                    const logsExpanded = logsExpandedByConnection[conn.id] ?? false;
+                    const logsExpanded = logsExpandedByConnection[conn.id] ?? logsExpandedByDefault;
 
                     return (
                       <div key={conn.id} className="space-y-2">
@@ -396,10 +419,10 @@ export default function ConnectionManager() {
                           type="button"
                           onClick={() => toggleSelectedConnection(conn.id)}
                           onContextMenu={(event) => openConnectionContextMenu(event, conn.id)}
-                          className={`group w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                          className={`group w-full border px-3 py-2 text-left transition-colors ${
                             isSelected
-                              ? 'border-primary/60 bg-background/58 shadow-[inset_0_1px_0_rgba(255,255,255,0.02),0_0_16px_rgba(34,199,255,0.08)]'
-                              : 'border-border/50 bg-background/18 hover:bg-background/28'
+                              ? 'border-primary/35 bg-background/48'
+                              : 'border-transparent bg-transparent hover:bg-background/34'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-3">
@@ -413,6 +436,7 @@ export default function ConnectionManager() {
                                   />
                                 ) : null}
                                 <div className="truncate text-sm font-medium text-text">{conn.name}</div>
+                                {isFavorite ? <Star size={13} className="shrink-0 fill-amber-300 text-amber-300" /> : null}
                               </div>
                             <div className="mt-1 truncate text-[11px] text-muted">
                               {conn.engine.toUpperCase()} • {conn.user}@{conn.host}
@@ -426,7 +450,7 @@ export default function ConnectionManager() {
                         </button>
 
                         {isSelected ? (
-                          <div className="space-y-3 rounded-lg border border-border/70 bg-background/18 p-3">
+                          <div className="space-y-3 border border-border/70 bg-background/18 p-3">
                             <ActionSection
                               title="Acoes principais"
                               actions={buildPrimaryActions({
@@ -452,7 +476,7 @@ export default function ConnectionManager() {
                                 showRefreshButton
                               />
                             ) : (
-                              <div className="rounded-lg border border-border/60 bg-background/24 px-3 py-3 text-xs text-muted">
+                              <div className="border border-border/60 bg-background/24 px-3 py-3 text-xs text-muted">
                                 Abra a conexao para carregar o explorer.
                               </div>
                             )}
@@ -477,7 +501,7 @@ export default function ConnectionManager() {
           />
         ) : null}
 
-        <div className="flex-1 rounded-lg border border-border/80 glass-panel shadow-[0_20px_56px_rgba(0,0,0,0.24)] bg-transparent flex flex-col min-w-0 min-h-0 overflow-hidden">
+        <div className="flex-1 bg-background flex flex-col min-w-0 min-h-0 overflow-hidden">
           {showForm ? (
             <ConnectionForm
               initialConnection={editingConnection}
@@ -502,7 +526,7 @@ export default function ConnectionManager() {
             </div>
           ) : (
             <div className="h-full flex items-center justify-center text-muted">
-              <p>Select a connection or add a new one.</p>
+              <p>Selecione uma conex?o ou crie uma nova.</p>
             </div>
           )}
         </div>
@@ -514,6 +538,19 @@ export default function ConnectionManager() {
           style={{ left: connectionContextMenu.x, top: connectionContextMenu.y }}
           onMouseDown={(event) => event.stopPropagation()}
         >
+          <button
+            type="button"
+            onClick={() => {
+              const connId = connectionContextMenu.connId;
+              const isFavorite = favoriteConnectionId === connId;
+              setConnectionContextMenu(null);
+              setFavoriteConnection(isFavorite ? null : connId);
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+          >
+            <Star size={14} className={favoriteConnectionId === connectionContextMenu.connId ? 'fill-amber-300 text-amber-300' : 'text-muted'} />
+            <span>{favoriteConnectionId === connectionContextMenu.connId ? 'Desfavoritar' : 'Favoritar e autoabrir'}</span>
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -538,8 +575,9 @@ export default function ConnectionManager() {
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
           >
             <PlugZap size={14} className="text-muted" />
-            <span>Disconnect</span>
+            <span>Desconectar</span>
           </button>
+          <div className="my-1 border-t border-border/70" />
           <button
             type="button"
             onClick={() => {
@@ -572,7 +610,7 @@ export default function ConnectionManager() {
             <span className="truncate">{statusBarText}</span>
             <span className="hidden sm:inline text-muted/70">•</span>
             <span className="hidden sm:inline text-muted/80">
-              Fundo semantico{' '}
+              Fundo sem?ntico{' '}
               <button
                 ref={semanticToggleRef}
                 type="button"
@@ -658,7 +696,7 @@ function buildPrimaryActions({
   if (connectionState !== 'connected') {
     actions.push({
       id: 'open',
-      label: connectionState === 'reconnecting' ? 'Reconectando' : 'Open',
+      label: connectionState === 'reconnecting' ? 'Reconectando' : 'Abrir conexão',
       icon: Plug,
       onClick: onOpen,
       disabled: isBusy,
@@ -690,7 +728,7 @@ function LogsSection({
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
           <FileText size={12} />
-          Logs
+          Histórico técnico
         </div>
         <button
           type="button"
@@ -722,13 +760,17 @@ function LogsSection({
           </div>
           {entries.length ? (
             <div className="max-h-40 overflow-auto space-y-1 font-mono text-[11px]">
-              {entries.map((entry, index) => (
+              {entries.map((entry, index) => {
+                const previousTimestamp = index > 0 ? extractLogParts(entries[index - 1]).timestamp : null;
+                return (
                 <ConnectionLogEntry
                   key={`log-${index}`}
                   entry={entry}
                   highlighted={index === 0}
+                  compactTimestamp={Boolean(previousTimestamp && previousTimestamp === extractLogParts(entry).timestamp)}
                 />
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="text-[11px] text-muted/70">Nenhum log para esta conexao ainda.</div>
@@ -785,34 +827,6 @@ function connectionStateDot(state: RuntimeConnectionState): string {
   return 'bg-muted';
 }
 
-function readSidebarUiState() {
-  try {
-    const raw = localStorage.getItem(SIDEBAR_UI_STORAGE_KEY);
-    if (!raw) {
-      return { collapsed: false, width: 290 };
-    }
-
-    const parsed = JSON.parse(raw) as { collapsed?: boolean; width?: number };
-    return {
-      collapsed: Boolean(parsed.collapsed),
-      width:
-        typeof parsed.width === 'number' && Number.isFinite(parsed.width)
-          ? Math.min(Math.max(parsed.width, 220), 520)
-          : 290,
-    };
-  } catch {
-    return { collapsed: false, width: 290 };
-  }
-}
-
-function writeSidebarUiState(value: { collapsed: boolean; width: number }) {
-  try {
-    localStorage.setItem(SIDEBAR_UI_STORAGE_KEY, JSON.stringify(value));
-  } catch {
-    // Persistencia de UI nao deve quebrar o layout.
-  }
-}
-
 function ConnectionBadge({
   state,
   compact = false,
@@ -831,11 +845,11 @@ function ConnectionBadge({
   };
 
   const labels: Record<RuntimeConnectionState, string> = {
-    disconnected: 'DISCONNECTED',
-    connecting: 'CONNECTING',
-    connected: 'CONNECTED',
-    reconnecting: 'RECONNECTING',
-    failed: 'FAILED',
+    disconnected: 'DESCONECTADA',
+    connecting: 'CONECTANDO',
+    connected: 'CONECTADA',
+    reconnecting: 'RECONECTANDO',
+    failed: 'FALHA',
   };
 
   const compactGlowingConnected =
@@ -903,9 +917,17 @@ function LogsModal({
         <div className="min-h-0 flex-1 overflow-auto p-4">
           {entries.length ? (
             <div className="space-y-1.5 font-mono text-[12px]">
-              {entries.map((entry, index) => (
-                <ConnectionLogEntry key={`modal-log-${index}`} entry={entry} highlighted={index === 0} />
-              ))}
+              {entries.map((entry, index) => {
+                const previousTimestamp = index > 0 ? extractLogParts(entries[index - 1]).timestamp : null;
+                return (
+                  <ConnectionLogEntry
+                    key={`modal-log-${index}`}
+                    entry={entry}
+                    highlighted={index === 0}
+                    compactTimestamp={Boolean(previousTimestamp && previousTimestamp === extractLogParts(entry).timestamp)}
+                  />
+                );
+              })}
             </div>
           ) : (
             <div className="rounded-lg border border-border/70 bg-background/40 px-4 py-5 text-sm text-muted">
@@ -922,28 +944,54 @@ function LogsModal({
 function ConnectionLogEntry({
   entry,
   highlighted = false,
+  compactTimestamp = false,
 }: {
   entry: string;
   highlighted?: boolean;
+  compactTimestamp?: boolean;
 }) {
-  const match = entry.match(/^(\[[^\]]+\])\s*(.*)$/);
-  const timestamp = match?.[1];
-  const message = match?.[2] ?? entry;
+  const { timestamp, message } = extractLogParts(entry);
   const tone = resolveLogTone(message);
+  const Icon = tone.icon;
 
   return (
     <div
-      className={`rounded px-2 py-1.5 whitespace-pre-wrap break-words ${
-        highlighted ? 'bg-background/50 ring-1 ring-border/60' : 'bg-background/25'
+      className={`rounded-lg px-2.5 py-2 whitespace-pre-wrap break-words ${
+        highlighted
+          ? `${tone.highlight} shadow-[inset_2px_0_0_rgba(34,199,255,0.55)]`
+          : tone.base
       }`}
     >
-      {timestamp ? <span className="text-[10px] text-muted/55 mr-2">{timestamp}</span> : null}
-      <span className={tone}>{message}</span>
+      <div className="flex items-start gap-2">
+        <div className={`mt-0.5 shrink-0 ${tone.iconTone}`}>
+          <Icon size={13} />
+        </div>
+        <div className="min-w-0 flex-1">
+          {timestamp ? (
+            <div
+              className={`mb-1 text-[10px] ${
+                compactTimestamp ? 'text-muted/25' : highlighted ? 'text-primary/60' : 'text-muted/45'
+              }`}
+            >
+              {compactTimestamp ? 'mesmo instante' : timestamp}
+            </div>
+          ) : null}
+          <div className={tone.text}>{message}</div>
+        </div>
+      </div>
     </div>
   );
 }
 
-function resolveLogTone(message: string): string {
+function extractLogParts(entry: string) {
+  const match = entry.match(/^(\[[^\]]+\])\s*(.*)$/);
+  return {
+    timestamp: match?.[1] ?? null,
+    message: match?.[2] ?? entry,
+  };
+}
+
+function resolveLogTone(message: string) {
   const lower = message.toLowerCase();
 
   if (
@@ -952,7 +1000,13 @@ function resolveLogTone(message: string): string {
     lower.includes('connection successful') ||
     lower.includes('logs copiados')
   ) {
-    return 'text-emerald-300';
+    return {
+      icon: CheckCircle2,
+      iconTone: 'text-emerald-300/90',
+      text: 'text-emerald-100/95',
+      base: 'border border-emerald-400/10 bg-emerald-400/6',
+      highlight: 'border border-emerald-400/18 bg-emerald-400/8',
+    };
   }
 
   if (
@@ -962,14 +1016,32 @@ function resolveLogTone(message: string): string {
     lower.includes('refused') ||
     lower.includes('timed out')
   ) {
-    return 'text-red-300';
+    return {
+      icon: CircleAlert,
+      iconTone: 'text-red-300/90',
+      text: 'text-red-100/95',
+      base: 'border border-red-400/10 bg-red-400/6',
+      highlight: 'border border-red-400/18 bg-red-400/8',
+    };
   }
 
   if (lower.includes('tentativa') || lower.includes('reconectando')) {
-    return 'text-amber-300';
+    return {
+      icon: CircleAlert,
+      iconTone: 'text-amber-300/90',
+      text: 'text-amber-100/95',
+      base: 'border border-amber-400/10 bg-amber-400/6',
+      highlight: 'border border-amber-400/18 bg-amber-400/8',
+    };
   }
 
-  return 'text-muted';
+  return {
+    icon: Info,
+    iconTone: 'text-sky-300/80',
+    text: 'text-muted',
+    base: 'border border-border/40 bg-background/25',
+    highlight: 'border border-primary/18 bg-primary/8',
+  };
 }
 
 function formatConnectionError(error: unknown): string {

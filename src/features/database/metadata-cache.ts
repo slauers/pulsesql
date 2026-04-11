@@ -26,7 +26,7 @@ export async function ensureSchemasCached(
     const startedAt = performance.now();
     useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
       phase: 'loadingSchemas',
-      message: 'Loading schemas',
+      message: 'Carregando schemas',
     });
 
     try {
@@ -99,7 +99,7 @@ export async function ensureTablesCached(
     useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
       phase: 'loadingTables',
       schemaName,
-      message: `Loading tables from ${schemaName}`,
+      message: `Carregando tabelas de ${schemaName}`,
     });
 
     try {
@@ -146,7 +146,7 @@ export async function ensureColumnsCached(
       phase: 'loadingColumns',
       schemaName,
       tableName,
-      message: `Loading columns from ${schemaName}.${tableName}`,
+      message: `Carregando colunas de ${schemaName}.${tableName}`,
     });
 
     try {

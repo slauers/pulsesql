@@ -1,9 +1,11 @@
 use crate::connection::types::ConnectionConfig;
-use crate::db::{ColumnDef, QueryResult};
+use crate::db::{ColumnDef, QueryColumnMeta, QueryResult};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, DateTime, FixedOffset, Utc};
 use serde_json::{json, Map, Value};
-use sqlx::{postgres::PgPoolOptions, Column, Executor, PgPool, Row};
+use sqlx::{postgres::PgPoolOptions, Column, Executor, PgPool, Row, TypeInfo};
 use std::time::{Duration, Instant};
+
+const DEFAULT_PAGE_SIZE: u32 = 100;
 
 pub fn build_connection_url(
     config: &ConnectionConfig,
@@ -80,7 +82,7 @@ pub async fn list_columns(
     table: &str,
 ) -> Result<Vec<ColumnDef>, String> {
     sqlx::query_as::<_, ColumnDef>(
-        "SELECT column_name, data_type, (is_nullable = 'YES') AS nullable, column_default AS default_value FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position",
+        "SELECT column_name, data_type, (is_nullable = 'YES') AS nullable, column_default AS default_value, (column_default ILIKE 'nextval(%') AS is_auto_increment FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position",
     )
     .bind(schema)
     .bind(table)
@@ -89,21 +91,50 @@ pub async fn list_columns(
     .map_err(|error| error.to_string())
 }
 
-pub async fn execute_query(pool: &PgPool, query: &str) -> Result<QueryResult, String> {
-    execute_query_inner(pool, query).await
+pub async fn execute_query(
+    pool: &PgPool,
+    query: &str,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<QueryResult, String> {
+    execute_query_inner(
+        pool,
+        query,
+        page.unwrap_or(1),
+        page_size.unwrap_or(DEFAULT_PAGE_SIZE),
+    )
+    .await
 }
 
-async fn execute_query_inner<'e, E>(executor: E, query: &str) -> Result<QueryResult, String>
+async fn execute_query_inner<'e, E>(
+    executor: E,
+    query: &str,
+    page: u32,
+    page_size: u32,
+) -> Result<QueryResult, String>
 where
-    E: Executor<'e, Database = sqlx::Postgres>,
+    E: Executor<'e, Database = sqlx::Postgres> + Copy,
 {
     let trimmed = query.trim();
     let started_at = Instant::now();
+    let normalized_page = page.max(1);
+    let normalized_page_size = page_size.clamp(1, 1_000);
+    let offset = u64::from(normalized_page - 1) * u64::from(normalized_page_size);
 
     let execution = async {
-        if is_result_set_query(trimmed) {
-            let rows = sqlx::query(trimmed)
+        if is_paginable_result_query(trimmed) {
+            let paged_sql = format!(
+                "SELECT * FROM ({trimmed}) AS blacktable_page LIMIT {normalized_page_size} OFFSET {offset}"
+            );
+            let count_sql =
+                format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
+
+            let rows = sqlx::query(&paged_sql)
                 .fetch_all(executor)
+                .await
+                .map_err(|error| error.to_string())?;
+            let total_rows = sqlx::query_scalar::<_, i64>(&count_sql)
+                .fetch_one(executor)
                 .await
                 .map_err(|error| error.to_string())?;
 
@@ -113,6 +144,18 @@ where
                     row.columns()
                         .iter()
                         .map(|column| column.name().to_string())
+                        .collect()
+                })
+                .unwrap_or_else(Vec::new);
+            let column_meta = rows
+                .first()
+                .map(|row| {
+                    row.columns()
+                        .iter()
+                        .map(|column| QueryColumnMeta {
+                            name: column.name().to_string(),
+                            data_type: column.type_info().name().to_string(),
+                        })
                         .collect()
                 })
                 .unwrap_or_else(Vec::new);
@@ -130,9 +173,62 @@ where
 
             Ok(QueryResult {
                 columns,
+                column_meta,
                 rows,
                 execution_time: started_at.elapsed().as_millis() as u64,
                 summary: None,
+                total_rows: Some(total_rows.max(0) as u64),
+                page: Some(normalized_page),
+                page_size: Some(normalized_page_size),
+            })
+        } else if is_result_set_query(trimmed) {
+            let rows = sqlx::query(trimmed)
+                .fetch_all(executor)
+                .await
+                .map_err(|error| error.to_string())?;
+
+            let columns = rows
+                .first()
+                .map(|row| {
+                    row.columns()
+                        .iter()
+                        .map(|column| column.name().to_string())
+                        .collect()
+                })
+                .unwrap_or_else(Vec::new);
+            let column_meta = rows
+                .first()
+                .map(|row| {
+                    row.columns()
+                        .iter()
+                        .map(|column| QueryColumnMeta {
+                            name: column.name().to_string(),
+                            data_type: column.type_info().name().to_string(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(Vec::new);
+
+            let rows = rows
+                .iter()
+                .map(|row| {
+                    let mut object = Map::new();
+                    for (index, column) in row.columns().iter().enumerate() {
+                        object.insert(column.name().to_string(), pg_value_to_json(row, index));
+                    }
+                    Value::Object(object)
+                })
+                .collect();
+
+            Ok(QueryResult {
+                columns,
+                column_meta,
+                rows,
+                execution_time: started_at.elapsed().as_millis() as u64,
+                summary: None,
+                total_rows: None,
+                page: None,
+                page_size: None,
             })
         } else {
             let result = sqlx::query(trimmed)
@@ -142,9 +238,16 @@ where
 
             Ok(QueryResult {
                 columns: vec!["Rows Affected".into()],
+                column_meta: vec![QueryColumnMeta {
+                    name: "Rows Affected".into(),
+                    data_type: "BIGINT".into(),
+                }],
                 rows: vec![json!({ "Rows Affected": result.rows_affected() })],
                 execution_time: started_at.elapsed().as_millis() as u64,
                 summary: None,
+                total_rows: None,
+                page: None,
+                page_size: None,
             })
         }
     };
@@ -161,6 +264,11 @@ fn is_result_set_query(query: &str) -> bool {
         || upper.starts_with("WITH")
         || upper.starts_with("SHOW")
         || upper.starts_with("EXPLAIN")
+}
+
+fn is_paginable_result_query(query: &str) -> bool {
+    let upper = query.trim_start().to_uppercase();
+    upper.starts_with("SELECT") || upper.starts_with("WITH")
 }
 
 fn pg_value_to_json(row: &sqlx::postgres::PgRow, index: usize) -> Value {

@@ -373,7 +373,6 @@ function SchemaItem({
 
     let cancelled = false;
     setLoading(true);
-    onActivate();
     ensureTablesCached(connId, engine, schema)
       .catch(() => null)
       .finally(() => {
@@ -385,7 +384,7 @@ function SchemaItem({
     return () => {
       cancelled = true;
     };
-  }, [connId, engine, expanded, onActivate, schema]);
+  }, [connId, engine, expanded, schema]);
 
   return (
     <div>
