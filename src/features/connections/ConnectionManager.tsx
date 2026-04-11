@@ -285,7 +285,7 @@ export default function ConnectionManager() {
       <div className="flex min-h-0 flex-1 w-full gap-3 max-[900px]:flex-col">
         <div
           className="shrink-0 rounded-lg border border-border/80 bg-surface/58 backdrop-blur-xl flex flex-col overflow-hidden shadow-[0_20px_56px_rgba(0,0,0,0.24)] max-[900px]:w-full max-[900px]:max-h-[42vh]"
-          style={{ width: `${sidebarCollapsed ? 78 : sidebarWidth}px` }}
+          style={{ width: `${sidebarCollapsed ? 68 : sidebarWidth}px` }}
         >
           <div className="p-4 border-b border-border/70 flex justify-between items-center sticky top-0 bg-surface/72 backdrop-blur-xl">
             {sidebarCollapsed ? (
@@ -355,7 +355,7 @@ export default function ConnectionManager() {
                       writeSidebarUiState({ collapsed: false, width: sidebarWidth });
                     }}
                     title={`${conn.name} • ${state}`}
-                    className={`relative flex w-full items-center justify-center rounded-lg border px-0 py-3 text-xs transition-colors ${
+                    className={`relative flex w-full items-center justify-center rounded-lg border px-0 py-1.5 text-xs transition-colors ${
                       isSelected
                         ? 'border-primary/60 bg-primary/10 text-primary'
                         : 'border-border/70 bg-background/28 text-muted hover:bg-border/20 hover:text-text'
@@ -830,13 +830,29 @@ function ConnectionBadge({
     failed: 'border-red-400/30 bg-red-400/10 text-red-300',
   };
 
+  const labels: Record<RuntimeConnectionState, string> = {
+    disconnected: 'DISCONNECTED',
+    connecting: 'CONNECTING',
+    connected: 'CONNECTED',
+    reconnecting: 'RECONNECTING',
+    failed: 'FAILED',
+  };
+
+  const compactGlowingConnected =
+    state === 'connected' && compact && glowing
+      ? 'border-emerald-400/20 bg-emerald-400/8 text-emerald-300 shadow-[0_0_18px_rgba(16,185,129,0.12)]'
+      : null;
+
   return (
     <span
-      className={`inline-flex items-center rounded-full border ${compact ? 'px-1 py-0.5' : 'px-1.5 py-0.5'} text-[10px] uppercase tracking-[0.14em] ${palette[state]} ${
-        glowing ? 'shadow-[0_0_16px_rgba(255,255,255,0.08)]' : ''
-      }`}
+      className={`inline-flex items-center rounded-full border ${
+        compact ? 'px-2 py-0.5 text-[9px]' : 'px-2.5 py-1 text-[10px]'
+      } font-medium uppercase tracking-[0.14em] ${
+        compactGlowingConnected ?? palette[state]
+      } ${glowing && !compactGlowingConnected ? 'shadow-[0_0_16px_rgba(255,255,255,0.08)]' : ''}`}
     >
-      <Dot size={14} className="-mx-0.5" />
+      <Dot size={12} className="-ml-0.5 mr-0.5" />
+      <span>{labels[state]}</span>
     </span>
   );
 }
