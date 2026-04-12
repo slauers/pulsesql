@@ -31,6 +31,7 @@ import { invalidateMetadataCache } from '../database/metadata-cache';
 import { DatabaseExplorer } from '../database/Explorer';
 import QueryWorkspace from '../query/QueryWorkspace';
 import ConnectionForm from './ConnectionForm';
+import { translate } from '../../i18n';
 
 const RECONNECT_DELAYS_MS = [800, 1600, 3200];
 const CONNECTION_MENU_WIDTH = 180;
@@ -64,6 +65,7 @@ export default function ConnectionManager() {
   const removeConnectionRuntime = useConnectionRuntimeStore((state) => state.removeConnectionRuntime);
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
+  const locale = useUiPreferencesStore((state) => state.locale);
   const sidebarWidth = useUiPreferencesStore((state) => state.sidebarWidth);
   const setSidebarWidth = useUiPreferencesStore((state) => state.setSidebarWidth);
   const sidebarCollapsed = useUiPreferencesStore((state) => state.sidebarCollapsed);
@@ -85,18 +87,20 @@ export default function ConnectionManager() {
     connections.find((connection) => connection.id === selectedConnectionId) ?? null;
   const statusBarConnection = activeConnection ?? selectedConnection ?? null;
   const statusBarState = statusBarConnection ? resolveRuntimeConnectionState(runtimeStatus, statusBarConnection.id) : 'disconnected';
+  const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
+    translate(locale, key, params);
   const statusBarText =
     activeSchema && !activeSchemaMetadata?.tablesLoadedAt && !activeSchemaMetadata?.tablesError
-      ? `Carregando tabelas • ${activeSchema}`
+      ? `${t('loadingTables')} • ${activeSchema}`
       : metadataActivity?.phase === 'loadingTables'
-        ? `Carregando tabelas • ${metadataActivity.schemaName ?? 'schema'}`
+        ? `${t('loadingTables')} • ${metadataActivity.schemaName ?? 'schema'}`
         : metadataActivity?.phase === 'loadingSchemas'
-          ? 'Carregando schemas'
+          ? t('loadingSchemas')
           : metadataActivity?.phase === 'loadingColumns'
-            ? `Carregando colunas • ${metadataActivity.schemaName ?? ''}${metadataActivity.tableName ? `.${metadataActivity.tableName}` : ''}`
+            ? `${t('loadingColumns')} • ${metadataActivity.schemaName ?? ''}${metadataActivity.tableName ? `.${metadataActivity.tableName}` : ''}`
             : activeConnectionId
-              ? 'Pronto'
-              : 'Sem conex?o ativa';
+              ? t('ready')
+              : t('noActiveConnection');
 
   useEffect(() => {
     if (activeConnectionId && !activeConnection) {
@@ -149,7 +153,7 @@ export default function ConnectionManager() {
     }
 
     await navigator.clipboard.writeText(entries.join('\n'));
-    appendLog(connId, 'Logs copiados para a area de transferencia.');
+    appendLog(connId, t('logsCopied'));
   };
 
   const openConnection = async (conn: ConnectionConfig, forceReconnect = false) => {
@@ -157,7 +161,7 @@ export default function ConnectionManager() {
 
     const currentState = resolveConnectionState(conn.id);
     if (forceReconnect && currentState === 'connected') {
-      appendLog(conn.id, 'A conexao ja esta ativa.');
+      appendLog(conn.id, t('connectionAlreadyActive'));
       return;
     }
 
@@ -165,8 +169,8 @@ export default function ConnectionManager() {
     appendLog(
       conn.id,
       forceReconnect
-        ? `Reconectando ${conn.name}.`
-        : `Abrindo conexao ${conn.name} com timeout de ${conn.connectTimeoutSeconds ?? 10}s.`,
+        ? t('reconnectingConnection', { name: conn.name })
+        : t('openingConnectionWithTimeout', { name: conn.name, seconds: conn.connectTimeoutSeconds ?? 10 }),
     );
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -181,12 +185,12 @@ export default function ConnectionManager() {
         appendLog(
           conn.id,
           isRetry
-            ? `Conexao restabelecida na tentativa ${attempt}.`
-            : 'Conexao aberta com sucesso.',
+            ? t('connectionRestoredOnAttempt', { attempt })
+            : t('connectionOpenedSuccessfully'),
         );
         return;
       } catch (error) {
-        const message = formatConnectionError(error);
+        const message = formatConnectionError(error, locale);
 
         if (attempt < maxAttempts) {
           const delayMs = RECONNECT_DELAYS_MS[attempt - 1];
@@ -241,7 +245,7 @@ export default function ConnectionManager() {
 
   const confirmRemoveConnection = (conn: ConnectionConfig) => {
     const confirmed = window.confirm(
-      `Remover a conexao "${conn.name}"?\n\nEssa acao exclui a configuracao salva desta conexao.`,
+      t('removeConnectionConfirm', { name: conn.name }),
     );
 
     if (!confirmed) {
@@ -252,7 +256,7 @@ export default function ConnectionManager() {
   };
 
   const disconnectConnection = async (conn: ConnectionConfig) => {
-    appendLog(conn.id, `Fechando conexao ${conn.name}.`);
+    appendLog(conn.id, t('closingConnection', { name: conn.name }));
 
     try {
       await invoke('close_connection', { id: conn.id });
@@ -261,9 +265,9 @@ export default function ConnectionManager() {
       if (activeConnectionId === conn.id) {
         setActiveConnection(null);
       }
-      appendLog(conn.id, 'Conexao fechada.');
+      appendLog(conn.id, t('connectionClosed'));
     } catch (error) {
-      appendLog(conn.id, formatConnectionError(error));
+      appendLog(conn.id, formatConnectionError(error, locale));
     }
   };
 
@@ -317,7 +321,7 @@ export default function ConnectionManager() {
                   type="button"
                   onClick={toggleSidebarCollapsed}
                   className="p-2 text-muted hover:bg-background/45 hover:text-text"
-                  title="Expandir lateral"
+                  title={t('expandSidebar')}
                 >
                   <ChevronsRight size={16} />
                 </button>
@@ -328,7 +332,7 @@ export default function ConnectionManager() {
                     setShowForm(true);
                   }}
                   className="p-2 text-muted hover:bg-background/45 hover:text-text"
-                  title="Nova conex?o"
+                  title={t('newConnection')}
                 >
                   <Plus size={16} />
                 </button>
@@ -346,7 +350,7 @@ export default function ConnectionManager() {
                       setShowForm(true);
                     }}
                     className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
-                    title="Nova conex?o"
+                    title={t('newConnection')}
                   >
                     <Plus size={16} />
                   </button>
@@ -354,7 +358,7 @@ export default function ConnectionManager() {
                     type="button"
                     onClick={toggleSidebarCollapsed}
                     className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
-                    title="Ocultar lateral"
+                    title={t('hideSidebar')}
                   >
                     <ChevronsLeft size={16} />
                   </button>
@@ -404,7 +408,7 @@ export default function ConnectionManager() {
               <div className="space-y-1">
                 {connections.length === 0 ? (
                   <p className="border border-border/70 bg-background/24 px-3 py-4 text-center text-sm text-muted">
-                    Nenhuma conex?o salva.
+                    {t('noSavedConnections')}
                   </p>
                 ) : (
                   connections.map((conn) => {
@@ -444,7 +448,7 @@ export default function ConnectionManager() {
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                              <ConnectionBadge state={connectionState} compact />
+                              <ConnectionBadge locale={locale} state={connectionState} compact />
                             </div>
                           </div>
                         </button>
@@ -452,14 +456,16 @@ export default function ConnectionManager() {
                         {isSelected ? (
                           <div className="space-y-3 border border-border/70 bg-background/18 p-3">
                             <ActionSection
-                              title="Acoes principais"
+                              title={t('mainActions')}
                               actions={buildPrimaryActions({
                                 connectionState,
+                                locale,
                                 onOpen: () => void openConnection(conn),
                               })}
                             />
 
                             <LogsSection
+                              locale={locale}
                               connectionName={conn.name}
                               expanded={logsExpanded}
                               entries={connectionLogs[conn.id] ?? []}
@@ -520,7 +526,7 @@ export default function ConnectionManager() {
           ) : selectedConnection ? (
             <div className="h-full flex items-center justify-center text-muted">
               <div className="rounded-lg border border-border/70 bg-background/22 px-6 py-5 text-center">
-                <p className="text-sm text-text">Conexao selecionada, mas ainda desconectada.</p>
+                <p className="text-sm text-text">{t('noActiveConnection')}.</p>
                 <p className="mt-1 text-xs text-muted">Abra a conexao pela sidebar para liberar editor, explorer e execucao.</p>
               </div>
             </div>
@@ -549,7 +555,7 @@ export default function ConnectionManager() {
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
           >
             <Star size={14} className={favoriteConnectionId === connectionContextMenu.connId ? 'fill-amber-300 text-amber-300' : 'text-muted'} />
-            <span>{favoriteConnectionId === connectionContextMenu.connId ? 'Desfavoritar' : 'Favoritar e autoabrir'}</span>
+            <span>{favoriteConnectionId === connectionContextMenu.connId ? t('unfavorite') : t('favoriteAndAutoOpen')}</span>
           </button>
           <button
             type="button"
@@ -561,7 +567,7 @@ export default function ConnectionManager() {
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
           >
             <FileText size={14} className="text-muted" />
-            <span>Editar</span>
+            <span>{t('editConnection')}</span>
           </button>
           <button
             type="button"
@@ -575,7 +581,7 @@ export default function ConnectionManager() {
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
           >
             <PlugZap size={14} className="text-muted" />
-            <span>Desconectar</span>
+            <span>{t('disconnect')}</span>
           </button>
           <div className="my-1 border-t border-border/70" />
           <button
@@ -590,14 +596,15 @@ export default function ConnectionManager() {
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-300 transition-colors hover:bg-red-400/10"
           >
             <XCircle size={14} className="text-red-300" />
-            <span>Remover</span>
+            <span>{t('remove')}</span>
           </button>
         </div>
       ) : null}
 
       {expandedLogsConnectionId ? (
         <LogsModal
-          connectionName={connections.find((item) => item.id === expandedLogsConnectionId)?.name ?? 'Conexao'}
+          locale={locale}
+          connectionName={connections.find((item) => item.id === expandedLogsConnectionId)?.name ?? t('favoriteConnection')}
           entries={connectionLogs[expandedLogsConnectionId] ?? []}
           onCopy={() => void copyLogs(expandedLogsConnectionId)}
           onClose={() => setExpandedLogsConnectionId(null)}
@@ -610,7 +617,7 @@ export default function ConnectionManager() {
             <span className="truncate">{statusBarText}</span>
             <span className="hidden sm:inline text-muted/70">•</span>
             <span className="hidden sm:inline text-muted/80">
-              Fundo sem?ntico{' '}
+              {t('semanticBackgroundStatus')}{' '}
               <button
                 ref={semanticToggleRef}
                 type="button"
@@ -628,7 +635,7 @@ export default function ConnectionManager() {
               <span className="max-w-[220px] truncate text-[10px] uppercase tracking-[0.14em] text-slate-200/90">
                 {statusBarConnection.name}
               </span>
-              <ConnectionBadge state={statusBarState} compact glowing />
+              <ConnectionBadge locale={locale} state={statusBarState} compact glowing />
             </div>
           ) : null}
         </div>
@@ -685,9 +692,11 @@ function ActionSection({ title, actions }: { title: string; actions: ActionItem[
 
 function buildPrimaryActions({
   connectionState,
+  locale,
   onOpen,
 }: {
   connectionState: RuntimeConnectionState;
+  locale: 'pt-BR' | 'en-US';
   onOpen: () => void;
 }): ActionItem[] {
   const isBusy = connectionState === 'connecting' || connectionState === 'reconnecting';
@@ -696,7 +705,9 @@ function buildPrimaryActions({
   if (connectionState !== 'connected') {
     actions.push({
       id: 'open',
-      label: connectionState === 'reconnecting' ? 'Reconectando' : 'Abrir conexão',
+      label: connectionState === 'reconnecting'
+        ? translate(locale, 'reconnectingAction')
+        : translate(locale, 'openConnectionAction'),
       icon: Plug,
       onClick: onOpen,
       disabled: isBusy,
@@ -709,6 +720,7 @@ function buildPrimaryActions({
 }
 
 function LogsSection({
+  locale,
   connectionName,
   expanded,
   entries,
@@ -716,6 +728,7 @@ function LogsSection({
   onCopy,
   onExpand,
 }: {
+  locale: 'pt-BR' | 'en-US';
   connectionName: string;
   expanded: boolean;
   entries: string[];
@@ -728,7 +741,7 @@ function LogsSection({
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
           <FileText size={12} />
-          Histórico técnico
+          {translate(locale, 'technicalHistory')}
         </div>
         <button
           type="button"
@@ -736,7 +749,7 @@ function LogsSection({
           className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-background/30 px-3 py-1.5 text-xs text-text hover:bg-border/30"
         >
           {expanded ? <EyeOff size={12} /> : <Eye size={12} />}
-          {expanded ? 'Ocultar' : 'Mostrar'}
+          {expanded ? translate(locale, 'hide') : translate(locale, 'show')}
         </button>
       </div>
 
@@ -746,14 +759,14 @@ function LogsSection({
             <button
               onClick={onExpand}
               className="inline-flex items-center rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:text-text hover:bg-border/30"
-              title={`Expandir logs de ${connectionName}`}
+              title={`${translate(locale, 'logs')} ${connectionName}`}
             >
               <Expand size={11} />
             </button>
             <button
               onClick={onCopy}
               className="inline-flex items-center rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:text-text hover:bg-border/30"
-              title="Copiar logs"
+              title={translate(locale, 'copyLogs')}
             >
               <Copy size={11} />
             </button>
@@ -764,6 +777,7 @@ function LogsSection({
                 const previousTimestamp = index > 0 ? extractLogParts(entries[index - 1]).timestamp : null;
                 return (
                 <ConnectionLogEntry
+                  locale={locale}
                   key={`log-${index}`}
                   entry={entry}
                   highlighted={index === 0}
@@ -773,7 +787,7 @@ function LogsSection({
               })}
             </div>
           ) : (
-            <div className="text-[11px] text-muted/70">Nenhum log para esta conexao ainda.</div>
+            <div className="text-[11px] text-muted/70">{translate(locale, 'noLogsYet')}</div>
           )}
         </div>
       ) : null}
@@ -828,10 +842,12 @@ function connectionStateDot(state: RuntimeConnectionState): string {
 }
 
 function ConnectionBadge({
+  locale,
   state,
   compact = false,
   glowing = false,
 }: {
+  locale: 'pt-BR' | 'en-US';
   state: RuntimeConnectionState;
   compact?: boolean;
   glowing?: boolean;
@@ -845,11 +861,11 @@ function ConnectionBadge({
   };
 
   const labels: Record<RuntimeConnectionState, string> = {
-    disconnected: 'DESCONECTADA',
-    connecting: 'CONECTANDO',
-    connected: 'CONECTADA',
-    reconnecting: 'RECONECTANDO',
-    failed: 'FALHA',
+    disconnected: translate(locale, 'statusDisconnected'),
+    connecting: translate(locale, 'statusConnecting'),
+    connected: translate(locale, 'statusConnected'),
+    reconnecting: translate(locale, 'statusReconnecting'),
+    failed: translate(locale, 'statusFailed'),
   };
 
   const compactGlowingConnected =
@@ -872,11 +888,13 @@ function ConnectionBadge({
 }
 
 function LogsModal({
+  locale,
   connectionName,
   entries,
   onCopy,
   onClose,
 }: {
+  locale: 'pt-BR' | 'en-US';
   connectionName: string;
   entries: string[];
   onCopy: () => void;
@@ -893,7 +911,7 @@ function LogsModal({
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
-            <div className="text-sm font-semibold text-text">Logs</div>
+            <div className="text-sm font-semibold text-text">{translate(locale, 'logs')}</div>
             <div className="text-xs uppercase tracking-[0.14em] text-muted">{connectionName}</div>
           </div>
           <div className="flex items-center gap-2">
@@ -901,7 +919,7 @@ function LogsModal({
               type="button"
               onClick={onCopy}
               className="inline-flex items-center rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
-              title="Copiar logs"
+              title={translate(locale, 'copyLogs')}
             >
               <Copy size={12} />
             </button>
@@ -910,7 +928,7 @@ function LogsModal({
               onClick={onClose}
               className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
             >
-              Fechar
+              {translate(locale, 'close')}
             </button>
           </div>
         </div>
@@ -921,6 +939,7 @@ function LogsModal({
                 const previousTimestamp = index > 0 ? extractLogParts(entries[index - 1]).timestamp : null;
                 return (
                   <ConnectionLogEntry
+                    locale={locale}
                     key={`modal-log-${index}`}
                     entry={entry}
                     highlighted={index === 0}
@@ -931,7 +950,7 @@ function LogsModal({
             </div>
           ) : (
             <div className="rounded-lg border border-border/70 bg-background/40 px-4 py-5 text-sm text-muted">
-              Nenhum log para esta conexao ainda.
+              {translate(locale, 'noLogsYet')}
             </div>
           )}
         </div>
@@ -942,10 +961,12 @@ function LogsModal({
 }
 
 function ConnectionLogEntry({
+  locale,
   entry,
   highlighted = false,
   compactTimestamp = false,
 }: {
+  locale: 'pt-BR' | 'en-US';
   entry: string;
   highlighted?: boolean;
   compactTimestamp?: boolean;
@@ -973,7 +994,7 @@ function ConnectionLogEntry({
                 compactTimestamp ? 'text-muted/25' : highlighted ? 'text-primary/60' : 'text-muted/45'
               }`}
             >
-              {compactTimestamp ? 'mesmo instante' : timestamp}
+              {compactTimestamp ? translate(locale, 'sameInstant') : timestamp}
             </div>
           ) : null}
           <div className={tone.text}>{message}</div>
@@ -1044,29 +1065,39 @@ function resolveLogTone(message: string) {
   };
 }
 
-function formatConnectionError(error: unknown): string {
+function formatConnectionError(error: unknown, locale: 'pt-BR' | 'en-US'): string {
   const raw = extractErrorMessage(error);
   const normalized = raw.trim();
   const lower = normalized.toLowerCase();
 
   if (lower.includes('timed out')) {
-    return 'Tempo limite excedido ao abrir a conexao.';
+    return locale === 'en-US'
+      ? 'Connection open timed out.'
+      : 'Tempo limite excedido ao abrir a conexao.';
   }
 
   if (lower.includes('connection reset')) {
-    return 'A conexao foi encerrada pelo servidor durante o handshake.';
+    return locale === 'en-US'
+      ? 'The connection was closed by the server during the handshake.'
+      : 'A conexao foi encerrada pelo servidor durante o handshake.';
   }
 
   if (lower.includes('connection refused')) {
-    return 'O host recusou a conexao. Verifique host, porta e tunnel.';
+    return locale === 'en-US'
+      ? 'The host refused the connection. Check host, port, and tunnel.'
+      : 'O host recusou a conexao. Verifique host, porta e tunnel.';
   }
 
   if (lower.includes('authentication failed') || lower.includes('access denied')) {
-    return 'Falha de autenticacao. Revise usuario, senha ou chave privada.';
+    return locale === 'en-US'
+      ? 'Authentication failed. Review username, password, or private key.'
+      : 'Falha de autenticacao. Revise usuario, senha ou chave privada.';
   }
 
   if (lower.includes('connection not found')) {
-    return 'A conexao nao esta disponivel no runtime. Abra ou reconecte antes de continuar.';
+    return locale === 'en-US'
+      ? 'The connection is not available in the runtime. Open or reconnect before continuing.'
+      : 'A conexao nao esta disponivel no runtime. Abra ou reconecte antes de continuar.';
   }
 
   if (
@@ -1075,7 +1106,9 @@ function formatConnectionError(error: unknown): string {
     lower.includes('failed to compile oracle jdbc sidecar') ||
     lower.includes('failed to run javac for oracle sidecar')
   ) {
-    return 'Conexao Oracle requer Java/JDK instalado na maquina. Instale um JDK e tente novamente.';
+    return locale === 'en-US'
+      ? 'Oracle connections require Java/JDK installed on the machine. Install a JDK and try again.'
+      : 'Conexao Oracle requer Java/JDK instalado na maquina. Instale um JDK e tente novamente.';
   }
 
   return normalized;

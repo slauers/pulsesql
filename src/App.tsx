@@ -12,6 +12,7 @@ import { useConnectionRuntimeStore } from './store/connectionRuntime';
 import { useDatabaseSessionStore } from './store/databaseSession';
 import { useUiPreferencesStore } from './store/uiPreferences';
 import { getThemeById } from './themes';
+import { translate, type AppLocale } from './i18n';
 
 function App() {
   const menuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -26,6 +27,7 @@ function App() {
   const activeSchemas = useDatabaseSessionStore((state) => state.activeSchemaByConnection);
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
+  const locale = useUiPreferencesStore((state) => state.locale);
   const themeId = useUiPreferencesStore((state) => state.themeId);
   const density = useUiPreferencesStore((state) => state.density);
   const commandPaletteShortcut = useUiPreferencesStore((state) => state.commandPaletteShortcut);
@@ -70,7 +72,7 @@ function App() {
     startupSequenceStartedRef.current = true;
 
     const runStartupSequence = async () => {
-      await emitSplashProgress(18, 'Loading interface shell');
+      await emitSplashProgress(18, translate(locale, 'splashLoadingInterface'));
       await nextFrame();
 
       const sessionReady =
@@ -81,7 +83,7 @@ function App() {
 
       await emitSplashProgress(
         sessionReady ? 52 : 38,
-        'Restoring session state',
+        translate(locale, 'splashRestoringSession'),
       );
       await nextFrame();
 
@@ -93,18 +95,18 @@ function App() {
 
       await emitSplashProgress(
         workspaceReady ? 82 : 68,
-        'Hydrating workspace',
+        translate(locale, 'splashHydratingWorkspace'),
       );
       await wait(180);
 
       startupSequenceFinishedRef.current = true;
-      await emitSplashProgress(100, 'Ready');
+      await emitSplashProgress(100, translate(locale, 'splashReady'));
       await wait(120);
       await invokeSafely('reveal_main_window');
     };
 
     void runStartupSequence();
-  }, [activeConnectionId, activeSchemas, activeTabId, connections, semanticBackgroundEnabled, tabs]);
+  }, [activeConnectionId, activeSchemas, activeTabId, connections, locale, semanticBackgroundEnabled, tabs]);
 
   useEffect(() => {
     const hasLiveActiveConnection = Boolean(
@@ -125,22 +127,28 @@ function App() {
     const openFavoriteConnection = async () => {
       setActiveConnection(favoriteConnection.id);
       setRuntimeStatus(favoriteConnection.id, 'connecting');
-      appendLog(favoriteConnection.id, `Abrindo conexao favorita ${favoriteConnection.name} na inicializacao.`);
+      appendLog(
+        favoriteConnection.id,
+        translate(locale, 'openFavoriteConnectionOnStartup', { name: favoriteConnection.name }),
+      );
 
       try {
         await invoke('open_connection', { config: favoriteConnection });
         setRuntimeStatus(favoriteConnection.id, 'connected');
         setActiveConnection(favoriteConnection.id);
-        appendLog(favoriteConnection.id, 'Conexao favorita aberta automaticamente.');
+        appendLog(favoriteConnection.id, translate(locale, 'favoriteConnectionOpenedAutomatically'));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setRuntimeStatus(favoriteConnection.id, 'failed');
-        appendLog(favoriteConnection.id, `Falha ao abrir conexao favorita automaticamente: ${message}`);
+        appendLog(
+          favoriteConnection.id,
+          translate(locale, 'failedToOpenFavoriteAutomatically', { message }),
+        );
       }
     };
 
     void openFavoriteConnection();
-  }, [activeConnectionId, appendLog, connections, favoriteConnectionId, runtimeStatus, setActiveConnection, setRuntimeStatus]);
+  }, [activeConnectionId, appendLog, connections, favoriteConnectionId, locale, runtimeStatus, setActiveConnection, setRuntimeStatus]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -227,45 +235,47 @@ function App() {
   }> = [
     {
       id: 'file',
-      label: 'File',
+      label: translate(locale, 'file'),
       items: [
-        { label: 'New Connection...', onClick: openNewConnectionForm, icon: Waypoints },
-        { label: 'Configuration...', onClick: () => setConfigurationOpen(true), icon: Settings2 },
-        { label: 'Exit', onClick: () => void handleExitApplication() },
+        { label: translate(locale, 'newConnection'), onClick: openNewConnectionForm, icon: Waypoints },
+        { label: translate(locale, 'configuration'), onClick: () => setConfigurationOpen(true), icon: Settings2 },
+        { label: translate(locale, 'exit'), onClick: () => void handleExitApplication() },
       ],
     },
     {
       id: 'edit',
-      label: 'Edit',
+      label: translate(locale, 'edit'),
       items: [
-        { label: 'New Query Tab', onClick: addTab, icon: SquareTerminal },
-        { label: 'Close Query Tab', onClick: handleCloseCurrentTab, disabled: !activeTabId },
-        { label: 'Command Palette', onClick: openCommandPalette, icon: Command },
+        { label: translate(locale, 'newQueryTab'), onClick: addTab, icon: SquareTerminal },
+        { label: translate(locale, 'closeQueryTab'), onClick: handleCloseCurrentTab, disabled: !activeTabId },
+        { label: translate(locale, 'commandPalette'), onClick: openCommandPalette, icon: Command },
       ],
     },
     {
       id: 'view',
-      label: 'View',
+      label: translate(locale, 'view'),
       items: [
         {
-          label: semanticBackgroundEnabled ? 'Disable Semantic Background' : 'Enable Semantic Background',
+          label: semanticBackgroundEnabled
+            ? translate(locale, 'disableSemanticBackground')
+            : translate(locale, 'enableSemanticBackground'),
           onClick: () => setSemanticBackgroundEnabled(!semanticBackgroundEnabled),
         },
-        { label: 'Toggle Connections Sidebar', onClick: toggleConnectionsSidebar },
+        { label: translate(locale, 'toggleConnectionsSidebar'), onClick: toggleConnectionsSidebar },
       ],
     },
     {
       id: 'help',
-      label: 'Help',
+      label: translate(locale, 'help'),
       items: [
-        { label: 'Keyboard Shortcuts', onClick: () => setHelpOpen(true), icon: CircleHelp },
+        { label: translate(locale, 'keyboardShortcuts'), onClick: () => setHelpOpen(true), icon: CircleHelp },
       ],
     },
     {
       id: 'about',
-      label: 'About',
+      label: translate(locale, 'about'),
       items: [
-        { label: 'About Blacktable', onClick: () => setAboutOpen(true), icon: Info },
+        { label: translate(locale, 'aboutBlacktable'), onClick: () => setAboutOpen(true), icon: Info },
       ],
     },
   ];
@@ -349,7 +359,9 @@ function App() {
       <CommandPalette
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
+        locale={locale}
         commands={buildCommandPaletteCommands({
+          locale,
           addTab,
           activeTabId,
           closeTab,
@@ -364,25 +376,27 @@ function App() {
       />
       <InfoDialog
         open={helpOpen}
+        locale={locale}
         onClose={() => setHelpOpen(false)}
-        title="Keyboard Shortcuts"
-        subtitle="Atalhos globais configuraveis"
+        title={translate(locale, 'keyboardShortcutsTitle')}
+        subtitle={translate(locale, 'keyboardShortcutsSubtitle')}
         lines={[
-          `${commandPaletteShortcut}: abre a command palette`,
-          `${newQueryTabShortcut}: cria uma nova aba de query`,
-          'Cmd/Ctrl + Enter: executa a query atual no editor',
-          'File > Configuration...: abre as configuracoes do sistema',
+          `${commandPaletteShortcut}: ${translate(locale, 'opensCommandPalette')}`,
+          `${newQueryTabShortcut}: ${translate(locale, 'createsNewQueryTab')}`,
+          `Cmd/Ctrl + Enter: ${translate(locale, 'runsCurrentQuery')}`,
+          `${translate(locale, 'file')} > ${translate(locale, 'configuration')}: ${translate(locale, 'opensSystemConfiguration')}`,
         ]}
       />
       <InfoDialog
         open={aboutOpen}
+        locale={locale}
         onClose={() => setAboutOpen(false)}
-        title="About Blacktable"
-        subtitle="Grid-native SQL workstation"
+        title={translate(locale, 'aboutTitle')}
+        subtitle={translate(locale, 'aboutSubtitle')}
         lines={[
-          'Blacktable',
-          'Desktop SQL client focado em editor, explorer e grid de resultados.',
-          'Inclui configuracao central, conexao favorita com autoabertura e paginação de resultados.',
+          translate(locale, 'aboutLine1'),
+          translate(locale, 'aboutLine2'),
+          translate(locale, 'aboutLine3'),
         ]}
       />
     </div>
@@ -420,12 +434,14 @@ function wait(ms: number) {
 
 function InfoDialog({
   open,
+  locale,
   onClose,
   title,
   subtitle,
   lines,
 }: {
   open: boolean;
+  locale: AppLocale;
   onClose: () => void;
   title: string;
   subtitle: string;
@@ -463,7 +479,7 @@ function InfoDialog({
             onClick={onClose}
             className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
           >
-            Fechar
+            {translate(locale, 'close')}
           </button>
         </div>
       </div>
@@ -476,10 +492,12 @@ function CommandPalette({
   open,
   onClose,
   commands,
+  locale,
 }: {
   open: boolean;
   onClose: () => void;
   commands: Array<{ id: string; label: string; description: string; action: () => void; disabled?: boolean }>;
+  locale: AppLocale;
 }) {
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -527,7 +545,7 @@ function CommandPalette({
                   filteredCommands[0].action();
                 }
               }}
-              placeholder="Digite um comando..."
+              placeholder={translate(locale, 'commandPalettePlaceholder')}
               className="w-full bg-transparent text-sm text-text outline-none placeholder:text-muted"
             />
           </div>
@@ -551,7 +569,7 @@ function CommandPalette({
                 </button>
               ))
             ) : (
-              <div className="px-3 py-5 text-sm text-muted">Nenhum comando encontrado.</div>
+              <div className="px-3 py-5 text-sm text-muted">{translate(locale, 'noCommandFound')}</div>
             )}
           </div>
         </div>
@@ -562,6 +580,7 @@ function CommandPalette({
 }
 
 function buildCommandPaletteCommands(params: {
+  locale: AppLocale;
   addTab: () => void;
   activeTabId: string | null;
   closeTab: (id: string) => void;
@@ -576,20 +595,20 @@ function buildCommandPaletteCommands(params: {
   return [
     {
       id: 'new-connection',
-      label: 'Nova conexao',
-      description: 'Abre o formulario de conexao',
+      label: translate(params.locale, 'newConnection'),
+      description: translate(params.locale, 'connectionFormNewTitle'),
       action: params.openNewConnectionForm,
     },
     {
       id: 'new-query-tab',
-      label: 'Nova aba de query',
-      description: 'Cria uma nova aba no editor',
+      label: translate(params.locale, 'newQueryTab'),
+      description: translate(params.locale, 'createsNewQueryTab'),
       action: params.addTab,
     },
     {
       id: 'close-query-tab',
-      label: 'Fechar aba de query',
-      description: 'Fecha a aba ativa',
+      label: translate(params.locale, 'closeQueryTab'),
+      description: translate(params.locale, 'closeQueryTab'),
       action: () => {
         if (params.activeTabId) {
           params.closeTab(params.activeTabId);
@@ -599,32 +618,32 @@ function buildCommandPaletteCommands(params: {
     },
     {
       id: 'configuration',
-      label: 'Configuracoes',
-      description: 'Abre a configuracao do sistema',
+      label: translate(params.locale, 'configuration'),
+      description: translate(params.locale, 'opensSystemConfiguration'),
       action: params.openConfiguration,
     },
     {
       id: 'toggle-sidebar',
-      label: 'Alternar sidebar de conexoes',
-      description: 'Mostra ou oculta a lateral',
+      label: translate(params.locale, 'toggleConnectionsSidebar'),
+      description: translate(params.locale, 'toggleConnectionsSidebar'),
       action: params.toggleConnectionsSidebar,
     },
     {
       id: 'toggle-semantic-background',
-      label: 'Alternar fundo semantico',
-      description: 'Liga ou desliga o fundo semantico',
+      label: translate(params.locale, 'semanticBackground'),
+      description: translate(params.locale, 'semanticBackgroundDescription'),
       action: params.toggleSemanticBackground,
     },
     {
       id: 'help',
-      label: 'Atalhos de teclado',
-      description: 'Abre a ajuda rapida do app',
+      label: translate(params.locale, 'keyboardShortcuts'),
+      description: translate(params.locale, 'keyboardShortcutsSubtitle'),
       action: params.openHelp,
     },
     {
       id: 'about',
-      label: 'Sobre o Blacktable',
-      description: 'Abre informacoes do aplicativo',
+      label: translate(params.locale, 'aboutBlacktable'),
+      description: translate(params.locale, 'aboutSubtitle'),
       action: params.openAbout,
     },
   ];
@@ -658,3 +677,4 @@ function matchesShortcut(event: KeyboardEvent, shortcut: string) {
     event.key.toLowerCase() === mainKey.toLowerCase()
   );
 }
+

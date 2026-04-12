@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import { Copy, FilePlus2, Play, Replace, Trash2 } from 'lucide-react';
 import type { QueryHistoryItem as QueryHistoryItemType } from '../types';
+import { formatDateTime, translate, type AppLocale } from '../../../i18n';
 
 export default function QueryHistoryItem({
+  locale,
   item,
   onOpenInNewTab,
   onReplaceCurrent,
@@ -10,6 +12,7 @@ export default function QueryHistoryItem({
   onRunAgain,
   onDelete,
 }: {
+  locale: AppLocale;
   item: QueryHistoryItemType;
   onOpenInNewTab: () => void;
   onReplaceCurrent: () => void;
@@ -23,9 +26,9 @@ export default function QueryHistoryItem({
         <div className="min-w-0">
           <div className="truncate text-sm font-medium text-text">{item.connectionName}</div>
           <div className="mt-1 text-[11px] text-muted">
-            {formatStatus(item.status)} · {formatExecutedAt(item.executedAt)}
-            {typeof item.durationMs === 'number' ? ` · ${item.durationMs}ms` : ''}
-            {typeof item.rowCount === 'number' ? ` · ${item.rowCount} rows` : ''}
+            {formatStatus(locale, item.status)} - {formatDateTime(locale, item.executedAt)}
+            {typeof item.durationMs === 'number' ? ` - ${item.durationMs}ms` : ''}
+            {typeof item.rowCount === 'number' ? ` - ${translate(locale, 'rowsCount', { count: item.rowCount })}` : ''}
           </div>
         </div>
         <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${statusTone(item.status)}`}>
@@ -44,11 +47,11 @@ export default function QueryHistoryItem({
       ) : null}
 
       <div className="mt-3 flex flex-wrap gap-2 text-xs">
-        <HistoryAction label="Open in new tab" icon={<FilePlus2 size={12} />} onClick={onOpenInNewTab} />
-        <HistoryAction label="Replace current" icon={<Replace size={12} />} onClick={onReplaceCurrent} />
-        <HistoryAction label="Copy SQL" icon={<Copy size={12} />} onClick={onCopySql} />
-        <HistoryAction label="Run again" icon={<Play size={12} />} onClick={onRunAgain} />
-        <HistoryAction label="Delete" icon={<Trash2 size={12} />} onClick={onDelete} danger />
+        <HistoryAction label={translate(locale, 'openInNewTab')} icon={<FilePlus2 size={12} />} onClick={onOpenInNewTab} />
+        <HistoryAction label={translate(locale, 'replaceCurrent')} icon={<Replace size={12} />} onClick={onReplaceCurrent} />
+        <HistoryAction label={translate(locale, 'copySql')} icon={<Copy size={12} />} onClick={onCopySql} />
+        <HistoryAction label={translate(locale, 'runAgain')} icon={<Play size={12} />} onClick={onRunAgain} />
+        <HistoryAction label={translate(locale, 'remove')} icon={<Trash2 size={12} />} onClick={onDelete} danger />
       </div>
     </div>
   );
@@ -80,25 +83,16 @@ function HistoryAction({
   );
 }
 
-function formatExecutedAt(value: string) {
-  const timestamp = Number(value);
-  if (Number.isFinite(timestamp)) {
-    return new Date(timestamp).toLocaleString('pt-BR');
-  }
-
-  return value;
-}
-
-function formatStatus(status: QueryHistoryItemType['status']) {
+function formatStatus(locale: AppLocale, status: QueryHistoryItemType['status']) {
   if (status === 'success') {
-    return 'Sucesso';
+    return translate(locale, 'success');
   }
 
   if (status === 'error') {
-    return 'Erro';
+    return translate(locale, 'error');
   }
 
-  return 'Cancelado';
+  return translate(locale, 'cancelled');
 }
 
 function statusTone(status: QueryHistoryItemType['status']) {

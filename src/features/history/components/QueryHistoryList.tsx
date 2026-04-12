@@ -1,7 +1,10 @@
 import type { QueryHistoryItem } from '../types';
 import QueryHistoryItemCard from './QueryHistoryItem';
+import type { AppLocale } from '../../../i18n';
+import { translate } from '../../../i18n';
 
 export default function QueryHistoryList({
+  locale,
   items,
   loading,
   error,
@@ -11,6 +14,7 @@ export default function QueryHistoryList({
   onRunAgain,
   onDelete,
 }: {
+  locale: AppLocale;
   items: QueryHistoryItem[];
   loading: boolean;
   error: string | null;
@@ -21,7 +25,7 @@ export default function QueryHistoryList({
   onDelete: (item: QueryHistoryItem) => void;
 }) {
   if (loading) {
-    return <div className="px-4 py-6 text-sm text-muted">Carregando historico...</div>;
+    return <div className="px-4 py-6 text-sm text-muted">{translate(locale, 'loadingHistory')}</div>;
   }
 
   if (error) {
@@ -29,13 +33,14 @@ export default function QueryHistoryList({
   }
 
   if (!items.length) {
-    return <div className="px-4 py-6 text-sm text-muted">Nenhuma execucao encontrada.</div>;
+    return <div className="px-4 py-6 text-sm text-muted">{translate(locale, 'noExecutionsFound')}</div>;
   }
 
   return (
     <div className="space-y-3 px-4 py-4">
       {items.map((item) => (
         <QueryHistoryItemCard
+          locale={locale}
           key={item.id}
           item={item}
           onOpenInNewTab={() => onOpenInNewTab(item)}

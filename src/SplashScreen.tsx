@@ -2,13 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import brandMark from './assets/blacktable-mark.svg';
+import { getInitialLocale, translate } from './i18n';
 
 interface SplashProgressPayload {
   progress: number;
   label?: string | null;
 }
 
-const DEFAULT_LABEL = 'Preparing workspace';
+const locale = getInitialLocale();
+const DEFAULT_LABEL = translate(locale, 'splashPreparingWorkspace');
 
 export default function SplashScreen() {
   const [progress, setProgress] = useState(8);
@@ -73,7 +75,7 @@ export default function SplashScreen() {
   useEffect(() => {
     if (finishing) {
       setProgress(100);
-      setLabel('Ready');
+      setLabel(translate(locale, 'splashReady'));
       return;
     }
 
@@ -109,7 +111,7 @@ export default function SplashScreen() {
 
         <div className="splash-screen__copy">
           <div className="splash-screen__title">BlackTable</div>
-          <div className="splash-screen__subtitle">Lightweight SQL workstation</div>
+          <div className="splash-screen__subtitle">{translate(locale, 'aboutSubtitle')}</div>
         </div>
 
         <div className="splash-screen__status">

@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 import { readSystemConfig, updateSystemConfig } from './systemConfig';
+import type { AppLocale } from '../i18n';
 
 type SemanticBackgroundState = 'idle' | 'running' | 'success' | 'warning' | 'error';
 
 interface UiPreferencesState {
+  locale: AppLocale;
   semanticBackgroundEnabled: boolean;
   semanticBackgroundState: SemanticBackgroundState;
   semanticBackgroundVersion: number;
@@ -17,6 +19,7 @@ interface UiPreferencesState {
   commandPaletteShortcut: string;
   newQueryTabShortcut: string;
   setSemanticBackgroundEnabled: (enabled: boolean) => void;
+  setLocale: (locale: AppLocale) => void;
   setSemanticBackgroundState: (state: SemanticBackgroundState) => void;
   setResultPageSize: (pageSize: number) => void;
   setThemeId: (themeId: string) => void;
@@ -32,6 +35,7 @@ interface UiPreferencesState {
 const systemConfig = readSystemConfig();
 
 export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
+  locale: systemConfig.ui.locale,
   semanticBackgroundEnabled: systemConfig.ui.semanticBackgroundEnabled,
   resultPageSize: systemConfig.ui.resultPageSize,
   themeId: systemConfig.ui.themeId,
@@ -44,6 +48,17 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
   newQueryTabShortcut: systemConfig.shortcuts.newQueryTab,
   semanticBackgroundState: 'idle',
   semanticBackgroundVersion: 0,
+  setLocale: (locale) =>
+    set(() => {
+      updateSystemConfig((current) => ({
+        ...current,
+        ui: {
+          ...current.ui,
+          locale,
+        },
+      }));
+      return { locale };
+    }),
   setSemanticBackgroundEnabled: (enabled) =>
     set(() => {
       updateSystemConfig((current) => ({

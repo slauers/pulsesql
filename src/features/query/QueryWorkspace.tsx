@@ -31,6 +31,7 @@ import {
 } from './query-error-utils';
 import { useConnectionRuntimeStore } from '../../store/connectionRuntime';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
+import { formatNumber, translate } from '../../i18n';
 
 interface QueryResult {
   columns: string[];
@@ -94,6 +95,7 @@ export default function QueryWorkspace({
   );
   const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
+  const locale = useUiPreferencesStore((state) => state.locale);
   const semanticBackgroundState = useUiPreferencesStore((state) => state.semanticBackgroundState);
   const semanticBackgroundVersion = useUiPreferencesStore((state) => state.semanticBackgroundVersion);
   const setSemanticBackgroundState = useUiPreferencesStore((state) => state.setSemanticBackgroundState);
@@ -102,6 +104,8 @@ export default function QueryWorkspace({
   const editorFontSize = useUiPreferencesStore((state) => state.editorFontSize);
   const density = useUiPreferencesStore((state) => state.density);
   const metadataByConnection = useDatabaseSessionStore((state) => state.metadataByConnection);
+  const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
+    translate(locale, key, params);
   
   const activeTab = tabs.find(t => t.id === activeTabId);
   const isConnectionReady = runtimeStatus === 'connected';
@@ -563,7 +567,7 @@ export default function QueryWorkspace({
                 className="ml-auto mr-2 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-background/28 px-3 py-2 text-xs text-muted hover:bg-border/30 hover:text-text"
               >
                 <Plus size={15} />
-                Nova aba
+                {t('newQueryTab')}
               </button>
             </div>
 
@@ -574,7 +578,7 @@ export default function QueryWorkspace({
                 className="flex items-center gap-1.5 bg-emerald-400/18 text-emerald-200 hover:bg-emerald-400/26 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-400/35 shadow-[0_0_18px_rgba(16,185,129,0.18)] hover:shadow-[0_0_24px_rgba(16,185,129,0.28)]"
               >
                 {loading ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} className="fill-green-400/50" />}
-                Executar
+                {t('run')}
               </button>
               <span className="rounded-full border border-border/70 bg-background/22 px-2.5 py-1 text-[11px] text-muted">
                 Cmd+Enter
@@ -588,7 +592,7 @@ export default function QueryWorkspace({
                 }`}
               >
                 <Clock3 size={13} />
-                Histórico
+                {t('history')}
               </button>
               {connectionLabel && engine ? (
                 <div className="ml-auto flex min-w-0 items-center gap-2 rounded-lg border border-border/70 bg-background/22 px-3 py-1.5">
@@ -597,7 +601,7 @@ export default function QueryWorkspace({
                   </span>
                   {!isConnectionReady ? (
                     <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-amber-200">
-                      desconectado
+                      {t('disconnected')}
                     </span>
                   ) : null}
                 </div>
@@ -706,7 +710,7 @@ export default function QueryWorkspace({
                     });
                     editor.addAction({
                       id: 'blacktable.runQuery',
-                      label: 'Run Query',
+                      label: t('run'),
                       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
                       run: () => {
                         executeQueryRef.current();
@@ -721,9 +725,9 @@ export default function QueryWorkspace({
             ) : (
               <div className="h-full flex items-center justify-center text-muted bg-background/40">
                 <div className="text-center">
-                  <p className="mb-2">Nenhuma query ativa.</p>
+                  <p className="mb-2">{t('noActiveQuery')}</p>
                   <button onClick={addTab} className="px-4 py-2 glass-panel border border-border rounded-lg text-sm hover:text-text flex items-center gap-2 mx-auto">
-                    <Plus size={16} /> Nova query
+                    <Plus size={16} /> {t('newQuery')}
                   </button>
                 </div>
               </div>
@@ -750,7 +754,7 @@ export default function QueryWorkspace({
           >
             <div className="p-2 border-b border-border text-sm font-medium text-muted flex justify-between items-center bg-background/42">
               <div className="flex gap-2 px-2 shrink-0 overflow-x-auto scrollbar-hide">
-                {(results.length ? results : [{ title: 'Resultado' } as QueryExecutionResult]).map((item, index) => (
+                {(results.length ? results : [{ title: t('result') } as QueryExecutionResult]).map((item, index) => (
                   <div
                     key={`${item.title}-${index}`}
                     className={`rounded-t-lg border-b-2 px-2.5 pb-1 pt-0.5 text-xs transition-colors ${
@@ -763,7 +767,7 @@ export default function QueryWorkspace({
                       onClick={() => setActiveResultIndex(index)}
                       className="inline-flex items-center gap-1.5"
                     >
-                      <span>{results.length <= 1 ? 'Resultado' : item.title}</span>
+                      <span>{results.length <= 1 ? t('result') : item.title}</span>
                     </button>
                     {results.length > 1 ? (
                       <button
@@ -785,12 +789,12 @@ export default function QueryWorkspace({
                   <div className="hidden md:flex items-center gap-2 text-xs text-muted shrink-0">
                     {hasGridResult ? (
                       <span>
-                        {filteredRows.length}
-                        {quickFilter ? ` / ${activeResult.rows.length}` : ''} rows
+                        {formatNumber(locale, filteredRows.length)}
+                        {quickFilter ? ` / ${formatNumber(locale, activeResult.rows.length)}` : ''} {t('rowsLabel')}
                       </span>
                     ) : null}
-                    {hasGridResult ? <span>total {totalRows} registros</span> : null}
-                    {canPaginate ? <span>pagina {currentPage} de {totalPages}</span> : null}
+                    {hasGridResult ? <span>{t('totalRecords', { count: formatNumber(locale, totalRows) })}</span> : null}
+                    {canPaginate ? <span>{t('pageOf', { page: currentPage, total: totalPages })}</span> : null}
                     <span>{activeResult.execution_time}ms</span>
                   </div>
                   {hasGridResult ? (
@@ -813,13 +817,13 @@ export default function QueryWorkspace({
                               }}
                               className="w-14 rounded border border-border/70 bg-background/35 px-1.5 py-1 text-right text-[11px] text-text outline-none focus:border-primary"
                             />
-                        <span>linhas</span>
+                        <span>{t('rowsLabel')}</span>
                           </label>
                           <button
                             onClick={() => void loadResultPage(activeResultIndex, currentPage - 1)}
                             disabled={loading || currentPage <= 1}
                             className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                            aria-label="Pagina anterior"
+                            aria-label={t('previousPage')}
                           >
                             <ChevronLeft size={14} />
                           </button>
@@ -830,7 +834,7 @@ export default function QueryWorkspace({
                             onClick={() => void loadResultPage(activeResultIndex, currentPage + 1)}
                             disabled={loading || currentPage >= totalPages}
                             className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                            aria-label="Proxima pagina"
+                            aria-label={t('nextPage')}
                           >
                             <ChevronRight size={14} />
                           </button>
@@ -841,7 +845,7 @@ export default function QueryWorkspace({
                         <input
                           value={quickFilter}
                           onChange={(event) => setQuickFilter(event.target.value)}
-                          placeholder="Filtro rapido"
+                          placeholder={t('quickFilter')}
                           className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
                         />
                       </label>
@@ -871,7 +875,7 @@ export default function QueryWorkspace({
                   <div className="flex items-center gap-3">
                     <LoaderCircle size={16} className="animate-spin text-primary" />
                     <span className="text-[10px] uppercase tracking-[0.14em] text-primary/70">
-                      Carregando resultados...
+                      {t('loadingResults')}
                     </span>
                   </div>
                 </div>
@@ -882,7 +886,7 @@ export default function QueryWorkspace({
                   {activeResult.summary ? (
                     <div className="border-b border-border/60 bg-emerald-400/5 px-4 py-3 text-xs text-emerald-100/90">
                       <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-emerald-300/80">
-                        Resumo da execucao
+                        {t('executionSummary')}
                       </div>
                       <pre className="whitespace-pre-wrap font-mono text-[12px] leading-6 text-emerald-100/90">
                         {activeResult.summary}
@@ -899,14 +903,14 @@ export default function QueryWorkspace({
                       />
                     ) : (
                       <div className="h-full flex items-center justify-center text-muted/50 text-sm">
-                        Execucao concluida sem result set.
+                        {t('executionWithoutResultSet')}
                       </div>
                     )}
                   </div>
                 </div>
               ) : (
                 <div className="h-full flex items-center justify-center text-muted/50 text-sm">
-                  Execute uma query para ver os resultados.
+                  {t('runQueryToSeeResults')}
                 </div>
               )}
             </div>
@@ -916,6 +920,7 @@ export default function QueryWorkspace({
 
       <QueryHistoryDrawer
         open={historyOpen}
+        locale={locale}
         connections={connections}
         onClose={() => setHistoryOpen(false)}
         onOpenInNewTab={openHistoryInNewTab}
@@ -925,6 +930,7 @@ export default function QueryWorkspace({
 
       {pendingRiskyExecution ? (
         <DangerousUpdateModal
+          locale={locale}
           onCancel={() => {
             setPendingRiskyExecution(null);
             if (semanticResetTimeoutRef.current) {
@@ -941,9 +947,11 @@ export default function QueryWorkspace({
 }
 
 function DangerousUpdateModal({
+  locale,
   onCancel,
   onConfirm,
 }: {
+  locale: 'pt-BR' | 'en-US';
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -957,14 +965,14 @@ function DangerousUpdateModal({
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="border-b border-border px-5 py-4">
-          <div className="text-sm font-semibold text-text">Confirmar update sem where</div>
+          <div className="text-sm font-semibold text-text">{translate(locale, 'confirmUpdateWithoutWhere')}</div>
           <div className="mt-1 text-xs text-muted">
-            Essa query parece executar um `UPDATE` sem `WHERE` e pode alterar todas as linhas da tabela.
+            {translate(locale, 'confirmUpdateWithoutWhereDescription')}
           </div>
         </div>
 
         <div className="px-5 py-4 text-sm text-amber-100/90">
-          Deseja executar mesmo assim?
+          {translate(locale, 'continueExecution')}
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
@@ -973,14 +981,14 @@ function DangerousUpdateModal({
             onClick={onCancel}
             className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
           >
-            Cancelar
+            {translate(locale, 'cancel')}
           </button>
           <button
             type="button"
             onClick={onConfirm}
             className="rounded-lg border border-amber-400/40 bg-amber-400/12 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-400/18"
           >
-            Executar mesmo assim
+            {translate(locale, 'continueExecution')}
           </button>
         </div>
       </div>
@@ -1379,3 +1387,4 @@ function summarizeStatementForLog(statement: string) {
     .trim()
     .slice(0, 140);
 }
+

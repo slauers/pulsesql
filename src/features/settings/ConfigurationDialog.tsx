@@ -6,6 +6,7 @@ import { useUiPreferencesStore } from '../../store/uiPreferences';
 import { useConnectionsStore } from '../../store/connections';
 import { readSystemConfig, type SystemConfig } from '../../store/systemConfig';
 import { APP_THEMES } from '../../themes';
+import { APP_LOCALES, translate } from '../../i18n';
 
 type ConfigurationTab = 'form' | 'json';
 
@@ -17,6 +18,7 @@ export default function ConfigurationDialog({
   onClose: () => void;
 }) {
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
+  const locale = useUiPreferencesStore((state) => state.locale);
   const resultPageSize = useUiPreferencesStore((state) => state.resultPageSize);
   const themeId = useUiPreferencesStore((state) => state.themeId);
   const density = useUiPreferencesStore((state) => state.density);
@@ -27,6 +29,7 @@ export default function ConfigurationDialog({
   const commandPaletteShortcut = useUiPreferencesStore((state) => state.commandPaletteShortcut);
   const newQueryTabShortcut = useUiPreferencesStore((state) => state.newQueryTabShortcut);
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
+  const setLocale = useUiPreferencesStore((state) => state.setLocale);
   const setResultPageSize = useUiPreferencesStore((state) => state.setResultPageSize);
   const setThemeId = useUiPreferencesStore((state) => state.setThemeId);
   const setDensity = useUiPreferencesStore((state) => state.setDensity);
@@ -42,8 +45,9 @@ export default function ConfigurationDialog({
 
   const currentConfig = useMemo<SystemConfig>(
     () => ({
-      version: 2,
+      version: 3,
       ui: {
+        locale,
         semanticBackgroundEnabled,
         resultPageSize,
         themeId,
@@ -67,6 +71,7 @@ export default function ConfigurationDialog({
       commandPaletteShortcut,
       density,
       editorFontSize,
+      locale,
       favoriteConnectionId,
       logsExpandedByDefault,
       newQueryTabShortcut,
@@ -104,9 +109,10 @@ export default function ConfigurationDialog({
       connections.some((connection) => connection.id === nextConfig.startup.favoriteConnectionId);
 
     if (!favoriteExists) {
-      throw new Error('A conexao favorita informada no JSON nao existe.');
+      throw new Error(translate(locale, 'favoriteConnectionJsonNotFound'));
     }
 
+    setLocale(nextConfig.ui.locale);
     setSemanticBackgroundEnabled(nextConfig.ui.semanticBackgroundEnabled);
     setResultPageSize(nextConfig.ui.resultPageSize);
     setThemeId(nextConfig.ui.themeId);
@@ -134,7 +140,7 @@ export default function ConfigurationDialog({
       setJsonError(null);
       onClose();
     } catch (error) {
-      setJsonError(error instanceof Error ? error.message : 'JSON invalido.');
+      setJsonError(error instanceof Error ? error.message : translate(locale, 'invalidJson'));
     }
   };
 
@@ -162,7 +168,7 @@ export default function ConfigurationDialog({
       setJsonDraft(JSON.stringify(parsed, null, 2));
       setJsonError(null);
     } catch (error) {
-      setJsonError(error instanceof Error ? error.message : 'Falha ao importar o JSON.');
+      setJsonError(error instanceof Error ? error.message : translate(locale, 'importJsonError'));
     }
   };
 
@@ -179,14 +185,14 @@ export default function ConfigurationDialog({
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold text-text">
               <Settings2 size={16} />
-              Configuration
+              {translate(locale, 'configurationsTitle')}
             </div>
-            <div className="text-xs text-muted">Edite as configuracoes do sistema por formulario ou JSON.</div>
+            <div className="text-xs text-muted">{translate(locale, 'configurationsSubtitle')}</div>
           </div>
           <div className="flex items-center gap-2">
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text">
               <Upload size={13} />
-              <span>Import</span>
+              <span>{translate(locale, 'import')}</span>
               <input
                 type="file"
                 accept=".json,application/json"
@@ -203,7 +209,7 @@ export default function ConfigurationDialog({
               className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
             >
               <Download size={13} />
-              Export
+              {translate(locale, 'export')}
             </button>
             <button
               type="button"
@@ -227,7 +233,7 @@ export default function ConfigurationDialog({
               }`}
             >
               <SlidersHorizontal size={13} />
-              Visual
+              {translate(locale, 'visual')}
             </button>
             <button
               type="button"
@@ -239,7 +245,7 @@ export default function ConfigurationDialog({
               }`}
             >
               <FileJson size={13} />
-              JSON
+              {translate(locale, 'json')}
             </button>
           </div>
         </div>
@@ -249,11 +255,35 @@ export default function ConfigurationDialog({
             <div className="h-full overflow-auto p-5">
               <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
                 <section className="rounded-lg border border-border/70 bg-background/24 p-4">
-                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">Interface</div>
+                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">{translate(locale, 'interfaceSection')}</div>
                   <div className="space-y-4">
                     <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">Tema</div>
-                      <div className="mb-2 text-xs text-muted">Escolha o visual base do app.</div>
+                      <div className="text-sm text-text">{translate(locale, 'language')}</div>
+                      <div className="mb-2 text-xs text-muted">{translate(locale, 'configurationsSubtitle')}</div>
+                      <select
+                        value={draft.ui.locale}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            ui: {
+                              ...current.ui,
+                              locale: event.target.value === 'en-US' ? 'en-US' : 'pt-BR',
+                            },
+                          }))
+                        }
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
+                      >
+                        {APP_LOCALES.map((appLocale) => (
+                          <option key={appLocale.value} value={appLocale.value}>
+                            {appLocale.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
+                      <div className="text-sm text-text">{translate(locale, 'theme')}</div>
+                      <div className="mb-2 text-xs text-muted">{translate(locale, 'themeDescription')}</div>
                       <select
                         value={draft.ui.themeId}
                         onChange={(event) =>
@@ -276,8 +306,8 @@ export default function ConfigurationDialog({
                     </label>
 
                     <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">Densidade</div>
-                      <div className="mb-2 text-xs text-muted">Ajusta o espacamento visual do workbench.</div>
+                      <div className="text-sm text-text">{translate(locale, 'density')}</div>
+                      <div className="mb-2 text-xs text-muted">{translate(locale, 'densityDescription')}</div>
                       <select
                         value={draft.ui.density}
                         onChange={(event) =>
@@ -291,15 +321,15 @@ export default function ConfigurationDialog({
                         }
                         className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
                       >
-                        <option value="comfortable">Comfortable</option>
-                        <option value="compact">Compact</option>
+                        <option value="comfortable">{translate(locale, 'densityComfortable')}</option>
+                        <option value="compact">{translate(locale, 'densityCompact')}</option>
                       </select>
                     </label>
 
                     <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
                       <div>
-                        <div className="text-sm text-text">Semantic Background</div>
-                        <div className="text-xs text-muted">Ativa o fundo semantico da workspace.</div>
+                        <div className="text-sm text-text">{translate(locale, 'semanticBackground')}</div>
+                        <div className="text-xs text-muted">{translate(locale, 'semanticBackgroundDescription')}</div>
                       </div>
                       <input
                         type="checkbox"
@@ -318,8 +348,8 @@ export default function ConfigurationDialog({
                     </label>
 
                     <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">Rows por pagina</div>
-                      <div className="mb-2 text-xs text-muted">Tamanho padrao das paginas no result grid.</div>
+                      <div className="text-sm text-text">{translate(locale, 'rowsPerPage')}</div>
+                      <div className="mb-2 text-xs text-muted">{translate(locale, 'rowsPerPageDescription')}</div>
                       <input
                         type="number"
                         min={1}
@@ -339,8 +369,8 @@ export default function ConfigurationDialog({
                     </label>
 
                     <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">Fonte do editor</div>
-                      <div className="mb-2 text-xs text-muted">Tamanho base do texto no editor SQL.</div>
+                      <div className="text-sm text-text">{translate(locale, 'editorFontSize')}</div>
+                      <div className="mb-2 text-xs text-muted">{translate(locale, 'editorFontSizeDescription')}</div>
                       <input
                         type="number"
                         min={11}
@@ -362,11 +392,11 @@ export default function ConfigurationDialog({
                 </section>
 
                 <section className="rounded-lg border border-border/70 bg-background/24 p-4">
-                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">Workbench</div>
+                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">{translate(locale, 'workbench')}</div>
                   <div className="space-y-4">
                     <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">Largura da sidebar</div>
-                      <div className="mb-2 text-xs text-muted">Valor padrao da lateral de conexoes.</div>
+                      <div className="text-sm text-text">{translate(locale, 'sidebarWidth')}</div>
+                      <div className="mb-2 text-xs text-muted">{translate(locale, 'sidebarWidthDescription')}</div>
                       <input
                         type="number"
                         min={220}
@@ -387,8 +417,8 @@ export default function ConfigurationDialog({
 
                     <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
                       <div>
-                        <div className="text-sm text-text">Iniciar com sidebar recolhida</div>
-                        <div className="text-xs text-muted">Aplica na abertura do app.</div>
+                        <div className="text-sm text-text">{translate(locale, 'sidebarCollapsedOnStartup')}</div>
+                        <div className="text-xs text-muted">{translate(locale, 'sidebarCollapsedOnStartupDescription')}</div>
                       </div>
                       <input
                         type="checkbox"
@@ -408,8 +438,8 @@ export default function ConfigurationDialog({
 
                     <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
                       <div>
-                        <div className="text-sm text-text">Logs expandidos por padrao</div>
-                        <div className="text-xs text-muted">Vale para conexoes sem preferencia local salva.</div>
+                        <div className="text-sm text-text">{translate(locale, 'logsExpandedByDefault')}</div>
+                        <div className="text-xs text-muted">{translate(locale, 'logsExpandedByDefaultDescription')}</div>
                       </div>
                       <input
                         type="checkbox"
@@ -430,11 +460,11 @@ export default function ConfigurationDialog({
                 </section>
 
                 <section className="rounded-lg border border-border/70 bg-background/24 p-4">
-                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">Atalhos globais</div>
+                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">{translate(locale, 'globalShortcuts')}</div>
                   <div className="space-y-4">
                     <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">Command palette</div>
-                      <div className="mb-2 text-xs text-muted">Exemplo: CmdOrCtrl+Shift+P</div>
+                      <div className="text-sm text-text">{translate(locale, 'commandPaletteLabel')}</div>
+                      <div className="mb-2 text-xs text-muted">{translate(locale, 'shortcutExampleCommandPalette')}</div>
                       <input
                         value={draft.shortcuts.commandPalette}
                         onChange={(event) =>
@@ -451,8 +481,8 @@ export default function ConfigurationDialog({
                     </label>
 
                     <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">Nova aba de query</div>
-                      <div className="mb-2 text-xs text-muted">Exemplo: CmdOrCtrl+Alt+N</div>
+                      <div className="text-sm text-text">{translate(locale, 'newQueryTabLabel')}</div>
+                      <div className="mb-2 text-xs text-muted">{translate(locale, 'shortcutExampleNewQueryTab')}</div>
                       <input
                         value={draft.shortcuts.newQueryTab}
                         onChange={(event) =>
@@ -471,10 +501,10 @@ export default function ConfigurationDialog({
                 </section>
 
                 <section className="rounded-lg border border-border/70 bg-background/24 p-4">
-                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">Startup</div>
+                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">{translate(locale, 'startup')}</div>
                   <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                    <div className="text-sm text-text">Conexao favorita</div>
-                    <div className="mb-2 text-xs text-muted">Conexao aberta automaticamente na inicializacao.</div>
+                    <div className="text-sm text-text">{translate(locale, 'favoriteConnection')}</div>
+                    <div className="mb-2 text-xs text-muted">{translate(locale, 'favoriteConnectionDescription')}</div>
                     <select
                       value={draft.startup.favoriteConnectionId ?? ''}
                       onChange={(event) =>
@@ -488,7 +518,7 @@ export default function ConfigurationDialog({
                       }
                       className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
                     >
-                      <option value="">Nenhuma</option>
+                      <option value="">{translate(locale, 'none')}</option>
                       {connections.map((connection) => (
                         <option key={connection.id} value={connection.id}>
                           {connection.name}
@@ -502,7 +532,7 @@ export default function ConfigurationDialog({
           ) : (
             <div className="flex h-full flex-col">
               <div className="border-b border-border/60 px-5 py-3 text-xs text-muted">
-                Edite o JSON diretamente. Campos invalidos serao rejeitados ao salvar.
+                {translate(locale, 'editJsonDirectly')}
               </div>
               <div className="min-h-0 flex-1">
                 <Editor
@@ -536,14 +566,14 @@ export default function ConfigurationDialog({
             onClick={onClose}
             className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
           >
-            Cancelar
+            {translate(locale, 'cancel')}
           </button>
           <button
             type="button"
             onClick={activeTab === 'form' ? handleSaveForm : handleSaveJson}
             className="rounded-lg border border-primary/40 bg-primary/12 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/18"
           >
-            Salvar
+            {translate(locale, 'save')}
           </button>
         </div>
       </div>
@@ -563,8 +593,9 @@ function normalizeJsonConfig(input: unknown): SystemConfig {
     raw.startup && typeof raw.startup === 'object' ? (raw.startup as Record<string, unknown>) : {};
 
   return {
-    version: 2,
+    version: 3,
     ui: {
+      locale: ui.locale === 'en-US' ? 'en-US' : 'pt-BR',
       semanticBackgroundEnabled: ui.semanticBackgroundEnabled !== false,
       resultPageSize: normalizePageSize(ui.resultPageSize),
       themeId: normalizeThemeId(ui.themeId),

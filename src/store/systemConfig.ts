@@ -1,6 +1,7 @@
 export interface SystemConfig {
   version: number;
   ui: {
+    locale: 'pt-BR' | 'en-US';
     semanticBackgroundEnabled: boolean;
     resultPageSize: number;
     themeId: string;
@@ -57,8 +58,9 @@ export function updateSystemConfig(updater: (current: SystemConfig) => SystemCon
 
 export function defaultSystemConfig(): SystemConfig {
   return {
-    version: 2,
+    version: 3,
     ui: {
+      locale: 'pt-BR',
       semanticBackgroundEnabled: true,
       resultPageSize: 100,
       themeId: 'blacktable-dark',
@@ -91,8 +93,9 @@ function normalizeSystemConfig(input: unknown): SystemConfig {
     raw.startup && typeof raw.startup === 'object' ? (raw.startup as Record<string, unknown>) : {};
 
   return {
-    version: typeof raw.version === 'number' ? raw.version : 2,
+    version: typeof raw.version === 'number' ? raw.version : 3,
     ui: {
+      locale: normalizeLocale(ui.locale),
       semanticBackgroundEnabled: ui.semanticBackgroundEnabled !== false,
       resultPageSize: normalizePageSize(ui.resultPageSize),
       themeId: normalizeThemeId(ui.themeId),
@@ -130,6 +133,7 @@ function readLegacyUiPreferences(defaults: SystemConfig['ui']): SystemConfig['ui
     };
 
     return {
+      locale: defaults.locale,
       semanticBackgroundEnabled: parsed.semanticBackgroundEnabled !== false,
       resultPageSize: normalizePageSize(parsed.resultPageSize),
       themeId: defaults.themeId,
@@ -158,6 +162,10 @@ function normalizePageSize(value: unknown) {
   }
 
   return 100;
+}
+
+function normalizeLocale(value: unknown): 'pt-BR' | 'en-US' {
+  return value === 'en-US' ? 'en-US' : 'pt-BR';
 }
 
 function normalizeThemeId(value: unknown) {

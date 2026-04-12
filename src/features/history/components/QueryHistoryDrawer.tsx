@@ -5,9 +5,11 @@ import { useQueryHistory } from '../hooks/useQueryHistory';
 import type { QueryHistoryItem } from '../types';
 import QueryHistoryFilters from './QueryHistoryFilters';
 import QueryHistoryList from './QueryHistoryList';
+import { translate, type AppLocale } from '../../../i18n';
 
 export default function QueryHistoryDrawer({
   open,
+  locale,
   connections,
   onClose,
   onOpenInNewTab,
@@ -15,6 +17,7 @@ export default function QueryHistoryDrawer({
   onRunAgain,
 }: {
   open: boolean;
+  locale: AppLocale;
   connections: ConnectionConfig[];
   onClose: () => void;
   onOpenInNewTab: (item: QueryHistoryItem) => void;
@@ -35,7 +38,7 @@ export default function QueryHistoryDrawer({
   };
 
   const handleClear = async () => {
-    if (!window.confirm('Limpar todo o historico de queries?')) {
+    if (!window.confirm(translate(locale, 'clearHistoryConfirm'))) {
       return;
     }
 
@@ -87,8 +90,8 @@ export default function QueryHistoryDrawer({
           <div className="flex items-center gap-2">
             <Clock3 size={16} className="text-primary" />
             <div>
-              <div className="text-sm font-semibold text-text">Query History</div>
-              <div className="text-[11px] text-muted">Execucoes manuais mais recentes</div>
+              <div className="text-sm font-semibold text-text">{translate(locale, 'queryHistory')}</div>
+              <div className="text-[11px] text-muted">{translate(locale, 'recentManualExecutions')}</div>
             </div>
           </div>
 
@@ -103,6 +106,7 @@ export default function QueryHistoryDrawer({
         </div>
 
         <QueryHistoryFilters
+          locale={locale}
           filter={filter}
           connections={connections}
           onQueryChange={(value) => updateFilter({ query: value })}
@@ -111,14 +115,15 @@ export default function QueryHistoryDrawer({
         />
 
         <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
-          <div className="text-xs text-muted">{items.length} item(ns)</div>
+          <div className="text-xs text-muted">{translate(locale, 'itemsCount', { count: items.length })}</div>
           <button onClick={() => void handleClear()} className="text-xs text-red-300 hover:underline">
-            Limpar historico
+            {translate(locale, 'clearHistory')}
           </button>
         </div>
 
         <div className="h-[calc(100%-180px)] overflow-auto">
           <QueryHistoryList
+            locale={locale}
             items={items}
             loading={loading}
             error={error}
