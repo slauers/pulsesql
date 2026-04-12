@@ -169,7 +169,11 @@ function normalizeLocale(value: unknown): 'pt-BR' | 'en-US' {
 }
 
 function normalizeThemeId(value: unknown) {
-  return typeof value === 'string' && value.trim().length > 0 ? value : 'blacktable-dark';
+  if (value === 'blacktable-dark' || value === 'night-blue') {
+    return value;
+  }
+
+  return 'blacktable-dark';
 }
 
 function normalizeDensity(value: unknown): 'compact' | 'comfortable' {

@@ -10,6 +10,7 @@ use std::sync::Mutex;
 
 const SPLASH_WINDOW_LABEL: &str = "splash";
 const MAIN_WINDOW_LABEL: &str = "main";
+const LOCK_SPLASH_FOR_DEV: bool = false;
 
 #[derive(Clone, Serialize)]
 struct SplashProgressPayload {
@@ -69,6 +70,10 @@ fn reveal_main_window(
     app: AppHandle,
     splash_state: tauri::State<Mutex<SplashState>>,
 ) -> Result<(), String> {
+    if LOCK_SPLASH_FOR_DEV {
+        return Ok(());
+    }
+
     finalize_startup(&app, &splash_state, true)
 }
 
@@ -173,12 +178,14 @@ pub fn run() {
 
             create_splash_window(&app.handle())?;
 
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-                let splash_state = app_handle.state::<Mutex<SplashState>>();
-                let _ = finalize_startup(&app_handle, &splash_state, false);
-            });
+            if !LOCK_SPLASH_FOR_DEV {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                    let splash_state = app_handle.state::<Mutex<SplashState>>();
+                    let _ = finalize_startup(&app_handle, &splash_state, false);
+                });
+            }
 
             Ok(())
         })

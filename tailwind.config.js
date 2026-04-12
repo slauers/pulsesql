@@ -7,12 +7,12 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: 'var(--bt-background)',
-        surface: 'var(--bt-surface)',
-        border: 'var(--bt-border)',
-        primary: 'var(--bt-primary)',
-        text: 'var(--bt-text)',
-        muted: 'var(--bt-muted)'
+        background: 'rgb(var(--bt-background-rgb) / <alpha-value>)',
+        surface: 'rgb(var(--bt-surface-rgb) / <alpha-value>)',
+        border: 'rgb(var(--bt-border-rgb) / <alpha-value>)',
+        primary: 'rgb(var(--bt-primary-rgb) / <alpha-value>)',
+        text: 'rgb(var(--bt-text-rgb) / <alpha-value>)',
+        muted: 'rgb(var(--bt-muted-rgb) / <alpha-value>)'
       }
     },
   },

@@ -13,6 +13,7 @@ import { useDatabaseSessionStore } from './store/databaseSession';
 import { useUiPreferencesStore } from './store/uiPreferences';
 import { getThemeById } from './themes';
 import { translate, type AppLocale } from './i18n';
+import { LOCK_SPLASH_FOR_DEV } from './devFlags';
 
 function App() {
   const menuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -49,22 +50,38 @@ function App() {
   useEffect(() => {
     const root = document.documentElement;
     const body = document.body;
+    const backgroundRgb = toRgbChannels(activeTheme.colors.background);
+    const surfaceRgb = toRgbChannels(activeTheme.colors.surface);
+    const borderRgb = toRgbChannels(activeTheme.colors.border);
+    const primaryRgb = toRgbChannels(activeTheme.colors.primary);
+    const textRgb = toRgbChannels(activeTheme.colors.text);
+    const mutedRgb = toRgbChannels(activeTheme.colors.muted);
     root.dataset.theme = activeTheme.id;
     root.dataset.density = density;
     body.dataset.theme = activeTheme.id;
     body.dataset.density = density;
     root.style.setProperty('--bt-background', activeTheme.colors.background);
+    root.style.setProperty('--bt-background-rgb', backgroundRgb);
     root.style.setProperty('--bt-surface', activeTheme.colors.surface);
+    root.style.setProperty('--bt-surface-rgb', surfaceRgb);
     root.style.setProperty('--bt-border', activeTheme.colors.border);
+    root.style.setProperty('--bt-border-rgb', borderRgb);
     root.style.setProperty('--bt-primary', activeTheme.colors.primary);
+    root.style.setProperty('--bt-primary-rgb', primaryRgb);
     root.style.setProperty('--bt-text', activeTheme.colors.text);
+    root.style.setProperty('--bt-text-rgb', textRgb);
     root.style.setProperty('--bt-muted', activeTheme.colors.muted);
+    root.style.setProperty('--bt-muted-rgb', mutedRgb);
     root.style.setProperty('--bt-body-background', activeTheme.colors.bodyBackground);
     root.style.setProperty('--bt-glass-panel', activeTheme.colors.glassPanel);
     root.style.setProperty('--bt-color-scheme', activeTheme.mode);
   }, [activeTheme, density]);
 
   useEffect(() => {
+    if (LOCK_SPLASH_FOR_DEV) {
+      return;
+    }
+
     if (startupSequenceStartedRef.current || startupSequenceFinishedRef.current) {
       return;
     }
@@ -676,5 +693,35 @@ function matchesShortcut(event: KeyboardEvent, shortcut: string) {
     expectsAlt &&
     event.key.toLowerCase() === mainKey.toLowerCase()
   );
+}
+
+function toRgbChannels(color: string) {
+  const normalized = color.trim();
+
+  if (normalized.startsWith('#')) {
+    const hex = normalized.slice(1);
+    const expanded = hex.length === 3
+      ? hex.split('').map((char) => `${char}${char}`).join('')
+      : hex;
+
+    if (expanded.length === 6) {
+      const red = Number.parseInt(expanded.slice(0, 2), 16);
+      const green = Number.parseInt(expanded.slice(2, 4), 16);
+      const blue = Number.parseInt(expanded.slice(4, 6), 16);
+
+      return `${red} ${green} ${blue}`;
+    }
+  }
+
+  const match = normalized.match(/rgba?\(([^)]+)\)/i);
+  if (match) {
+    const [red = '0', green = '0', blue = '0'] = match[1]
+      .split(',')
+      .map((part) => part.trim());
+
+    return `${red} ${green} ${blue}`;
+  }
+
+  return '0 0 0';
 }
 

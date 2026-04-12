@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { createPortal } from 'react-dom';
 import { Download, Settings2, SlidersHorizontal, FileJson, Upload, X } from 'lucide-react';
+import AppSelect from '../../components/ui/AppSelect';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
 import { useConnectionsStore } from '../../store/connections';
 import { readSystemConfig, type SystemConfig } from '../../store/systemConfig';
@@ -260,70 +261,67 @@ export default function ConfigurationDialog({
                     <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
                       <div className="text-sm text-text">{translate(locale, 'language')}</div>
                       <div className="mb-2 text-xs text-muted">{translate(locale, 'configurationsSubtitle')}</div>
-                      <select
+                      <AppSelect
                         value={draft.ui.locale}
-                        onChange={(event) =>
+                        onChange={(value) =>
                           setDraft((current) => ({
                             ...current,
                             ui: {
                               ...current.ui,
-                              locale: event.target.value === 'en-US' ? 'en-US' : 'pt-BR',
+                              locale: value === 'en-US' ? 'en-US' : 'pt-BR',
                             },
                           }))
                         }
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                      >
-                        {APP_LOCALES.map((appLocale) => (
-                          <option key={appLocale.value} value={appLocale.value}>
-                            {appLocale.label}
-                          </option>
-                        ))}
-                      </select>
+                        options={APP_LOCALES.map((appLocale) => ({
+                          value: appLocale.value,
+                          label: appLocale.label,
+                        }))}
+                        className="w-full"
+                      />
                     </label>
 
                     <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
                       <div className="text-sm text-text">{translate(locale, 'theme')}</div>
                       <div className="mb-2 text-xs text-muted">{translate(locale, 'themeDescription')}</div>
-                      <select
+                      <AppSelect
                         value={draft.ui.themeId}
-                        onChange={(event) =>
+                        onChange={(value) =>
                           setDraft((current) => ({
                             ...current,
                             ui: {
                               ...current.ui,
-                              themeId: event.target.value,
+                              themeId: value,
                             },
                           }))
                         }
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                      >
-                        {APP_THEMES.map((theme) => (
-                          <option key={theme.id} value={theme.id}>
-                            {theme.label}
-                          </option>
-                        ))}
-                      </select>
+                        options={APP_THEMES.map((theme) => ({
+                          value: theme.id,
+                          label: theme.label,
+                        }))}
+                        className="w-full"
+                      />
                     </label>
 
                     <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
                       <div className="text-sm text-text">{translate(locale, 'density')}</div>
                       <div className="mb-2 text-xs text-muted">{translate(locale, 'densityDescription')}</div>
-                      <select
+                      <AppSelect
                         value={draft.ui.density}
-                        onChange={(event) =>
+                        onChange={(value) =>
                           setDraft((current) => ({
                             ...current,
                             ui: {
                               ...current.ui,
-                              density: event.target.value === 'compact' ? 'compact' : 'comfortable',
+                              density: value === 'compact' ? 'compact' : 'comfortable',
                             },
                           }))
                         }
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                      >
-                        <option value="comfortable">{translate(locale, 'densityComfortable')}</option>
-                        <option value="compact">{translate(locale, 'densityCompact')}</option>
-                      </select>
+                        options={[
+                          { value: 'comfortable', label: translate(locale, 'densityComfortable') },
+                          { value: 'compact', label: translate(locale, 'densityCompact') },
+                        ]}
+                        className="w-full"
+                      />
                     </label>
 
                     <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
@@ -505,26 +503,26 @@ export default function ConfigurationDialog({
                   <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
                     <div className="text-sm text-text">{translate(locale, 'favoriteConnection')}</div>
                     <div className="mb-2 text-xs text-muted">{translate(locale, 'favoriteConnectionDescription')}</div>
-                    <select
+                    <AppSelect
                       value={draft.startup.favoriteConnectionId ?? ''}
-                      onChange={(event) =>
+                      onChange={(value) =>
                         setDraft((current) => ({
                           ...current,
                           startup: {
                             ...current.startup,
-                            favoriteConnectionId: event.target.value || null,
+                            favoriteConnectionId: value || null,
                           },
                         }))
                       }
-                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                    >
-                      <option value="">{translate(locale, 'none')}</option>
-                      {connections.map((connection) => (
-                        <option key={connection.id} value={connection.id}>
-                          {connection.name}
-                        </option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: '', label: translate(locale, 'none') },
+                        ...connections.map((connection) => ({
+                          value: connection.id,
+                          label: connection.name,
+                        })),
+                      ]}
+                      className="w-full"
+                    />
                   </label>
                 </section>
               </div>

@@ -6,11 +6,17 @@
   :root {
     color-scheme: var(--bt-color-scheme, dark);
     --bt-background: #050913;
+    --bt-background-rgb: 5 9 19;
     --bt-surface: #0b1220;
+    --bt-surface-rgb: 11 18 32;
     --bt-border: #1a2840;
+    --bt-border-rgb: 26 40 64;
     --bt-primary: #22c7ff;
+    --bt-primary-rgb: 34 199 255;
     --bt-text: #ecf7ff;
+    --bt-text-rgb: 236 247 255;
     --bt-muted: #8093b1;
+    --bt-muted-rgb: 128 147 177;
     --bt-body-background:
       radial-gradient(circle at top center, rgba(34, 199, 255, 0.16), transparent 34%),
       radial-gradient(circle at 18% 18%, rgba(34, 199, 255, 0.08), transparent 24%),
@@ -30,6 +36,26 @@
     margin: 0;
     padding: 0;
     background: var(--bt-body-background);
+  }
+
+  html[data-splash='true'],
+  body[data-splash='true'] {
+    background: transparent;
+  }
+
+  body[data-splash='true'] {
+    min-height: 100vh;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  body[data-splash='true'] #root {
+    width: auto;
+    height: auto;
+    display: contents;
   }
 }
 
@@ -400,30 +426,12 @@ body[data-density='compact'] .bt-density-chip {
   }
 }
 
-.splash-screen {
-  position: relative;
-  display: flex;
-  height: 100vh;
-  width: 100vw;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  background: transparent;
-  opacity: 1;
-  transition: opacity 180ms ease, transform 180ms ease, filter 180ms ease;
-}
-
-.splash-screen--closing {
-  opacity: 0;
-  transform: scale(0.985);
-  filter: blur(4px);
-}
-
 .splash-screen__card {
   position: relative;
   z-index: 1;
   display: flex;
-  width: min(286px, calc(100vw - 20px));
+  width: 286px;
+  max-width: calc(100vw - 20px);
   flex-direction: column;
   gap: 18px;
   border: 1px solid rgba(126, 152, 184, 0.22);
@@ -436,22 +444,23 @@ body[data-density='compact'] .bt-density-chip {
     0 0 44px rgba(34, 199, 255, 0.14),
     0 0 88px rgba(34, 199, 255, 0.06);
   backdrop-filter: blur(18px);
+  opacity: 1;
+  transition: opacity 180ms ease, transform 180ms ease, filter 180ms ease;
 }
 
-.splash-screen__logo-shell {
-  display: inline-flex;
-  align-self: center;
-  border: 1px solid rgba(126, 152, 184, 0.22);
-  border-radius: 22px;
-  padding: 14px;
-  background: rgba(10, 19, 32, 0.92);
-  box-shadow: 0 0 28px rgba(34, 199, 255, 0.14);
+.splash-screen__card--closing {
+  opacity: 0;
+  transform: scale(0.985);
+  filter: blur(4px);
 }
 
 .splash-screen__logo {
   height: 54px;
   width: 54px;
   display: block;
+  align-self: center;
+  filter: drop-shadow(0 0 10px rgba(34, 199, 255, 0.28))
+    drop-shadow(0 0 24px rgba(34, 199, 255, 0.16));
 }
 
 .splash-screen__copy {

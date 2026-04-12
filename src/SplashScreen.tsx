@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import brandMark from './assets/blacktable-mark.svg';
 import { getInitialLocale, translate } from './i18n';
+import { LOCK_SPLASH_FOR_DEV } from './devFlags';
 
 interface SplashProgressPayload {
   progress: number;
@@ -20,6 +21,10 @@ export default function SplashScreen() {
   const normalizedProgress = useMemo(() => Math.max(0, Math.min(progress, 100)), [progress]);
 
   useEffect(() => {
+    if (LOCK_SPLASH_FOR_DEV) {
+      return;
+    }
+
     let cancelled = false;
 
     const syncInitialState = async () => {
@@ -73,6 +78,12 @@ export default function SplashScreen() {
   }, []);
 
   useEffect(() => {
+    if (LOCK_SPLASH_FOR_DEV) {
+      setProgress(8);
+      setLabel(DEFAULT_LABEL);
+      return;
+    }
+
     if (finishing) {
       setProgress(100);
       setLabel(translate(locale, 'splashReady'));
@@ -103,28 +114,24 @@ export default function SplashScreen() {
   }, [finishing]);
 
   return (
-    <div className={`splash-screen ${finishing ? 'splash-screen--closing' : ''}`}>
-      <div className="splash-screen__card">
-        <div className="splash-screen__logo-shell">
-          <img src={brandMark} alt="BlackTable" className="splash-screen__logo" />
-        </div>
+    <div className={`splash-screen__card ${finishing ? 'splash-screen__card--closing' : ''}`}>
+      <img src={brandMark} alt="BlackTable" className="splash-screen__logo" />
 
-        <div className="splash-screen__copy">
-          <div className="splash-screen__title">BlackTable</div>
-          <div className="splash-screen__subtitle">{translate(locale, 'aboutSubtitle')}</div>
-        </div>
+      <div className="splash-screen__copy">
+        <div className="splash-screen__title">BlackTable</div>
+        <div className="splash-screen__subtitle">{translate(locale, 'aboutSubtitle')}</div>
+      </div>
 
-        <div className="splash-screen__status">
-          <span>{label}</span>
-          <span>{normalizedProgress}%</span>
-        </div>
+      <div className="splash-screen__status">
+        <span>{label}</span>
+        <span>{normalizedProgress}%</span>
+      </div>
 
-        <div className="splash-screen__progress">
-          <div
-            className="splash-screen__progress-bar"
-            style={{ transform: `scaleX(${normalizedProgress / 100})` }}
-          />
-        </div>
+      <div className="splash-screen__progress">
+        <div
+          className="splash-screen__progress-bar"
+          style={{ transform: `scaleX(${normalizedProgress / 100})` }}
+        />
       </div>
     </div>
   );

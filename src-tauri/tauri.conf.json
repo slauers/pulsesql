@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "BlackTable",
+  "productName": "Blacktable",
   "version": "0.1.0",
   "identifier": "com.saulolauers.blacktable",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "BlackTable",
+        "title": "Blacktable",
         "width": 1180,
         "height": 760,
         "minWidth": 900,

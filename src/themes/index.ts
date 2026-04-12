@@ -49,22 +49,6 @@ export const APP_THEMES: AppThemeDefinition[] = [
       glassPanel: 'rgba(13, 26, 43, 0.8)',
     },
   },
-  {
-    id: 'fjord-light',
-    label: 'Fjord Light',
-    mode: 'light',
-    colors: {
-      background: '#EEF4FA',
-      surface: '#FFFFFF',
-      border: '#C9D6E5',
-      primary: '#1278B8',
-      text: '#102338',
-      muted: '#5D7086',
-      bodyBackground:
-        'radial-gradient(circle at top center, rgba(18, 120, 184, 0.12), transparent 34%), linear-gradient(180deg, #f8fbff 0%, #eef4fa 56%, #e5eef7 100%)',
-      glassPanel: 'rgba(255, 255, 255, 0.82)',
-    },
-  },
 ];
 
 export function getThemeById(themeId: string) {
