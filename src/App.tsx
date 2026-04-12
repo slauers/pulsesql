@@ -11,12 +11,14 @@ import { useConnectionsStore } from './store/connections';
 import { useConnectionRuntimeStore } from './store/connectionRuntime';
 import { useDatabaseSessionStore } from './store/databaseSession';
 import { useUiPreferencesStore } from './store/uiPreferences';
-import { getThemeById } from './themes';
+import { APP_THEMES, getThemeById } from './themes';
 import { translate, type AppLocale } from './i18n';
 import { LOCK_SPLASH_FOR_DEV } from './devFlags';
 
 function App() {
   const menuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const themeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const tabs = useQueriesStore((state) => state.tabs);
   const activeTabId = useQueriesStore((state) => state.activeTabId);
   const addTab = useQueriesStore((state) => state.addTab);
@@ -30,6 +32,7 @@ function App() {
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
   const locale = useUiPreferencesStore((state) => state.locale);
   const themeId = useUiPreferencesStore((state) => state.themeId);
+  const setThemeId = useUiPreferencesStore((state) => state.setThemeId);
   const density = useUiPreferencesStore((state) => state.density);
   const commandPaletteShortcut = useUiPreferencesStore((state) => state.commandPaletteShortcut);
   const newQueryTabShortcut = useUiPreferencesStore((state) => state.newQueryTabShortcut);
@@ -44,6 +47,7 @@ function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const activeTheme = useMemo(() => getThemeById(themeId), [themeId]);
 
@@ -218,6 +222,35 @@ function App() {
     };
   }, [activeMenu]);
 
+  useEffect(() => {
+    if (!themeMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (themeMenuRef.current?.contains(target) || themeButtonRef.current?.contains(target)) {
+        return;
+      }
+
+      setThemeMenuOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setThemeMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [themeMenuOpen]);
+
   const openNewConnectionForm = () => {
     window.dispatchEvent(new CustomEvent('blacktable:new-connection'));
   };
@@ -304,34 +337,77 @@ function App() {
           <div className="flex min-w-0 items-center gap-3">
             <img src={brandMark} alt="BlackTable" className="h-4 w-4 shrink-0" />
             <div className="flex items-center gap-0.5">
-          <div className="flex items-center gap-1">
-            {menuDefinitions.map((menu) => (
-              <div key={menu.id} className="relative">
-                <button
-                  ref={(element) => {
-                    menuButtonRefs.current[menu.id] = element;
-                  }}
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setActiveMenu((current) => (current === menu.id ? null : menu.id));
-                  }}
-                  className={`inline-flex h-6 items-center gap-1 px-2 text-[12px] ${
-                    activeMenu === menu.id
-                      ? 'bg-background/70 text-text'
-                      : 'text-muted hover:bg-background/55 hover:text-text'
-                  }`}
-                >
-                  <span>{menu.label}</span>
-                </button>
+              <div className="flex items-center gap-1">
+                {menuDefinitions.map((menu) => (
+                  <div key={menu.id} className="relative">
+                    <button
+                      ref={(element) => {
+                        menuButtonRefs.current[menu.id] = element;
+                      }}
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setThemeMenuOpen(false);
+                        setActiveMenu((current) => (current === menu.id ? null : menu.id));
+                      }}
+                      className={`inline-flex h-6 items-center gap-1 px-2 text-[12px] ${
+                        activeMenu === menu.id
+                          ? 'bg-background/70 text-text'
+                          : 'text-muted hover:bg-background/55 hover:text-text'
+                      }`}
+                    >
+                      <span>{menu.label}</span>
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
             </div>
           </div>
-          <div className="hidden md:flex items-center gap-2 text-[11px] text-muted">
-            <span>{activeTheme.label}</span>
-            <ChevronDown size={11} className="opacity-40" />
+          <div className="relative hidden md:flex items-center">
+            <button
+              ref={themeButtonRef}
+              type="button"
+              onClick={() => {
+                setActiveMenu(null);
+                setThemeMenuOpen((current) => !current);
+              }}
+              className={`inline-flex h-6 items-center gap-2 px-2 text-[11px] transition-colors ${
+                themeMenuOpen
+                  ? 'bg-background/70 text-text'
+                  : 'text-muted hover:bg-background/55 hover:text-text'
+              }`}
+            >
+              <span>{activeTheme.label}</span>
+              <ChevronDown size={11} className={`transition-transform ${themeMenuOpen ? 'rotate-180 opacity-80' : 'opacity-40'}`} />
+            </button>
+
+            {themeMenuOpen ? (
+              <div
+                ref={themeMenuRef}
+                className="absolute right-0 top-[calc(100%+8px)] z-[180] min-w-[220px] border border-border/80 bg-surface/95 p-1 shadow-[0_16px_48px_rgba(0,0,0,0.45)]"
+              >
+                {APP_THEMES.map((theme) => (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => {
+                      setThemeId(theme.id);
+                      setThemeMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[12px] transition-colors ${
+                      theme.id === activeTheme.id
+                        ? 'bg-primary/18 text-text'
+                        : 'text-text hover:bg-primary/20'
+                    }`}
+                  >
+                    <span>{theme.label}</span>
+                    <span className="text-[10px] uppercase tracking-[0.12em] text-muted">
+                      {theme.mode}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
