@@ -423,7 +423,7 @@ export default function ConnectionManager() {
                           type="button"
                           onClick={() => toggleSelectedConnection(conn.id)}
                           onContextMenu={(event) => openConnectionContextMenu(event, conn.id)}
-                          className={`group w-full border px-3 py-2 text-left transition-colors ${
+                          className={`group w-full border rounded-lg px-3 py-2 text-left transition-colors ${
                             isSelected
                               ? 'border-primary/35 bg-background/48'
                               : 'border-transparent bg-transparent hover:bg-background/34'
@@ -454,7 +454,7 @@ export default function ConnectionManager() {
                         </button>
 
                         {isSelected ? (
-                          <div className="space-y-3 border border-border/70 bg-background/18 p-3">
+                          <div className="space-y-3 border rounded-lg border-border/70 bg-background/18 p-3">
                             <ActionSection
                               title={t('mainActions')}
                               actions={buildPrimaryActions({
