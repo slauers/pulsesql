@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { createPortal } from 'react-dom';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ChevronDown, CircleHelp, Command, Info, Settings2, SquareTerminal, Waypoints } from 'lucide-react';
-import brandMark from './assets/blacktable-mark.svg';
+import brandMark from './assets/pulsesql-mark.svg';
 import ConnectionManager from './features/connections/ConnectionManager';
 import ConfigurationDialog from './features/settings/ConfigurationDialog';
 import { useQueriesStore } from './store/queries';
@@ -252,11 +252,11 @@ function App() {
   }, [themeMenuOpen]);
 
   const openNewConnectionForm = () => {
-    window.dispatchEvent(new CustomEvent('blacktable:new-connection'));
+    window.dispatchEvent(new CustomEvent('pulsesql:new-connection'));
   };
 
   const toggleConnectionsSidebar = () => {
-    window.dispatchEvent(new CustomEvent('blacktable:toggle-sidebar'));
+    window.dispatchEvent(new CustomEvent('pulsesql:toggle-sidebar'));
   };
 
   const handleCloseCurrentTab = () => {
@@ -332,11 +332,11 @@ function App() {
 
   return (
     <div className={`h-screen w-screen overflow-hidden bg-background text-text flex flex-col relative bt-density-${density}`}>
-      <div className="h-8 shrink-0 border-b border-border/80 bg-surface px-2 relative z-20">
-        <div className="flex h-full items-center justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <img src={brandMark} alt="BlackTable" className="h-4 w-4 shrink-0" />
-            <div className="flex items-center gap-0.5">
+      <div className="min-h-8 shrink-0 border-b border-border/80 bg-background/95 px-2 py-1 relative z-20 backdrop-blur">
+        <div className="flex min-h-6 items-center justify-between gap-x-4 gap-y-1">
+          <div className="flex min-w-0 items-center gap-3 overflow-x-auto scrollbar-hide">
+            <img src={brandMark} alt="PulseSQL" className="h-4 w-4 shrink-0" />
+            <div className="flex items-center gap-0.5 shrink-0">
               <div className="flex items-center gap-1">
                 {menuDefinitions.map((menu) => (
                   <div key={menu.id} className="relative">
@@ -363,7 +363,7 @@ function App() {
               </div>
             </div>
           </div>
-          <div className="relative hidden md:flex items-center">
+          <div className="relative hidden min-[880px]:flex items-center shrink-0">
             <button
               ref={themeButtonRef}
               type="button"
@@ -800,4 +800,3 @@ function toRgbChannels(color: string) {
 
   return '0 0 0';
 }
-

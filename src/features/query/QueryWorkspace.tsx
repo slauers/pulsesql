@@ -33,6 +33,7 @@ import {
 import { useConnectionRuntimeStore } from '../../store/connectionRuntime';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
 import { formatNumber, translate } from '../../i18n';
+import { ensureMonacoThemes, resolveMonacoTheme } from '../../lib/monaco-theme';
 
 interface QueryResult {
   columns: string[];
@@ -95,6 +96,7 @@ export default function QueryWorkspace() {
   const setSemanticBackgroundState = useUiPreferencesStore((state) => state.setSemanticBackgroundState);
   const resultPageSize = useUiPreferencesStore((state) => state.resultPageSize);
   const setResultPageSize = useUiPreferencesStore((state) => state.setResultPageSize);
+  const themeId = useUiPreferencesStore((state) => state.themeId);
   const editorFontSize = useUiPreferencesStore((state) => state.editorFontSize);
   const density = useUiPreferencesStore((state) => state.density);
   const metadataByConnection = useDatabaseSessionStore((state) => state.metadataByConnection);
@@ -666,13 +668,16 @@ export default function QueryWorkspace() {
                   </button>
                 </div>
               ))}
-              <button
-                onClick={() => addTab(resolvedConnectionId)}
-                className="ml-auto mr-2 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-background/28 px-3 py-2 text-xs text-muted hover:bg-border/30 hover:text-text"
-              >
-                <Plus size={15} />
-                {t('newQueryTab')}
-              </button>
+              <div className="ml-auto mr-2 flex shrink-0 items-center gap-2">
+                <button
+                  onClick={() => addTab(resolvedConnectionId)}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-background/28 px-3 py-2 text-xs text-muted hover:bg-border/30 hover:text-text"
+                >
+                  <Plus size={15} />
+                  <span className="hidden sm:inline">{t('newQueryTab')}</span>
+                  <span className="sm:hidden">{t('newQuery')}</span>
+                </button>
+              </div>
             </div>
 
             <div className="px-3 py-2.5 flex flex-wrap items-center gap-2">
@@ -698,12 +703,12 @@ export default function QueryWorkspace() {
                 <Clock3 size={13} />
                 {t('history')}
               </button>
-              <div className="ml-auto flex min-w-0 items-center gap-2">
+              <div className="ml-auto flex min-w-0 w-full sm:w-auto items-center gap-2">
                 <button
                   ref={connectionMenuButtonRef}
                   type="button"
                   onClick={toggleConnectionMenu}
-                  className={`flex min-w-[240px] items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${
+                  className={`flex w-full min-w-0 sm:min-w-[240px] items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${
                     connectionMenuOpen
                       ? 'border-primary/40 bg-background/40'
                       : 'border-border/70 bg-background/22 hover:bg-border/30'
@@ -736,39 +741,11 @@ export default function QueryWorkspace() {
                 <Editor
                   height="100%"
                   language="sql"
-                  theme="blacktable-night"
+                  theme={resolveMonacoTheme(themeId)}
                   value={activeTab.content}
                   onChange={(val) => updateTabContent(activeTab.id, val || "")}
                   beforeMount={(monaco) => {
-                    monaco.editor.defineTheme('blacktable-night', {
-                      base: 'vs-dark',
-                      inherit: true,
-                      rules: [
-                        { token: 'keyword', foreground: '62D7FF' },
-                        { token: 'number', foreground: '8BE9FD' },
-                        { token: 'string', foreground: '9FE870' },
-                        { token: 'comment', foreground: '60708E' },
-                      ],
-                      colors: {
-                        'editor.background': '#08111D',
-                        'editor.lineHighlightBackground': '#0F1C2D',
-                        'editorCursor.foreground': '#62D7FF',
-                        'editorLineNumber.foreground': '#4A607D',
-                        'editorLineNumber.activeForeground': '#9FC2E8',
-                        'editor.selectionBackground': '#163A59',
-                        'editor.inactiveSelectionBackground': '#10273D',
-                        'editorIndentGuide.background1': '#132236',
-                        'editorIndentGuide.activeBackground1': '#21405F',
-                        'editorSuggestWidget.background': '#091321',
-                        'editorSuggestWidget.border': '#1B3248',
-                        'editorSuggestWidget.foreground': '#D5E5F8',
-                        'editorSuggestWidget.highlightForeground': '#62D7FF',
-                        'editorSuggestWidget.selectedBackground': '#14304B',
-                        'editorSuggestWidget.selectedForeground': '#FFFFFF',
-                        'editorSuggestWidget.selectedIconForeground': '#62D7FF',
-                        'editorSuggestWidgetStatus.foreground': '#7E98B8',
-                      },
-                    });
+                    ensureMonacoThemes(monaco);
                   }}
                   options={{
                     minimap: { enabled: false },
@@ -822,7 +799,7 @@ export default function QueryWorkspace() {
                         }
 
                         suggestTimeoutRef.current = window.setTimeout(() => {
-                          editor.trigger('blacktable', 'editor.action.triggerSuggest', {});
+                          editor.trigger('pulsesql', 'editor.action.triggerSuggest', {});
                         }, 90);
                       }
                     });
@@ -830,7 +807,7 @@ export default function QueryWorkspace() {
                       lastCursorPositionRef.current = event.position;
                     });
                     editor.addAction({
-                      id: 'blacktable.runQuery',
+                      id: 'pulsesql.runQuery',
                       label: t('run'),
                       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
                       run: () => {

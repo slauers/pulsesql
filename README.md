@@ -1,6 +1,6 @@
-# Blacktable
+# PulseSQL
 
-Blacktable is a lightweight SQL workstation focused on speed, clarity, and flow.
+PulseSQL is a lightweight SQL workstation focused on speed, clarity, and flow.
 
 Built for developers who are tired of slow, bloated database tools.
 
@@ -23,7 +23,7 @@ Built for developers who are tired of slow, bloated database tools.
 
 Download the latest version from GitHub Releases:
 
-https://github.com/slauers/blacktable/releases
+https://github.com/slauers/pulsesql/releases
 
 ---
 
@@ -51,7 +51,7 @@ https://github.com/slauers/blacktable/releases
 
 ## Philosophy
 
-Blacktable is designed around a few simple principles:
+PulseSQL is designed around a few simple principles:
 
 - Fast over feature-heavy
 - Clear over clever
@@ -67,7 +67,7 @@ It prioritizes real workflows:
 
 ## Current Status
 
-Blacktable is under active development.
+PulseSQL is under active development.
 
 Core workflows are already usable, but some areas are still evolving.
 

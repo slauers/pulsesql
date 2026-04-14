@@ -96,6 +96,39 @@ fn get_splash_state(splash_state: tauri::State<Mutex<SplashState>>) -> Result<Sp
     Ok(state.clone())
 }
 
+#[tauri::command]
+fn reopen_splash_window(
+    app: AppHandle,
+    splash_state: tauri::State<Mutex<SplashState>>,
+) -> Result<(), String> {
+    {
+        let mut state = splash_state
+            .lock()
+            .map_err(|_| "Failed to lock splash state".to_string())?;
+        *state = SplashState::default();
+    }
+
+    if let Some(splash_window) = app.get_webview_window(SPLASH_WINDOW_LABEL) {
+        let _ = splash_window.close();
+    }
+
+    create_splash_window(&app)?;
+
+    let payload = {
+        let state = splash_state
+            .lock()
+            .map_err(|_| "Failed to lock splash state".to_string())?;
+
+        SplashProgressPayload {
+            progress: state.progress,
+            label: state.label.clone(),
+        }
+    };
+
+    app.emit_to(SPLASH_WINDOW_LABEL, "splash:progress", payload)
+        .map_err(|error| format!("Failed to emit splash progress: {error}"))
+}
+
 fn create_splash_window(app: &AppHandle) -> Result<(), String> {
     if app.get_webview_window(SPLASH_WINDOW_LABEL).is_some() {
         return Ok(());
@@ -106,7 +139,7 @@ fn create_splash_window(app: &AppHandle) -> Result<(), String> {
         SPLASH_WINDOW_LABEL,
         WebviewUrl::App("splash.html".into()),
     )
-        .title("BlackTable")
+        .title("PulseSQL")
         .inner_size(306.0, 264.0)
         .resizable(false)
         .maximizable(false)
@@ -115,10 +148,8 @@ fn create_splash_window(app: &AppHandle) -> Result<(), String> {
         .decorations(false)
         .center()
         .visible(true)
-        .always_on_top(true);
-
-    #[cfg(not(target_os = "macos"))]
-    let builder = builder.transparent(true);
+        .always_on_top(true)
+        .transparent(true);
 
     builder
         .build()
@@ -205,6 +236,7 @@ pub fn run() {
             reveal_main_window,
             close_splash_window,
             get_splash_state,
+            reopen_splash_window,
             db::test_connection,
             db::test_ssh_tunnel,
             db::open_connection,

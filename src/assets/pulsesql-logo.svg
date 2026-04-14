@@ -1,0 +1,20 @@
+<svg width="320" height="80" viewBox="0 0 320 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path
+    d="M20 40 L50 40 L60 20 L75 60 L90 30 L105 40 L130 40"
+    stroke="#2BD3C9"
+    stroke-width="3"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <rect x="132" y="28" width="6" height="24" fill="#2BD3C9" />
+  <text
+    x="150"
+    y="48"
+    font-family="'JetBrains Mono', monospace"
+    font-size="22"
+    fill="#E6EDF3"
+    letter-spacing="1"
+  >
+    PulseSQL
+  </text>
+</svg>

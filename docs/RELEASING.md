@@ -1,4 +1,4 @@
-# Releasing Blacktable
+# Releasing PulseSQL
 
 This project publishes desktop builds through GitHub Releases.
 

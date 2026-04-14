@@ -22,7 +22,7 @@ export interface SystemConfig {
   };
 }
 
-const SYSTEM_CONFIG_STORAGE_KEY = 'blacktable-system-config';
+const SYSTEM_CONFIG_STORAGE_KEY = 'pulsesql-system-config';
 const LEGACY_UI_PREFERENCES_STORAGE_KEY = 'ui-preferences';
 const LEGACY_FAVORITE_CONNECTION_STORAGE_KEY = 'favorite-connection-id';
 
@@ -63,7 +63,7 @@ export function defaultSystemConfig(): SystemConfig {
       locale: 'pt-BR',
       semanticBackgroundEnabled: true,
       resultPageSize: 100,
-      themeId: 'blacktable-dark',
+      themeId: 'pulsesql-dark',
       density: 'comfortable',
       editorFontSize: 14,
     },
@@ -169,11 +169,11 @@ function normalizeLocale(value: unknown): 'pt-BR' | 'en-US' {
 }
 
 function normalizeThemeId(value: unknown) {
-  if (value === 'blacktable-dark' || value === 'night-blue') {
+  if (value === 'pulsesql-dark' || value === 'teal-grid') {
     return value;
   }
 
-  return 'blacktable-dark';
+  return 'pulsesql-dark';
 }
 
 function normalizeDensity(value: unknown): 'compact' | 'comfortable' {

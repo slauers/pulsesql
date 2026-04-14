@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import brandMark from './assets/blacktable-mark.svg';
+import brandLogo from './assets/pulsesql-logo.svg';
 import { getInitialLocale, translate } from './i18n';
 import { LOCK_SPLASH_FOR_DEV } from './devFlags';
 
@@ -115,10 +115,10 @@ export default function SplashScreen() {
 
   return (
     <div className={`splash-screen__card ${finishing ? 'splash-screen__card--closing' : ''}`}>
-      <img src={brandMark} alt="BlackTable" className="splash-screen__logo" />
+      <img src={brandLogo} alt="PulseSQL" className="splash-screen__logo splash-screen__logo--wide" />
 
       <div className="splash-screen__copy">
-        <div className="splash-screen__title">BlackTable</div>
+        <div className="splash-screen__title">PulseSQL</div>
         <div className="splash-screen__subtitle">{translate(locale, 'aboutSubtitle')}</div>
       </div>
 

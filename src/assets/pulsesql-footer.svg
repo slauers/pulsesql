@@ -1,0 +1,33 @@
+<svg width="320" height="80" viewBox="0 0 320 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="320" height="80" rx="12" fill="#0B0F14"/>
+  <defs>
+    <filter id="pulsesql-footer-glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <path
+    d="M20 40 L50 40 L60 20 L75 60 L90 30 L105 40 L130 40"
+    stroke="#2BD3C9"
+    stroke-width="3"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    filter="url(#pulsesql-footer-glow)"
+  />
+  <rect x="132" y="28" width="6" height="24" fill="#2BD3C9" filter="url(#pulsesql-footer-glow)">
+    <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
+  </rect>
+  <text
+    x="150"
+    y="48"
+    font-family="'JetBrains Mono', monospace"
+    font-size="22"
+    fill="#E6EDF3"
+    letter-spacing="1"
+  >
+    PulseSQL
+  </text>
+</svg>

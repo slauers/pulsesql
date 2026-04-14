@@ -8,6 +8,7 @@ import { useConnectionsStore } from '../../store/connections';
 import { readSystemConfig, type SystemConfig } from '../../store/systemConfig';
 import { APP_THEMES } from '../../themes';
 import { APP_LOCALES, translate } from '../../i18n';
+import { ensureMonacoThemes, resolveMonacoTheme } from '../../lib/monaco-theme';
 
 type ConfigurationTab = 'form' | 'json';
 
@@ -151,7 +152,7 @@ export default function ConfigurationDialog({
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = 'blacktable-config.json';
+    anchor.download = 'pulsesql-config.json';
     anchor.click();
     URL.revokeObjectURL(url);
   };
@@ -536,9 +537,12 @@ export default function ConfigurationDialog({
                 <Editor
                   height="100%"
                   language="json"
-                  theme="vs-dark"
+                  theme={resolveMonacoTheme(themeId)}
                   value={jsonDraft}
                   onChange={(value) => setJsonDraft(value ?? '')}
+                  beforeMount={(monaco) => {
+                    ensureMonacoThemes(monaco);
+                  }}
                   options={{
                     minimap: { enabled: false },
                     fontSize: 13,
@@ -627,7 +631,7 @@ function normalizePageSize(value: unknown) {
 }
 
 function normalizeThemeId(value: unknown) {
-  return typeof value === 'string' && value.trim().length > 0 ? value : 'blacktable-dark';
+  return typeof value === 'string' && value.trim().length > 0 ? value : 'pulsesql-dark';
 }
 
 function normalizeDensity(value: unknown): 'compact' | 'comfortable' {

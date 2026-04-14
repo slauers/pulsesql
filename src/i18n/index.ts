@@ -28,7 +28,7 @@ const messages = {
     disableSemanticBackground: 'Desativar fundo semantico',
     toggleConnectionsSidebar: 'Alternar sidebar de conexoes',
     keyboardShortcuts: 'Atalhos de teclado',
-    aboutBlacktable: 'Sobre o Blacktable',
+    aboutBlacktable: 'Sobre o PulseSQL',
     splashPreparingWorkspace: 'Preparando workspace',
     splashLoadingInterface: 'Carregando interface',
     splashRestoringSession: 'Restaurando sessao',
@@ -83,11 +83,11 @@ const messages = {
     createsNewQueryTab: 'cria uma nova aba de query',
     runsCurrentQuery: 'executa a query atual no editor',
     opensSystemConfiguration: 'abre as configuracoes do sistema',
-    aboutTitle: 'Sobre o Blacktable',
-    aboutSubtitle: 'Grid-native SQL workstation',
-    aboutLine1: 'Blacktable',
-    aboutLine2: 'Cliente SQL desktop focado em editor, explorer e grid de resultados.',
-    aboutLine3: 'Inclui configuracao central, conexao favorita com autoabertura e paginacao de resultados.',
+    aboutTitle: 'Sobre o PulseSQL',
+    aboutSubtitle: 'Pulse-driven SQL workstation',
+    aboutLine1: 'PulseSQL',
+    aboutLine2: 'Cliente SQL desktop focado em velocidade, leitura e fluxo continuo.',
+    aboutLine3: 'Inclui editor, explorer, grid paginada, conexao favorita e feedback visual em tempo real.',
     close: 'Fechar',
     explorer: 'Explorer',
     expandSidebar: 'Expandir lateral',
@@ -235,7 +235,7 @@ const messages = {
     disableSemanticBackground: 'Disable semantic background',
     toggleConnectionsSidebar: 'Toggle connections sidebar',
     keyboardShortcuts: 'Keyboard shortcuts',
-    aboutBlacktable: 'About Blacktable',
+    aboutBlacktable: 'About PulseSQL',
     splashPreparingWorkspace: 'Preparing workspace',
     splashLoadingInterface: 'Loading interface shell',
     splashRestoringSession: 'Restoring session state',
@@ -290,11 +290,11 @@ const messages = {
     createsNewQueryTab: 'creates a new query tab',
     runsCurrentQuery: 'runs the current query in the editor',
     opensSystemConfiguration: 'opens the system configuration',
-    aboutTitle: 'About Blacktable',
-    aboutSubtitle: 'Grid-native SQL workstation',
-    aboutLine1: 'Blacktable',
-    aboutLine2: 'Desktop SQL client focused on editor, explorer, and result grid.',
-    aboutLine3: 'Includes central configuration, favorite auto-open connection, and result pagination.',
+    aboutTitle: 'About PulseSQL',
+    aboutSubtitle: 'Pulse-driven SQL workstation',
+    aboutLine1: 'PulseSQL',
+    aboutLine2: 'Desktop SQL client focused on speed, readability, and uninterrupted flow.',
+    aboutLine3: 'Includes editor, explorer, paged result grid, favorite connection startup, and live visual feedback.',
     close: 'Close',
     explorer: 'Explorer',
     expandSidebar: 'Expand sidebar',
@@ -429,7 +429,7 @@ const messages = {
 
 export function getInitialLocale(): AppLocale {
   try {
-    const raw = localStorage.getItem('blacktable-system-config');
+    const raw = localStorage.getItem('pulsesql-system-config');
     if (raw) {
       const parsed = JSON.parse(raw) as { ui?: { locale?: AppLocale } };
       if (parsed.ui?.locale === 'en-US' || parsed.ui?.locale === 'pt-BR') {

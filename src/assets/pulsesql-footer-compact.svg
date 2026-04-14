@@ -1,0 +1,22 @@
+<svg width="140" height="80" viewBox="0 0 140 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="pulsesql-footer-compact-glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <path
+    d="M10 40 L30 40 L40 20 L55 60 L70 30 L85 40 L110 40"
+    stroke="#2BD3C9"
+    stroke-width="3"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    filter="url(#pulsesql-footer-compact-glow)"
+  />
+  <rect x="112" y="28" width="6" height="24" fill="#2BD3C9" filter="url(#pulsesql-footer-compact-glow)">
+    <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
+  </rect>
+</svg>

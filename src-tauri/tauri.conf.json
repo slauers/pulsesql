@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Blacktable",
+  "productName": "PulseSQL",
   "version": "0.1.0",
-  "identifier": "com.saulolauers.blacktable",
+  "identifier": "com.saulolauers.pulsesql",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -10,10 +10,11 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
-        "title": "Blacktable",
+        "title": "PulseSQL",
         "width": 1180,
         "height": 760,
         "minWidth": 900,

@@ -1,11 +1,11 @@
 use crate::connection::types::ConnectionConfig;
 use crate::db::{ColumnDef, QueryColumnMeta, QueryResult};
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime, DateTime, FixedOffset, Utc};
-use serde_json::{json, Map, Value};
-use sqlx::{postgres::PgPoolOptions, Column, Executor, PgPool, Row, TypeInfo};
+use serde_json::{json, Value};
+use sqlx::{postgres::PgPoolOptions, raw_sql, Column, PgPool, Row, TypeInfo};
 use std::time::{Duration, Instant};
 
 const DEFAULT_PAGE_SIZE: u32 = 100;
+const QUERY_TIMEOUT_SECONDS: u64 = 30;
 
 pub fn build_connection_url(
     config: &ConnectionConfig,
@@ -52,6 +52,7 @@ pub async fn open_connection(url: &str, timeout_seconds: u64) -> Result<PgPool, 
 
 pub async fn list_databases(pool: &PgPool) -> Result<Vec<String>, String> {
     sqlx::query_scalar::<_, String>("SELECT datname FROM pg_database WHERE datistemplate = false")
+        .persistent(false)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())
@@ -61,6 +62,7 @@ pub async fn list_schemas(pool: &PgPool) -> Result<Vec<String>, String> {
     sqlx::query_scalar::<_, String>(
         "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast')",
     )
+    .persistent(false)
     .fetch_all(pool)
     .await
     .map_err(|error| error.to_string())
@@ -71,6 +73,7 @@ pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<String>, Str
         "SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE'",
     )
     .bind(schema)
+    .persistent(false)
     .fetch_all(pool)
     .await
     .map_err(|error| error.to_string())
@@ -86,6 +89,7 @@ pub async fn list_columns(
     )
     .bind(schema)
     .bind(table)
+    .persistent(false)
     .fetch_all(pool)
     .await
     .map_err(|error| error.to_string())
@@ -106,15 +110,12 @@ pub async fn execute_query(
     .await
 }
 
-async fn execute_query_inner<'e, E>(
-    executor: E,
+async fn execute_query_inner(
+    pool: &PgPool,
     query: &str,
     page: u32,
     page_size: u32,
-) -> Result<QueryResult, String>
-where
-    E: Executor<'e, Database = sqlx::Postgres> + Copy,
-{
+) -> Result<QueryResult, String> {
     let trimmed = query.trim();
     let started_at = Instant::now();
     let normalized_page = page.max(1);
@@ -123,53 +124,29 @@ where
 
     let execution = async {
         if is_paginable_result_query(trimmed) {
-            let paged_sql = format!(
-                "SELECT * FROM ({trimmed}) AS blacktable_page LIMIT {normalized_page_size} OFFSET {offset}"
-            );
             let count_sql =
                 format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
 
-            let rows = sqlx::query(&paged_sql)
-                .fetch_all(executor)
-                .await
-                .map_err(|error| error.to_string())?;
-            let total_rows = sqlx::query_scalar::<_, i64>(&count_sql)
-                .fetch_one(executor)
+            let data_sql = format!(
+                "SELECT to_jsonb(blacktable_page) AS __blacktable_json
+                 FROM ({trimmed}) AS blacktable_page
+                 LIMIT {normalized_page_size} OFFSET {offset}"
+            );
+
+            let meta_sql = format!(
+                "SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1"
+            );
+
+            let total_rows = fetch_total_rows(pool, &count_sql).await?;
+
+            let meta_rows = raw_sql(&meta_sql)
+                .fetch_all(pool)
                 .await
                 .map_err(|error| error.to_string())?;
 
-            let columns = rows
-                .first()
-                .map(|row| {
-                    row.columns()
-                        .iter()
-                        .map(|column| column.name().to_string())
-                        .collect()
-                })
-                .unwrap_or_else(Vec::new);
-            let column_meta = rows
-                .first()
-                .map(|row| {
-                    row.columns()
-                        .iter()
-                        .map(|column| QueryColumnMeta {
-                            name: column.name().to_string(),
-                            data_type: column.type_info().name().to_string(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_else(Vec::new);
+            let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
 
-            let rows = rows
-                .iter()
-                .map(|row| {
-                    let mut object = Map::new();
-                    for (index, column) in row.columns().iter().enumerate() {
-                        object.insert(column.name().to_string(), pg_value_to_json(row, index));
-                    }
-                    Value::Object(object)
-                })
-                .collect();
+            let rows = fetch_json_rows(pool, &data_sql).await?;
 
             Ok(QueryResult {
                 columns,
@@ -182,43 +159,23 @@ where
                 page_size: Some(normalized_page_size),
             })
         } else if is_result_set_query(trimmed) {
-            let rows = sqlx::query(trimmed)
-                .fetch_all(executor)
+            let data_sql = format!(
+                "SELECT to_jsonb(blacktable_row) AS __blacktable_json
+                 FROM ({trimmed}) AS blacktable_row"
+            );
+
+            let meta_sql = format!(
+                "SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1"
+            );
+
+            let meta_rows = raw_sql(&meta_sql)
+                .fetch_all(pool)
                 .await
                 .map_err(|error| error.to_string())?;
 
-            let columns = rows
-                .first()
-                .map(|row| {
-                    row.columns()
-                        .iter()
-                        .map(|column| column.name().to_string())
-                        .collect()
-                })
-                .unwrap_or_else(Vec::new);
-            let column_meta = rows
-                .first()
-                .map(|row| {
-                    row.columns()
-                        .iter()
-                        .map(|column| QueryColumnMeta {
-                            name: column.name().to_string(),
-                            data_type: column.type_info().name().to_string(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_else(Vec::new);
+            let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
 
-            let rows = rows
-                .iter()
-                .map(|row| {
-                    let mut object = Map::new();
-                    for (index, column) in row.columns().iter().enumerate() {
-                        object.insert(column.name().to_string(), pg_value_to_json(row, index));
-                    }
-                    Value::Object(object)
-                })
-                .collect();
+            let rows = fetch_json_rows(pool, &data_sql).await?;
 
             Ok(QueryResult {
                 columns,
@@ -231,8 +188,8 @@ where
                 page_size: None,
             })
         } else {
-            let result = sqlx::query(trimmed)
-                .execute(executor)
+            let result = raw_sql(trimmed)
+                .execute(pool)
                 .await
                 .map_err(|error| error.to_string())?;
 
@@ -252,10 +209,63 @@ where
         }
     };
 
-    match tokio::time::timeout(Duration::from_secs(30), execution).await {
+    match tokio::time::timeout(Duration::from_secs(QUERY_TIMEOUT_SECONDS), execution).await {
         Ok(result) => result,
-        Err(_) => Err("Query timed out after 30 seconds.".into()),
+        Err(_) => Err(format!(
+            "Query timed out after {QUERY_TIMEOUT_SECONDS} seconds."
+        )),
     }
+}
+
+async fn fetch_total_rows(pool: &PgPool, sql: &str) -> Result<i64, String> {
+    let rows = raw_sql(sql)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let row = rows
+        .first()
+        .ok_or_else(|| "Failed to decode PostgreSQL total row count: no rows returned".to_string())?;
+
+    row.try_get::<i64, _>("blacktable_total")
+        .map_err(|error| format!("Failed to decode PostgreSQL total row count: {error}"))
+}
+
+async fn fetch_json_rows(pool: &PgPool, sql: &str) -> Result<Vec<Value>, String> {
+    let rows = raw_sql(sql)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.into_iter()
+        .map(|row| match row.try_get::<Value, _>("__blacktable_json") {
+            Ok(value) => Ok(value),
+            Err(error) => Err(format!("Failed to decode PostgreSQL row JSON: {error}")),
+        })
+        .collect()
+}
+
+fn extract_columns_and_meta(rows: &[sqlx::postgres::PgRow]) -> (Vec<String>, Vec<QueryColumnMeta>) {
+    rows.first()
+        .map(|row| {
+            let columns = row
+                .columns()
+                .iter()
+                .map(|column| column.name().to_string())
+                .collect::<Vec<_>>();
+
+            let column_meta = row
+                .columns()
+                .iter()
+                .map(|column| QueryColumnMeta {
+                    name: column.name().to_string(),
+                    data_type: column.type_info().name().to_string(),
+                })
+                .collect::<Vec<_>>();
+
+            (columns, column_meta)
+        })
+        .unwrap_or_else(|| (Vec::new(), Vec::new()))
 }
 
 fn is_result_set_query(query: &str) -> bool {
@@ -269,58 +279,4 @@ fn is_result_set_query(query: &str) -> bool {
 fn is_paginable_result_query(query: &str) -> bool {
     let upper = query.trim_start().to_uppercase();
     upper.starts_with("SELECT") || upper.starts_with("WITH")
-}
-
-fn pg_value_to_json(row: &sqlx::postgres::PgRow, index: usize) -> Value {
-    if let Ok(value) = row.try_get::<Option<bool>, _>(index) {
-        return value.map(Value::Bool).unwrap_or(Value::Null);
-    }
-    if let Ok(value) = row.try_get::<Option<i64>, _>(index) {
-        return value.map(Value::from).unwrap_or(Value::Null);
-    }
-    if let Ok(value) = row.try_get::<Option<i32>, _>(index) {
-        return value.map(Value::from).unwrap_or(Value::Null);
-    }
-    if let Ok(value) = row.try_get::<Option<f64>, _>(index) {
-        return value.map(Value::from).unwrap_or(Value::Null);
-    }
-    if let Ok(value) = row.try_get::<Option<f32>, _>(index) {
-        return value
-            .map(|item| Value::from(item as f64))
-            .unwrap_or(Value::Null);
-    }
-    if let Ok(value) = row.try_get::<Option<String>, _>(index) {
-        return value.map(Value::String).unwrap_or(Value::Null);
-    }
-    if let Ok(value) = row.try_get::<Option<NaiveDate>, _>(index) {
-        return value
-            .map(|item| Value::String(item.format("%Y-%m-%d").to_string()))
-            .unwrap_or(Value::Null);
-    }
-    if let Ok(value) = row.try_get::<Option<NaiveTime>, _>(index) {
-        return value
-            .map(|item| Value::String(item.format("%H:%M:%S").to_string()))
-            .unwrap_or(Value::Null);
-    }
-    if let Ok(value) = row.try_get::<Option<NaiveDateTime>, _>(index) {
-        return value
-            .map(|item| Value::String(item.format("%Y-%m-%d %H:%M:%S").to_string()))
-            .unwrap_or(Value::Null);
-    }
-    if let Ok(value) = row.try_get::<Option<DateTime<FixedOffset>>, _>(index) {
-        return value
-            .map(|item| Value::String(item.to_rfc3339()))
-            .unwrap_or(Value::Null);
-    }
-    if let Ok(value) = row.try_get::<Option<DateTime<Utc>>, _>(index) {
-        return value
-            .map(|item| Value::String(item.to_rfc3339()))
-            .unwrap_or(Value::Null);
-    }
-
-    match row.try_get::<Option<Value>, _>(index) {
-        Ok(Some(value)) => value,
-        Ok(None) => Value::Null,
-        Err(_) => Value::String("<unsupported>".into()),
-    }
 }

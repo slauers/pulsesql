@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import oracleMark from '../../assets/oracle-mark.svg';
 import postgresMark from '../../assets/postgres-mark.svg';
+import pulsesqlFooter from '../../assets/pulsesql-footer.svg';
+import pulsesqlFooterCompact from '../../assets/pulsesql-footer-compact.svg';
 import { ConnectionConfig, useConnectionsStore } from '../../store/connections';
 import { useConnectionRuntimeStore, type RuntimeConnectionState } from '../../store/connectionRuntime';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
@@ -77,6 +79,9 @@ export default function ConnectionManager() {
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [connectionContextMenu, setConnectionContextMenu] = useState<ConnectionContextMenuState | null>(null);
   const [expandedLogsConnectionId, setExpandedLogsConnectionId] = useState<string | null>(null);
+  const [compactViewport, setCompactViewport] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 980 || window.innerHeight < 700 : false,
+  );
   const semanticToggleRef = useRef<HTMLButtonElement | null>(null);
 
   const activeConnection =
@@ -98,9 +103,10 @@ export default function ConnectionManager() {
           ? t('loadingSchemas')
           : metadataActivity?.phase === 'loadingColumns'
             ? `${t('loadingColumns')} • ${metadataActivity.schemaName ?? ''}${metadataActivity.tableName ? `.${metadataActivity.tableName}` : ''}`
-            : activeConnectionId
-              ? t('ready')
-              : t('noActiveConnection');
+              : activeConnectionId
+                ? t('ready')
+                : t('noActiveConnection');
+  const effectiveSidebarWidth = sidebarCollapsed ? 68 : compactViewport ? Math.min(sidebarWidth, 260) : sidebarWidth;
 
   useEffect(() => {
     if (activeConnectionId && !activeConnection) {
@@ -121,6 +127,19 @@ export default function ConnectionManager() {
   }, []);
 
   useEffect(() => {
+    const updateViewportMode = () => {
+      setCompactViewport(window.innerWidth < 980 || window.innerHeight < 700);
+    };
+
+    updateViewportMode();
+    window.addEventListener('resize', updateViewportMode);
+
+    return () => {
+      window.removeEventListener('resize', updateViewportMode);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleToggleSidebar = () => {
       toggleSidebarCollapsed();
     };
@@ -133,12 +152,12 @@ export default function ConnectionManager() {
       }
     };
 
-    window.addEventListener('blacktable:toggle-sidebar', handleToggleSidebar as EventListener);
-    window.addEventListener('blacktable:new-connection', handleNewConnection as EventListener);
+    window.addEventListener('pulsesql:toggle-sidebar', handleToggleSidebar as EventListener);
+    window.addEventListener('pulsesql:new-connection', handleNewConnection as EventListener);
 
     return () => {
-      window.removeEventListener('blacktable:toggle-sidebar', handleToggleSidebar as EventListener);
-      window.removeEventListener('blacktable:new-connection', handleNewConnection as EventListener);
+      window.removeEventListener('pulsesql:toggle-sidebar', handleToggleSidebar as EventListener);
+      window.removeEventListener('pulsesql:new-connection', handleNewConnection as EventListener);
     };
   }, [sidebarCollapsed, sidebarWidth]);
 
@@ -309,12 +328,12 @@ export default function ConnectionManager() {
 
   return (
     <div className="flex h-full w-full flex-col">
-      <div className="flex min-h-0 flex-1 w-full max-[900px]:flex-col">
+      <div className="flex min-h-0 flex-1 w-full">
         <div
-          className="shrink-0 border-r border-border/80 bg-surface/92 flex flex-col overflow-hidden max-[900px]:w-full max-[900px]:max-h-[42vh]"
-          style={{ width: `${sidebarCollapsed ? 68 : sidebarWidth}px` }}
+          className="shrink-0 border-r border-border/80 bg-surface/92 flex flex-col overflow-hidden"
+          style={{ width: `${effectiveSidebarWidth}px` }}
         >
-          <div className="px-3 py-2 border-b border-border/80 flex justify-between items-center sticky top-0 bg-surface/95">
+          <div className="px-3 py-2 border-b border-border/80 flex justify-between items-center sticky top-0 bg-surface/95 z-10">
             {sidebarCollapsed ? (
               <div className="flex w-full flex-col items-center gap-3">
                 <button
@@ -495,6 +514,26 @@ export default function ConnectionManager() {
               </div>
             </div>
           )}
+
+          <div
+            className={`shrink-0 border-t border-border/70 bg-background/26 ${
+              sidebarCollapsed ? 'px-1.5 py-2' : 'px-3 py-3'
+            }`}
+          >
+            <div
+              className={`rounded-xl border border-border/60 bg-background/36 ${
+                sidebarCollapsed
+                  ? 'flex items-center justify-center px-1 py-2'
+                  : 'px-3 py-2'
+              }`}
+            >
+              <img
+                src={sidebarCollapsed ? pulsesqlFooterCompact : pulsesqlFooter}
+                alt="PulseSQL"
+                className={sidebarCollapsed ? 'h-10 w-auto opacity-95' : 'h-10 w-full object-contain opacity-95'}
+              />
+            </div>
+          </div>
         </div>
 
         {!sidebarCollapsed ? (

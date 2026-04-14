@@ -139,13 +139,15 @@ export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density
                 </div>
                 {columns.map((col, cIdx) => {
                   const val = row[col.name];
+                  const displayValue = formatCellValue(val);
                   return (
                     <div 
                       key={cIdx} 
                       className="px-3 flex items-center whitespace-nowrap overflow-hidden text-ellipsis border-r border-border/20 font-mono text-text"
                       style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
+                      title={displayValue}
                     >
-                      {val === null ? <span className="text-muted/50 italic">null</span> : String(val)}
+                      {val === null ? <span className="text-muted/50 italic">null</span> : displayValue}
                     </div>
                   );
                 })}
@@ -168,9 +170,37 @@ function estimateColumnWidth(
   const headerText = [column.name, column.subtitle].filter(Boolean).join(' ');
   const headerWidth = Math.max(headerText.length * 8 + 36, 140);
   const sampleWidth = rows.slice(0, 20).reduce((max, row) => {
-    const cellLength = String(row?.[column.name] ?? '').length;
+    const cellLength = formatCellValue(row?.[column.name]).length;
     return Math.max(max, Math.min(cellLength * 8 + 28, 420));
   }, 0);
 
   return Math.max(headerWidth, sampleWidth, 140);
+}
+
+function formatCellValue(value: unknown) {
+  if (value === null) {
+    return 'null';
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+
+  if (Array.isArray(value) || (typeof value === 'object' && value !== null)) {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  if (typeof value === 'undefined') {
+    return 'undefined';
+  }
+
+  return String(value);
 }

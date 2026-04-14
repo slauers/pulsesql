@@ -59,5 +59,5 @@ fn resolve_history_db_path(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
 
-    Ok(app_data_dir.join("blacktable-history.sqlite"))
+    Ok(app_data_dir.join("pulsesql-history.sqlite"))
 }
