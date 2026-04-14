@@ -27,6 +27,7 @@ import {
   invalidateMetadataCache,
 } from './metadata-cache';
 import {
+  buildCreateTableTemplate,
   buildCountRowsQuery,
   buildInsertTemplate,
   buildSelectTopQuery,
@@ -89,6 +90,7 @@ export function DatabaseExplorer({
   const activeSchema = useDatabaseSessionStore((state) => state.activeSchemaByConnection[connId] ?? null);
   const setActiveSchema = useDatabaseSessionStore((state) => state.setActiveSchema);
   const connection = useConnectionsStore((state) => state.connections.find((item) => item.id === connId) ?? null);
+  const setActiveConnection = useConnectionsStore((state) => state.setActiveConnection);
   const updateConnection = useConnectionsStore((state) => state.updateConnection);
   const addTabWithContent = useQueriesStore((state) => state.addTabWithContent);
   const replaceActiveTabContent = useQueriesStore((state) => state.replaceActiveTabContent);
@@ -178,15 +180,26 @@ export function DatabaseExplorer({
             ? buildInsertTemplate(engine, reference, columns)
             : buildUpdateTemplate(reference);
 
+    setActiveConnection(connId);
+    setActiveSchema(connId, schema);
+
     if (action === 'selectTop100') {
-      const tabId = replaceActiveTabContent(sql, `${table} ${resolveActionTitle(action)}`);
+      const tabId = replaceActiveTabContent(sql, `${table} ${resolveActionTitle(action)}`, connId);
       if (tabId) {
         requestTabExecution(tabId);
       }
       return;
     }
 
-    addTabWithContent(sql, `${table} ${resolveActionTitle(action)}`);
+    addTabWithContent(sql, `${table} ${resolveActionTitle(action)}`, connId);
+  };
+
+  const openCreateTableTemplate = (schema: string) => {
+    const sql = buildCreateTableTemplate({ schema, table: 'new_table' });
+    setActiveConnection(connId);
+    addTabWithContent(sql, `${schema} create table`, connId);
+    setActiveSchema(connId, schema);
+    setSchemaContextMenu(null);
   };
 
   return (
@@ -299,6 +312,14 @@ export function DatabaseExplorer({
               >
                 <Crosshair size={14} className="text-muted" />
                 <span>Usar neste editor</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => openCreateTableTemplate(schemaContextMenu.schema)}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+              >
+                <Table2 size={14} className="text-muted" />
+                <span>Criar tabela neste schema</span>
               </button>
               <button
                 type="button"

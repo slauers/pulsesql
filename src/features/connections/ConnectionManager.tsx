@@ -423,7 +423,7 @@ export default function ConnectionManager() {
                           type="button"
                           onClick={() => toggleSelectedConnection(conn.id)}
                           onContextMenu={(event) => openConnectionContextMenu(event, conn.id)}
-                          className={`group w-full border px-3 py-2 text-left transition-colors ${
+                          className={`group w-full border rounded-lg px-3 py-2 text-left transition-colors ${
                             isSelected
                               ? 'border-primary/35 bg-background/48'
                               : 'border-transparent bg-transparent hover:bg-background/34'
@@ -454,7 +454,7 @@ export default function ConnectionManager() {
                         </button>
 
                         {isSelected ? (
-                          <div className="space-y-3 border border-border/70 bg-background/18 p-3">
+                          <div className="space-y-3 border rounded-lg border-border/70 bg-background/18 p-3">
                             <ActionSection
                               title={t('mainActions')}
                               actions={buildPrimaryActions({
@@ -516,24 +516,8 @@ export default function ConnectionManager() {
                 setEditingConnectionId(null);
               }}
             />
-          ) : activeConnectionId ? (
-            <QueryWorkspace
-              key={activeConnectionId}
-              connectionLabel={activeConnection?.name}
-              engine={activeConnection?.engine}
-              schemaLabel={activeSchema ?? undefined}
-            />
-          ) : selectedConnection ? (
-            <div className="h-full flex items-center justify-center text-muted">
-              <div className="rounded-lg border border-border/70 bg-background/22 px-6 py-5 text-center">
-                <p className="text-sm text-text">{t('noActiveConnection')}.</p>
-                <p className="mt-1 text-xs text-muted">Abra a conexao pela sidebar para liberar editor, explorer e execucao.</p>
-              </div>
-            </div>
           ) : (
-            <div className="h-full flex items-center justify-center text-muted">
-              <p>Selecione uma conex?o ou crie uma nova.</p>
-            </div>
+            <QueryWorkspace />
           )}
         </div>
       </div>

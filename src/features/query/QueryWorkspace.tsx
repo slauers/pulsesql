@@ -4,7 +4,7 @@ import { useQueriesStore } from '../../store/queries';
 import { type DatabaseEngine, useConnectionsStore } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
 import { createPortal } from 'react-dom';
-import { ensureColumnsCached, ensureTablesCached } from '../database/metadata-cache';
+import { ensureColumnsCached, ensureSchemasCached, ensureTablesCached, invalidateMetadataCache } from '../database/metadata-cache';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
 import type { MetadataColumn } from '../database/types';
 import {
@@ -19,6 +19,7 @@ import {
   Search,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import ResultGrid from './ResultGrid';
 import QueryHistoryDrawer from '../history/components/QueryHistoryDrawer';
@@ -67,16 +68,9 @@ interface ExecuteQueryPayload {
 const SEMANTIC_SUCCESS_DURATION_MS = 3600;
 const SEMANTIC_ERROR_DURATION_MS = 6200;
 const SEMANTIC_WARNING_DURATION_MS = 6200;
+const CONNECTION_MENU_WIDTH = 340;
 
-export default function QueryWorkspace({
-  connectionLabel,
-  engine,
-  schemaLabel,
-}: {
-  connectionLabel?: string;
-  engine?: DatabaseEngine;
-  schemaLabel?: string;
-}) {
+export default function QueryWorkspace() {
   const {
     tabs,
     activeTabId,
@@ -87,12 +81,12 @@ export default function QueryWorkspace({
     closeTab,
     updateTabContent,
     replaceActiveTabContent,
+    setTabConnection,
     clearPendingExecution,
   } = useQueriesStore();
   const { activeConnectionId, connections, setActiveConnection } = useConnectionsStore();
-  const runtimeStatus = useConnectionRuntimeStore((state) =>
-    activeConnectionId ? state.runtimeStatus[activeConnectionId] : undefined,
-  );
+  const runtimeStatusMap = useConnectionRuntimeStore((state) => state.runtimeStatus);
+  const setRuntimeStatus = useConnectionRuntimeStore((state) => state.setRuntimeStatus);
   const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
   const locale = useUiPreferencesStore((state) => state.locale);
@@ -104,10 +98,17 @@ export default function QueryWorkspace({
   const editorFontSize = useUiPreferencesStore((state) => state.editorFontSize);
   const density = useUiPreferencesStore((state) => state.density);
   const metadataByConnection = useDatabaseSessionStore((state) => state.metadataByConnection);
+  const activeSchemaByConnection = useDatabaseSessionStore((state) => state.activeSchemaByConnection);
   const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
     translate(locale, key, params);
   
   const activeTab = tabs.find(t => t.id === activeTabId);
+  const resolvedConnectionId = activeTab?.connectionId ?? activeConnectionId ?? null;
+  const selectedConnection = connections.find((connection) => connection.id === resolvedConnectionId) ?? null;
+  const engine = selectedConnection?.engine;
+  const connectionLabel = selectedConnection?.name;
+  const schemaLabel = resolvedConnectionId ? activeSchemaByConnection[resolvedConnectionId] ?? selectedConnection?.preferredSchema : undefined;
+  const runtimeStatus = resolvedConnectionId ? runtimeStatusMap[resolvedConnectionId] : undefined;
   const isConnectionReady = runtimeStatus === 'connected';
 
   const [loading, setLoading] = useState(false);
@@ -120,8 +121,11 @@ export default function QueryWorkspace({
   const [resultsResizing, setResultsResizing] = useState(false);
   const [pendingRiskyExecution, setPendingRiskyExecution] = useState<string[] | null>(null);
   const [pageSizeDraft, setPageSizeDraft] = useState(String(resultPageSize));
+  const [connectionMenuOpen, setConnectionMenuOpen] = useState(false);
+  const [connectionMenuPosition, setConnectionMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const executeQueryRef = useRef<() => void>(() => {});
   const editorRef = useRef<any>(null);
+  const connectionMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const lastCursorPositionRef = useRef<{ lineNumber: number; column: number } | null>(null);
   const autocompleteDisposableRef = useRef<{ dispose(): void } | null>(null);
   const suggestTimeoutRef = useRef<number | null>(null);
@@ -131,26 +135,26 @@ export default function QueryWorkspace({
     activeSchema?: string | null;
     engine?: DatabaseEngine | null;
   }>({
-    connectionId: activeConnectionId,
+    connectionId: resolvedConnectionId,
     activeSchema: schemaLabel,
     engine,
   });
 
   useEffect(() => {
     autocompleteContextRef.current = {
-      connectionId: activeConnectionId,
+      connectionId: resolvedConnectionId,
       activeSchema: schemaLabel,
       engine,
     };
-  }, [activeConnectionId, engine, schemaLabel]);
+  }, [resolvedConnectionId, engine, schemaLabel]);
 
   useEffect(() => {
-    if (!activeConnectionId || !engine || !schemaLabel) {
+    if (!resolvedConnectionId || !engine || !schemaLabel || runtimeStatus !== 'connected') {
       return;
     }
 
-    void ensureTablesCached(activeConnectionId, engine, schemaLabel).catch(() => null);
-  }, [activeConnectionId, engine, schemaLabel]);
+    void ensureTablesCached(resolvedConnectionId, engine, schemaLabel).catch(() => null);
+  }, [engine, resolvedConnectionId, runtimeStatus, schemaLabel]);
 
   useEffect(() => () => {
     autocompleteDisposableRef.current?.dispose();
@@ -161,6 +165,35 @@ export default function QueryWorkspace({
       window.clearTimeout(semanticResetTimeoutRef.current);
     }
   }, []);
+
+  useEffect(() => {
+    if (!connectionMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (connectionMenuButtonRef.current?.contains(target)) {
+        return;
+      }
+
+      setConnectionMenuOpen(false);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setConnectionMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [connectionMenuOpen]);
 
   const scheduleSemanticReset = useCallback((durationMs: number) => {
     if (semanticResetTimeoutRef.current) {
@@ -178,6 +211,9 @@ export default function QueryWorkspace({
     if (!statements.length || !connectionId) {
       return;
     }
+    const targetConnection = connections.find((item) => item.id === connectionId) ?? null;
+    const targetEngine = targetConnection?.engine;
+    const targetSchema = activeSchemaByConnection[connectionId] ?? targetConnection?.preferredSchema;
     
     if (semanticResetTimeoutRef.current) {
       window.clearTimeout(semanticResetTimeoutRef.current);
@@ -221,9 +257,9 @@ export default function QueryWorkspace({
     } catch (e: any) {
       const nextError = buildQueryErrorPresentation({
         error: e,
-        engine,
+        engine: targetEngine,
         statement: statements[0] ?? null,
-        activeSchema: schemaLabel,
+        activeSchema: targetSchema,
         metadataConnection: metadataByConnection[connectionId],
       });
       setError(nextError);
@@ -233,18 +269,53 @@ export default function QueryWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [appendLog, engine, metadataByConnection, resultPageSize, scheduleSemanticReset, schemaLabel, setSemanticBackgroundState]);
+  }, [activeSchemaByConnection, appendLog, connections, metadataByConnection, resultPageSize, scheduleSemanticReset, setSemanticBackgroundState]);
+
+  const ensureExecutionConnectionReady = useCallback(async (connectionId: string) => {
+    const connection = connections.find((item) => item.id === connectionId);
+    if (!connection) {
+      throw new Error(t('noActiveConnection'));
+    }
+
+    const currentStatus = runtimeStatusMap[connectionId] ?? 'disconnected';
+    if (currentStatus === 'connected') {
+      setActiveConnection(connectionId);
+      return connection;
+    }
+
+    appendLog(
+      connectionId,
+      t('openingConnectionWithTimeout', { name: connection.name, seconds: connection.connectTimeoutSeconds ?? 10 }),
+    );
+    setRuntimeStatus(connectionId, 'connecting');
+
+    try {
+      await invoke('open_connection', { config: connection });
+      setRuntimeStatus(connectionId, 'connected');
+      setActiveConnection(connectionId);
+      invalidateMetadataCache(connectionId);
+      appendLog(connectionId, t('connectionOpenedSuccessfully'));
+      void ensureSchemasCached(connectionId, connection.engine, { markActive: true }).catch(() => null);
+      return connection;
+    } catch (openError) {
+      const message = openError instanceof Error ? openError.message : String(openError);
+      setRuntimeStatus(connectionId, 'failed');
+      appendLog(connectionId, message);
+      throw openError;
+    }
+  }, [appendLog, connections, runtimeStatusMap, setActiveConnection, setRuntimeStatus, t]);
 
   const executeStatements = useCallback(async (statements: string[]) => {
-    if (!activeConnectionId) {
+    if (!resolvedConnectionId) {
       return;
     }
 
-    await runQueryBatch(statements, activeConnectionId);
-  }, [activeConnectionId, runQueryBatch]);
+    await ensureExecutionConnectionReady(resolvedConnectionId);
+    await runQueryBatch(statements, resolvedConnectionId);
+  }, [ensureExecutionConnectionReady, resolvedConnectionId, runQueryBatch]);
 
   const executeQuery = useCallback(async (options?: { skipRiskConfirmation?: boolean }) => {
-    if (!activeTab || !activeConnectionId) return;
+    if (!activeTab || !resolvedConnectionId) return;
 
     const executionTarget = resolveExecutionTarget(
       editorRef.current,
@@ -264,7 +335,7 @@ export default function QueryWorkspace({
 
     setPendingRiskyExecution(null);
     await executeStatements(executionTarget.statements);
-  }, [activeTab, activeConnectionId, executeStatements, scheduleSemanticReset, setSemanticBackgroundState]);
+  }, [activeTab, executeStatements, resolvedConnectionId, scheduleSemanticReset, setSemanticBackgroundState]);
 
   const runHistoryItem = useCallback(async (item: QueryHistoryItem, replaceCurrent: boolean) => {
     const connection = connections.find((current) => current.id === item.connectionId);
@@ -280,14 +351,13 @@ export default function QueryWorkspace({
     }
 
     if (replaceCurrent) {
-      replaceActiveTabContent(item.queryText, deriveHistoryTabTitle(item.queryText));
+      replaceActiveTabContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId);
     } else {
-      addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText));
+      addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId);
     }
 
     try {
-      await invoke('open_connection', { config: connection });
-      setActiveConnection(connection.id);
+      await ensureExecutionConnectionReady(connection.id);
       await runQueryBatch(splitSqlStatements(item.queryText), connection.id);
     } catch (runError) {
       setError(
@@ -299,14 +369,14 @@ export default function QueryWorkspace({
         }),
       );
     }
-  }, [addTabWithContent, connections, replaceActiveTabContent, runQueryBatch, schemaLabel, setActiveConnection]);
+  }, [addTabWithContent, connections, ensureExecutionConnectionReady, replaceActiveTabContent, runQueryBatch, schemaLabel]);
 
   const openHistoryInNewTab = useCallback((item: QueryHistoryItem) => {
-    addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText));
+    addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId);
   }, [addTabWithContent]);
 
   const replaceCurrentWithHistory = useCallback((item: QueryHistoryItem) => {
-    replaceActiveTabContent(item.queryText, deriveHistoryTabTitle(item.queryText));
+    replaceActiveTabContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId);
   }, [replaceActiveTabContent]);
 
   const toggleHistory = useCallback(() => {
@@ -339,7 +409,7 @@ export default function QueryWorkspace({
 
   const loadResultPage = useCallback(async (resultIndex: number, nextPage: number) => {
     const targetResult = results[resultIndex];
-    if (!targetResult || !activeConnectionId) {
+    if (!targetResult || !resolvedConnectionId) {
       return;
     }
 
@@ -347,8 +417,9 @@ export default function QueryWorkspace({
     setError(null);
 
     try {
+      await ensureExecutionConnectionReady(resolvedConnectionId);
       const payload = await invoke<ExecuteQueryPayload>('execute_query', {
-        connId: activeConnectionId,
+        connId: resolvedConnectionId,
         query: targetResult.statement,
         page: nextPage,
         pageSize: targetResult.page_size ?? resultPageSize,
@@ -373,13 +444,13 @@ export default function QueryWorkspace({
           engine,
           statement: targetResult.statement,
           activeSchema: schemaLabel,
-          metadataConnection: activeConnectionId ? metadataByConnection[activeConnectionId] : undefined,
+          metadataConnection: resolvedConnectionId ? metadataByConnection[resolvedConnectionId] : undefined,
         }),
       );
     } finally {
       setLoading(false);
     }
-  }, [activeConnectionId, engine, metadataByConnection, resultPageSize, results, schemaLabel]);
+  }, [ensureExecutionConnectionReady, engine, metadataByConnection, resolvedConnectionId, resultPageSize, results, schemaLabel]);
 
   useEffect(() => {
     setPageSizeDraft(String(resultPageSize));
@@ -396,14 +467,13 @@ export default function QueryWorkspace({
       return;
     }
 
-    if (loading || !activeTab || !activeConnectionId || !isConnectionReady) {
+    if (loading || !activeTab || !resolvedConnectionId) {
       return;
     }
 
     clearPendingExecution();
     void executeQuery();
   }, [
-    activeConnectionId,
     activeTab,
     activeTabId,
     clearPendingExecution,
@@ -411,6 +481,7 @@ export default function QueryWorkspace({
     isConnectionReady,
     loading,
     pendingExecutionTabId,
+    resolvedConnectionId,
   ]);
 
   useEffect(() => () => {
@@ -453,8 +524,8 @@ export default function QueryWorkspace({
     () => resolveSimpleSourceTable(activeResult?.statement, schemaLabel),
     [activeResult?.statement, schemaLabel],
   );
-  const cachedSourceColumns = activeConnectionId && activeSourceTable?.schemaName && activeSourceTable.tableName
-    ? metadataByConnection[activeConnectionId]?.schemasByName[activeSourceTable.schemaName]?.tablesByName[activeSourceTable.tableName]?.columns
+  const cachedSourceColumns = resolvedConnectionId && activeSourceTable?.schemaName && activeSourceTable.tableName
+    ? metadataByConnection[resolvedConnectionId]?.schemasByName[activeSourceTable.schemaName]?.tablesByName[activeSourceTable.tableName]?.columns
     : undefined;
   const totalRows = activeResult?.total_rows ?? activeResult?.rows.length ?? 0;
   const currentPage = activeResult?.page ?? 1;
@@ -468,7 +539,7 @@ export default function QueryWorkspace({
   );
 
   useEffect(() => {
-    if (!activeConnectionId || !engine || !activeSourceTable?.schemaName || !activeSourceTable.tableName) {
+    if (!resolvedConnectionId || !engine || !activeSourceTable?.schemaName || !activeSourceTable.tableName || runtimeStatus !== 'connected') {
       return;
     }
 
@@ -476,8 +547,8 @@ export default function QueryWorkspace({
       return;
     }
 
-    void ensureColumnsCached(activeConnectionId, engine, activeSourceTable.schemaName, activeSourceTable.tableName).catch(() => null);
-  }, [activeConnectionId, activeSourceTable, cachedSourceColumns, engine]);
+    void ensureColumnsCached(resolvedConnectionId, engine, activeSourceTable.schemaName, activeSourceTable.tableName).catch(() => null);
+  }, [activeSourceTable, cachedSourceColumns, engine, resolvedConnectionId, runtimeStatus]);
 
   const applyPageSize = useCallback(async () => {
     const parsed = Number(pageSizeDraft);
@@ -485,7 +556,7 @@ export default function QueryWorkspace({
     setPageSizeDraft(String(normalized));
     setResultPageSize(normalized);
 
-    if (!activeResult || !activeConnectionId) {
+    if (!activeResult || !resolvedConnectionId) {
       return;
     }
 
@@ -493,8 +564,9 @@ export default function QueryWorkspace({
     setError(null);
 
     try {
+      await ensureExecutionConnectionReady(resolvedConnectionId);
       const payload = await invoke<ExecuteQueryPayload>('execute_query', {
-        connId: activeConnectionId,
+        connId: resolvedConnectionId,
         query: activeResult.statement,
         page: 1,
         pageSize: normalized,
@@ -518,13 +590,45 @@ export default function QueryWorkspace({
           engine,
           statement: activeResult.statement,
           activeSchema: schemaLabel,
-          metadataConnection: activeConnectionId ? metadataByConnection[activeConnectionId] : undefined,
+          metadataConnection: resolvedConnectionId ? metadataByConnection[resolvedConnectionId] : undefined,
         }),
       );
     } finally {
       setLoading(false);
     }
-  }, [activeConnectionId, activeResult, activeResultIndex, engine, metadataByConnection, pageSizeDraft, resultPageSize, schemaLabel, setResultPageSize]);
+  }, [activeResult, activeResultIndex, ensureExecutionConnectionReady, engine, metadataByConnection, pageSizeDraft, resolvedConnectionId, resultPageSize, schemaLabel, setResultPageSize]);
+
+  const handleConnectionChange = useCallback((nextConnectionId: string) => {
+    if (!activeTab) {
+      return;
+    }
+
+    const normalizedConnectionId = nextConnectionId || null;
+    setTabConnection(activeTab.id, normalizedConnectionId);
+    setActiveConnection(normalizedConnectionId);
+    setConnectionMenuOpen(false);
+  }, [activeTab, setActiveConnection, setTabConnection]);
+
+  const toggleConnectionMenu = useCallback(() => {
+    const rect = connectionMenuButtonRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+
+    setConnectionMenuPosition({
+      x: Math.round(Math.max(8, Math.min(rect.right - CONNECTION_MENU_WIDTH, window.innerWidth - CONNECTION_MENU_WIDTH - 8))),
+      y: Math.round(Math.min(rect.bottom + 8, window.innerHeight - 220)),
+    });
+    setConnectionMenuOpen((current) => !current);
+  }, []);
+
+  useEffect(() => {
+    if (!activeTab || activeTab.connectionId !== undefined || !activeConnectionId) {
+      return;
+    }
+
+    setTabConnection(activeTab.id, activeConnectionId);
+  }, [activeConnectionId, activeTab, setTabConnection]);
 
   return (
     <div className="flex flex-col h-full bg-transparent overflow-hidden relative min-h-0">
@@ -563,7 +667,7 @@ export default function QueryWorkspace({
                 </div>
               ))}
               <button
-                onClick={addTab}
+                onClick={() => addTab(resolvedConnectionId)}
                 className="ml-auto mr-2 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-background/28 px-3 py-2 text-xs text-muted hover:bg-border/30 hover:text-text"
               >
                 <Plus size={15} />
@@ -574,7 +678,7 @@ export default function QueryWorkspace({
             <div className="px-3 py-2.5 flex flex-wrap items-center gap-2">
               <button
                 onClick={() => void executeQuery()}
-                disabled={loading || !activeTab || !activeConnectionId || !isConnectionReady}
+                disabled={loading || !activeTab || !resolvedConnectionId}
                 className="flex items-center gap-1.5 bg-emerald-400/18 text-emerald-200 hover:bg-emerald-400/26 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-400/35 shadow-[0_0_18px_rgba(16,185,129,0.18)] hover:shadow-[0_0_24px_rgba(16,185,129,0.28)]"
               >
                 {loading ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} className="fill-green-400/50" />}
@@ -594,18 +698,35 @@ export default function QueryWorkspace({
                 <Clock3 size={13} />
                 {t('history')}
               </button>
-              {connectionLabel && engine ? (
-                <div className="ml-auto flex min-w-0 items-center gap-2 rounded-lg border border-border/70 bg-background/22 px-3 py-1.5">
-                  <span className="truncate text-[11px] uppercase tracking-[0.14em] text-muted">
-                    {schemaLabel ? `${engine.toUpperCase()} • ${connectionLabel} • ${schemaLabel}` : `${engine.toUpperCase()} • ${connectionLabel}`}
-                  </span>
-                  {!isConnectionReady ? (
+              <div className="ml-auto flex min-w-0 items-center gap-2">
+                <button
+                  ref={connectionMenuButtonRef}
+                  type="button"
+                  onClick={toggleConnectionMenu}
+                  className={`flex min-w-[240px] items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${
+                    connectionMenuOpen
+                      ? 'border-primary/40 bg-background/40'
+                      : 'border-border/70 bg-background/22 hover:bg-border/30'
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[11px] uppercase tracking-[0.14em] text-muted">
+                      {selectedConnection ? `${selectedConnection.engine.toUpperCase()} - ${selectedConnection.name}` : t('noActiveConnection')}
+                    </div>
+                  </div>
+                  {schemaLabel ? (
+                    <span className="rounded-full border border-border/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted">
+                      {schemaLabel}
+                    </span>
+                  ) : null}
+                  {resolvedConnectionId && !isConnectionReady ? (
                     <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-amber-200">
                       {t('disconnected')}
                     </span>
                   ) : null}
-                </div>
-              ) : null}
+                  <ChevronDown size={14} className={`shrink-0 text-muted transition-transform ${connectionMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -726,7 +847,7 @@ export default function QueryWorkspace({
               <div className="h-full flex items-center justify-center text-muted bg-background/40">
                 <div className="text-center">
                   <p className="mb-2">{t('noActiveQuery')}</p>
-                  <button onClick={addTab} className="px-4 py-2 glass-panel border border-border rounded-lg text-sm hover:text-text flex items-center gap-2 mx-auto">
+                  <button onClick={() => addTab(resolvedConnectionId)} className="px-4 py-2 glass-panel border border-border rounded-lg text-sm hover:text-text flex items-center gap-2 mx-auto">
                     <Plus size={16} /> {t('newQuery')}
                   </button>
                 </div>
@@ -942,6 +1063,64 @@ export default function QueryWorkspace({
           onConfirm={() => void executeQuery({ skipRiskConfirmation: true })}
         />
       ) : null}
+
+      {connectionMenuOpen && connectionMenuPosition
+        ? createPortal(
+            <div
+              className="fixed z-[150] rounded-lg border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+              style={{ left: connectionMenuPosition.x, top: connectionMenuPosition.y, width: CONNECTION_MENU_WIDTH }}
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => handleConnectionChange('')}
+                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
+                  !resolvedConnectionId ? 'bg-background/55 text-primary' : 'text-text hover:bg-background/55'
+                }`}
+              >
+                <span className="text-muted">{t('noActiveConnection')}</span>
+              </button>
+              {connections.map((connection) => {
+                const isCurrent = connection.id === resolvedConnectionId;
+                const connectionSchema = activeSchemaByConnection[connection.id] ?? connection.preferredSchema;
+                const connectionState = runtimeStatusMap[connection.id] ?? 'disconnected';
+
+                return (
+                  <button
+                    key={connection.id}
+                    type="button"
+                    onClick={() => handleConnectionChange(connection.id)}
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
+                      isCurrent ? 'bg-background/55 text-primary' : 'text-text hover:bg-background/55'
+                    }`}
+                  >
+                    <div className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                      connectionState === 'connected'
+                        ? 'bg-emerald-400'
+                        : connectionState === 'connecting' || connectionState === 'reconnecting'
+                          ? 'bg-sky-400'
+                          : connectionState === 'failed'
+                            ? 'bg-red-400'
+                            : 'bg-muted'
+                    }`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm">{connection.name}</div>
+                      <div className="truncate text-[10px] uppercase tracking-[0.14em] text-muted">
+                        {connection.engine.toUpperCase()}{connectionSchema ? ` - ${connectionSchema}` : ''}
+                      </div>
+                    </div>
+                    {connectionState !== 'connected' ? (
+                      <span className="shrink-0 rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[9px] uppercase tracking-[0.12em] text-amber-200">
+                        {t('disconnected')}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
@@ -1387,4 +1566,3 @@ function summarizeStatementForLog(statement: string) {
     .trim()
     .slice(0, 140);
 }
-

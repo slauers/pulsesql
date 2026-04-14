@@ -1,7 +1,7 @@
 import type { DatabaseEngine } from '../../store/connections';
 import type { MetadataColumn } from './types';
 
-export type ExplorerActionId = 'selectTop100' | 'countRows' | 'describeTable' | 'update' | 'insert';
+export type ExplorerActionId = 'selectTop100' | 'countRows' | 'describeTable' | 'update' | 'insert' | 'createTable';
 
 export interface TableReference {
   schema?: string | null;
@@ -46,6 +46,17 @@ export function buildUpdateTemplate(reference: TableReference): string {
   return `UPDATE ${formatTableReference(reference)}
 SET ? = ?
 WHERE id = ?;`;
+}
+
+export function buildCreateTableTemplate(reference: TableReference): string {
+  return `CREATE TABLE ${formatTableReference({
+    ...reference,
+    table: reference.table || 'new_table',
+  })} (
+  id INTEGER PRIMARY KEY,
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP
+);`;
 }
 
 export function formatTableReference(reference: TableReference): string {
