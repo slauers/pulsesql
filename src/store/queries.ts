@@ -4,16 +4,18 @@ export interface QueryTab {
   id: string;
   title: string;
   content: string;
+  connectionId?: string | null;
 }
 
 interface QueriesState {
   tabs: QueryTab[];
   activeTabId: string | null;
   pendingExecutionTabId: string | null;
-  addTab: () => void;
-  addTabWithContent: (content: string, title?: string) => string;
+  addTab: (connectionId?: string | null) => void;
+  addTabWithContent: (content: string, title?: string, connectionId?: string | null) => string;
   updateTabContent: (id: string, content: string) => void;
-  replaceActiveTabContent: (content: string, title?: string) => string | null;
+  replaceActiveTabContent: (content: string, title?: string, connectionId?: string | null) => string | null;
+  setTabConnection: (id: string, connectionId: string | null) => void;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   requestTabExecution: (id: string) => void;
@@ -26,21 +28,22 @@ export const useQueriesStore = create<QueriesState>((set) => ({
   ...readQueriesState(),
   pendingExecutionTabId: null,
   
-  addTab: () => set((state) => {
+  addTab: (connectionId = null) => set((state) => {
     const newId = crypto.randomUUID();
-    const newTab = { id: newId, title: `Query ${state.tabs.length + 1}`, content: '' };
+    const newTab = { id: newId, title: `Query ${state.tabs.length + 1}`, content: '', connectionId };
     const next = { tabs: [...state.tabs, newTab], activeTabId: newId };
     writeQueriesState(next);
     return next;
   }),
 
-  addTabWithContent: (content, title) => {
+  addTabWithContent: (content, title, connectionId = null) => {
     const newId = crypto.randomUUID();
     set((state) => {
       const newTab = {
         id: newId,
         title: title?.trim() || `Query ${state.tabs.length + 1}`,
         content,
+        connectionId,
       };
       const next = { tabs: [...state.tabs, newTab], activeTabId: newId };
       writeQueriesState(next);
@@ -58,7 +61,7 @@ export const useQueriesStore = create<QueriesState>((set) => ({
     return next;
   }),
 
-  replaceActiveTabContent: (content, title) => {
+  replaceActiveTabContent: (content, title, connectionId) => {
     let updatedTabId: string | null = null;
 
     set((state) => {
@@ -71,6 +74,7 @@ export const useQueriesStore = create<QueriesState>((set) => ({
               id: updatedTabId,
               title: title?.trim() || `Query ${state.tabs.length + 1}`,
               content,
+              connectionId: connectionId ?? null,
             },
           ],
           activeTabId: updatedTabId,
@@ -87,6 +91,7 @@ export const useQueriesStore = create<QueriesState>((set) => ({
                 ...tab,
                 title: title?.trim() || tab.title,
                 content,
+                connectionId: connectionId === undefined ? tab.connectionId ?? null : connectionId,
               }
             : tab,
         ),
@@ -98,6 +103,15 @@ export const useQueriesStore = create<QueriesState>((set) => ({
 
     return updatedTabId;
   },
+
+  setTabConnection: (id, connectionId) => set((state) => {
+    const next = {
+      tabs: state.tabs.map((tab) => (tab.id === id ? { ...tab, connectionId } : tab)),
+      activeTabId: state.activeTabId,
+    };
+    writeQueriesState(next);
+    return next;
+  }),
   
   closeTab: (id) => set((state) => {
     const newTabs = state.tabs.filter(t => t.id !== id);
@@ -157,7 +171,8 @@ function ensureQueriesState(
           typeof tab === 'object' &&
           typeof tab.id === 'string' &&
           typeof tab.title === 'string' &&
-          typeof tab.content === 'string',
+          typeof tab.content === 'string' &&
+          (typeof tab.connectionId === 'string' || typeof tab.connectionId === 'undefined' || tab.connectionId === null),
       )
     : [];
 

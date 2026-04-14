@@ -516,24 +516,8 @@ export default function ConnectionManager() {
                 setEditingConnectionId(null);
               }}
             />
-          ) : activeConnectionId ? (
-            <QueryWorkspace
-              key={activeConnectionId}
-              connectionLabel={activeConnection?.name}
-              engine={activeConnection?.engine}
-              schemaLabel={activeSchema ?? undefined}
-            />
-          ) : selectedConnection ? (
-            <div className="h-full flex items-center justify-center text-muted">
-              <div className="rounded-lg border border-border/70 bg-background/22 px-6 py-5 text-center">
-                <p className="text-sm text-text">{t('noActiveConnection')}.</p>
-                <p className="mt-1 text-xs text-muted">Abra a conexao pela sidebar para liberar editor, explorer e execucao.</p>
-              </div>
-            </div>
           ) : (
-            <div className="h-full flex items-center justify-center text-muted">
-              <p>Selecione uma conex?o ou crie uma nova.</p>
-            </div>
+            <QueryWorkspace />
           )}
         </div>
       </div>
