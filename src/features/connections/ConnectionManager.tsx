@@ -384,7 +384,7 @@ export default function ConnectionManager() {
                     className={`relative flex w-full items-center justify-center border px-0 py-1.5 text-xs transition-colors ${
                       isSelected
                         ? 'border-primary/40 bg-primary/16 text-text'
-                        : 'border-transparent bg-transparent text-muted hover:bg-background/45 hover:text-text'
+                        : 'border-transparent bg-transparent rounded-lg text-muted hover:bg-background/45 hover:text-text'
                     }`}
                   >
                     {collapsedConnectionMark(conn.engine) ? (

@@ -101,7 +101,11 @@ fn create_splash_window(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    WebviewWindowBuilder::new(app, SPLASH_WINDOW_LABEL, WebviewUrl::App("splash.html".into()))
+    let builder = WebviewWindowBuilder::new(
+        app,
+        SPLASH_WINDOW_LABEL,
+        WebviewUrl::App("splash.html".into()),
+    )
         .title("BlackTable")
         .inner_size(306.0, 264.0)
         .resizable(false)
@@ -109,10 +113,14 @@ fn create_splash_window(app: &AppHandle) -> Result<(), String> {
         .minimizable(false)
         .closable(false)
         .decorations(false)
-        .transparent(true)
         .center()
         .visible(true)
-        .always_on_top(true)
+        .always_on_top(true);
+
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.transparent(true);
+
+    builder
         .build()
         .map(|_| ())
         .map_err(|error| format!("Failed to create splash window: {error}"))
