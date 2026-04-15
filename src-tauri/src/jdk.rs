@@ -1,7 +1,7 @@
+use crate::cmd::background;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tauri::{AppHandle, Emitter};
 
 const JDK_DIR_NAME: &str = "jdk-bundled";
@@ -79,13 +79,13 @@ pub fn detect_jdk(sidecar_root: &Path) -> JdkStatus {
         let _ = javac; // JAVA_HOME has javac but no java — unusual, fall through
     }
 
-    match Command::new("java").arg("-version").output() {
+    match background("java").arg("-version").output() {
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             if let Some(version) = parse_java_version(&stderr) {
                 // Confirm javac is also reachable; otherwise it is a JRE, not a JDK.
                 let javac_ok = java_home_exe("javac").is_some()
-                    || Command::new("javac")
+                    || background("javac")
                         .arg("-version")
                         .output()
                         .map(|o| o.status.success())
@@ -153,7 +153,7 @@ fn bundled_javac_exe(sidecar_root: &Path) -> PathBuf {
 }
 
 fn read_java_version(java_exe: &Path) -> Option<String> {
-    let output = Command::new(java_exe).arg("-version").output().ok()?;
+    let output = background(java_exe).arg("-version").output().ok()?;
     // java -version writes to stderr
     parse_java_version(&String::from_utf8_lossy(&output.stderr))
 }
@@ -219,7 +219,7 @@ pub fn download_install_jdk(app: &AppHandle, sidecar_root: &Path) -> Result<(), 
         "Baixando JDK Eclipse Temurin 21... (pode demorar alguns minutos)",
     );
 
-    let curl_out = Command::new("curl")
+    let curl_out = background("curl")
         .args(["-fL", "--retry", "3", url, "-o"])
         .arg(&download_path)
         .output()
@@ -275,7 +275,7 @@ pub fn download_install_jdk(app: &AppHandle, sidecar_root: &Path) -> Result<(), 
 
 fn extract_jdk_archive(archive: &Path, dest: &Path) -> Result<(), String> {
     if cfg!(windows) {
-        let out = Command::new("powershell")
+        let out = background("powershell")
             .args(["-NoProfile", "-Command"])
             .arg(format!(
                 "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
@@ -292,7 +292,7 @@ fn extract_jdk_archive(archive: &Path, dest: &Path) -> Result<(), String> {
             ));
         }
     } else {
-        let out = Command::new("tar")
+        let out = background("tar")
             .arg("-xzf")
             .arg(archive)
             .arg("-C")
