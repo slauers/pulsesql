@@ -25,6 +25,9 @@ pub fn get_java_exe(sidecar_root: &Path) -> PathBuf {
     if bundled.exists() {
         return bundled;
     }
+    if let Some(p) = java_home_exe("java") {
+        return p;
+    }
     PathBuf::from("java")
 }
 
@@ -34,7 +37,22 @@ pub fn get_javac_exe(sidecar_root: &Path) -> PathBuf {
     if bundled.exists() {
         return bundled;
     }
+    if let Some(p) = java_home_exe("javac") {
+        return p;
+    }
     PathBuf::from("javac")
+}
+
+/// Resolves `{JAVA_HOME}/bin/<name>[.exe]` if the env var is set and the file exists.
+fn java_home_exe(name: &str) -> Option<PathBuf> {
+    let java_home = std::env::var("JAVA_HOME").ok()?;
+    let exe_name = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
+    let path = PathBuf::from(java_home).join("bin").join(exe_name);
+    path.exists().then_some(path)
 }
 
 /// Checks whether a usable JDK is available (bundled or system).
@@ -48,15 +66,38 @@ pub fn detect_jdk(sidecar_root: &Path) -> JdkStatus {
         };
     }
 
+    // Try JAVA_HOME first — on Windows the JDK installer adds only java.exe to the
+    // global PATH; javac lives in the JDK bin dir pointed to by JAVA_HOME.
+    if let Some(javac) = java_home_exe("javac") {
+        if let Some(java) = java_home_exe("java") {
+            return JdkStatus {
+                available: true,
+                version: read_java_version(&java),
+                source: "system".to_string(),
+            };
+        }
+        let _ = javac; // JAVA_HOME has javac but no java — unusual, fall through
+    }
+
     match Command::new("java").arg("-version").output() {
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             if let Some(version) = parse_java_version(&stderr) {
-                return JdkStatus {
-                    available: true,
-                    version: Some(version),
-                    source: "system".to_string(),
-                };
+                // Confirm javac is also reachable; otherwise it is a JRE, not a JDK.
+                let javac_ok = java_home_exe("javac").is_some()
+                    || Command::new("javac")
+                        .arg("-version")
+                        .output()
+                        .map(|o| o.status.success())
+                        .unwrap_or(false);
+
+                if javac_ok {
+                    return JdkStatus {
+                        available: true,
+                        version: Some(version),
+                        source: "system".to_string(),
+                    };
+                }
             }
             jdk_not_found()
         }
