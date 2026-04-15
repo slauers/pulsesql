@@ -1,11 +1,11 @@
+use crate::cmd::background;
 use crate::connection::types::{ConnectionConfig, OracleConnectionType};
 use crate::db::{ColumnDef, QueryColumnMeta, QueryResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs;
 use std::ffi::OsString;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 use std::time::{Instant, SystemTime};
 use tauri::{AppHandle, Manager};
@@ -156,6 +156,10 @@ pub async fn execute_query(
     })
 }
 
+pub fn sidecar_root() -> Result<PathBuf, String> {
+    oracle_sidecar_root()
+}
+
 pub fn init_sidecar_root(app: &AppHandle) -> Result<(), String> {
     let app_data_dir = app
         .path()
@@ -230,7 +234,8 @@ fn invoke_sidecar(
         &sidecar_root.join(format!("ojdbc11-{ORACLE_JDBC_VERSION}.jar")),
     );
 
-    let output = Command::new("java")
+    let java_exe = crate::jdk::get_java_exe(&sidecar_root);
+    let output = background(java_exe)
         .arg("-cp")
         .arg(classpath)
         .arg(ORACLE_JAVA_CLASS)
@@ -302,7 +307,8 @@ fn ensure_oracle_sidecar_compiled(sidecar_root: &Path, classes_dir: &Path) -> Re
 
     let classpath = sidecar_root.join(format!("ojdbc11-{ORACLE_JDBC_VERSION}.jar"));
 
-    let output = Command::new("javac")
+    let javac_exe = crate::jdk::get_javac_exe(sidecar_root);
+    let output = background(javac_exe)
         .arg("-cp")
         .arg(classpath)
         .arg("-d")
@@ -355,7 +361,7 @@ fn ensure_oracle_driver(sidecar_root: &Path) -> Result<(), String> {
 
     let temp_path = sidecar_root.join(format!("ojdbc11-{ORACLE_JDBC_VERSION}.jar.download"));
 
-    let output = Command::new("curl")
+    let output = background("curl")
         .arg("-fL")
         .arg(ORACLE_JDBC_URL)
         .arg("-o")
@@ -454,8 +460,8 @@ fn humanize_oracle_sidecar_error(message: &str) -> String {
         || lower.contains("failed to compile oracle jdbc sidecar")
     {
         return [
-            "Conexao Oracle requer Java/JDK instalado e disponivel para o aplicativo.",
-            "Instale um JDK e configure o macOS para encontrá-lo fora do terminal.",
+            "Java/JDK nao disponivel para o aplicativo.",
+            "Use o botao 'Instalar JDK' no formulario de conexao Oracle para instalar automaticamente.",
             "Detalhe tecnico:",
             normalized,
         ]
@@ -477,6 +483,6 @@ fn humanize_oracle_sidecar_error(message: &str) -> String {
 
 fn format_oracle_java_launch_error(action: &str, details: &str) -> String {
     format!(
-        "Nao foi possivel {action} o runtime Oracle porque o Java/JDK nao esta disponivel para o aplicativo. Detalhe tecnico: {details}"
+        "Java/JDK nao disponivel para {action} o runtime Oracle. Use o botao 'Instalar JDK' no formulario de conexao Oracle. Detalhe: {details}"
     )
 }

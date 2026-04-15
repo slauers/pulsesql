@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs ls *)",
+      "Bash(npx tsc *)",
+      "Bash(cmd *)",
+      "Bash(powershell *)",
+      "Bash(ls /c/Users/HeliksonRufino/scoop/shims/cargo*)",
+      "Bash(cargo check *)"
+    ]
+  }
+}
