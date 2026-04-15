@@ -26,6 +26,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/slauers/pulsesql/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

@@ -6,7 +6,9 @@
       "Bash(cmd *)",
       "Bash(powershell *)",
       "Bash(ls /c/Users/HeliksonRufino/scoop/shims/cargo*)",
-      "Bash(cargo check *)"
+      "Bash(cargo check *)",
+      "Bash(npx tauri *)",
+      "Bash(node_modules/.bin/tauri signer *)"
     ]
   }
 }

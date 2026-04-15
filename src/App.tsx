@@ -14,6 +14,7 @@ import { useUiPreferencesStore } from './store/uiPreferences';
 import { APP_THEMES, getThemeById } from './themes';
 import { translate, type AppLocale } from './i18n';
 import { LOCK_SPLASH_FOR_DEV } from './devFlags';
+import { UpdateNotifier, type UpdateInfo } from './features/updater/UpdateNotifier';
 
 function App() {
   const menuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -48,6 +49,7 @@ function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const [pendingUpdate, setPendingUpdate] = useState<UpdateInfo | null>(null);
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const activeTheme = useMemo(() => getThemeById(themeId), [themeId]);
 
@@ -124,6 +126,15 @@ function App() {
       await emitSplashProgress(100, translate(locale, 'splashReady'));
       await wait(120);
       await invokeSafely('reveal_main_window');
+
+      // Non-blocking update check — runs after the window is visible.
+      void invoke<UpdateInfo | null>('check_for_updates').then((update) => {
+        if (update) {
+          setPendingUpdate(update);
+        }
+      }).catch(() => {
+        // Updater not configured or network unavailable — ignore silently.
+      });
     };
 
     void runStartupSequence();
@@ -480,6 +491,9 @@ function App() {
           `${translate(locale, 'file')} > ${translate(locale, 'configuration')}: ${translate(locale, 'opensSystemConfiguration')}`,
         ]}
       />
+      {pendingUpdate ? (
+        <UpdateNotifier update={pendingUpdate} onDismiss={() => setPendingUpdate(null)} />
+      ) : null}
       <InfoDialog
         open={aboutOpen}
         locale={locale}

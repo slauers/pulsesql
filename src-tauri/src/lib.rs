@@ -1,5 +1,6 @@
 pub mod cmd;
 pub mod connection;
+pub mod updater;
 pub mod db;
 pub mod engines;
 pub mod history;
@@ -246,6 +247,8 @@ pub fn run() {
         })
         .manage(Mutex::new(SplashState::default()))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             greet,
             update_splash_progress,
@@ -266,7 +269,9 @@ pub fn run() {
             db::delete_query_history_item,
             db::clear_query_history,
             check_jdk_status,
-            download_install_jdk
+            download_install_jdk,
+            updater::check_for_updates,
+            updater::install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
