@@ -4,6 +4,7 @@ import { CheckCircle, Eye, EyeOff, LoaderCircle, XCircle } from 'lucide-react';
 import { createDefaultConnectionForm, ENGINE_DEFINITIONS } from './connection-engines';
 import { ConnectionConfig, DatabaseEngine, OracleConnectionType, PostgresSslMode, SshAuthMethod, useConnectionsStore } from '../../store/connections';
 import AppSelect from '../../components/ui/AppSelect';
+import JdkSetupBanner from './JdkSetupBanner';
 
 const ORACLE_DRIVER_PROPERTIES_PLACEHOLDER = [
   'oracle.net.disableOob=true',
@@ -242,6 +243,7 @@ export default function ConnectionForm({
 
         {currentEngine === 'oracle' ? (
           <div className="space-y-4">
+            <JdkSetupBanner />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="md:col-span-2">
                 <label className="block text-sm text-muted mb-1">

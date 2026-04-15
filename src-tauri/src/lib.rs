@@ -1,7 +1,9 @@
+pub mod cmd;
 pub mod connection;
 pub mod db;
 pub mod engines;
 pub mod history;
+pub mod jdk;
 pub mod ssh;
 
 use serde::Serialize;
@@ -197,6 +199,20 @@ fn finalize_startup(
     Ok(())
 }
 
+#[tauri::command]
+fn check_jdk_status() -> Result<jdk::JdkStatus, String> {
+    let sidecar_root = engines::oracle::sidecar_root()?;
+    Ok(jdk::detect_jdk(&sidecar_root))
+}
+
+#[tauri::command]
+async fn download_install_jdk(app: AppHandle) -> Result<(), String> {
+    let sidecar_root = engines::oracle::sidecar_root()?;
+    tokio::task::spawn_blocking(move || jdk::download_install_jdk(&app, &sidecar_root))
+        .await
+        .map_err(|e| format!("Instalacao falhou inesperadamente: {e}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -248,7 +264,9 @@ pub fn run() {
             db::execute_query,
             db::list_query_history,
             db::delete_query_history_item,
-            db::clear_query_history
+            db::clear_query_history,
+            check_jdk_status,
+            download_install_jdk
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
