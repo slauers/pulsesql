@@ -232,9 +232,14 @@ export default function ConnectionForm({
           <div>
             <label className="block text-sm text-muted mb-1">Port</label>
             <input
-              type="number"
-              value={formData.port}
-              onChange={(event) => updateField('port', Number(event.target.value))}
+              type="text"
+              inputMode="numeric"
+              value={formData.port !== undefined ? String(formData.port) : ''}
+              onChange={(event) => {
+                const val = event.target.value.replace(/[^0-9]/g, '');
+                setFormData((current) => ({ ...current, port: val === '' ? undefined : Number(val) }));
+              }}
+              placeholder={String(engineDefinition.defaultPort)}
               className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
               required
             />

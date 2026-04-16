@@ -769,20 +769,37 @@ function matchesShortcut(event: KeyboardEvent, shortcut: string) {
   const mainKey = parts[parts.length - 1];
   const modifiers = new Set(parts.slice(0, -1));
   const isMac = navigator.platform.toLowerCase().includes('mac');
-  const expectsCmdOrCtrl = modifiers.has('cmdorctrl') ? (isMac ? event.metaKey : event.ctrlKey) : !event.metaKey && !event.ctrlKey;
-  const expectsCtrl = modifiers.has('ctrl') ? event.ctrlKey : !modifiers.has('ctrl');
-  const expectsCmd = modifiers.has('cmd') ? event.metaKey : !modifiers.has('cmd');
-  const expectsShift = modifiers.has('shift') ? event.shiftKey : !modifiers.has('shift') || !event.shiftKey;
-  const expectsAlt = modifiers.has('alt') ? event.altKey : !modifiers.has('alt') || !event.altKey;
 
-  return (
-    expectsCmdOrCtrl &&
-    expectsCtrl &&
-    expectsCmd &&
-    expectsShift &&
-    expectsAlt &&
-    event.key.toLowerCase() === mainKey.toLowerCase()
-  );
+  const hasCmdOrCtrl = modifiers.has('cmdorctrl');
+  const hasCtrl = modifiers.has('ctrl');
+  const hasCmd = modifiers.has('cmd');
+
+  // CmdOrCtrl resolves to Cmd on Mac, Ctrl on other platforms
+  if (hasCmdOrCtrl) {
+    if (isMac ? !event.metaKey : !event.ctrlKey) return false;
+  }
+
+  // Ctrl — skip the absence check when cmdorctrl already claimed ctrl on Windows
+  if (hasCtrl) {
+    if (!event.ctrlKey) return false;
+  } else if (!hasCmdOrCtrl || isMac) {
+    if (event.ctrlKey) return false;
+  }
+
+  // Cmd/Meta — skip the absence check when cmdorctrl already claimed meta on Mac
+  if (hasCmd) {
+    if (!event.metaKey) return false;
+  } else if (!hasCmdOrCtrl || !isMac) {
+    if (event.metaKey) return false;
+  }
+
+  // Shift — must match exactly
+  if (modifiers.has('shift') ? !event.shiftKey : event.shiftKey) return false;
+
+  // Alt — must match exactly
+  if (modifiers.has('alt') ? !event.altKey : event.altKey) return false;
+
+  return event.key.toLowerCase() === mainKey.toLowerCase();
 }
 
 function toRgbChannels(color: string) {

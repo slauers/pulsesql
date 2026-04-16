@@ -159,7 +159,11 @@ function readConnections(): ConnectionConfig[] {
 }
 
 function writeConnections(connections: ConnectionConfig[]) {
-  localStorage.setItem(CONNECTIONS_STORAGE_KEY, JSON.stringify(connections));
+  try {
+    localStorage.setItem(CONNECTIONS_STORAGE_KEY, JSON.stringify(connections));
+  } catch (error) {
+    console.warn('[PulseSQL] Failed to persist connections — localStorage may be full:', error);
+  }
 }
 
 function readActiveConnectionId(): string | null {
@@ -168,12 +172,15 @@ function readActiveConnectionId(): string | null {
 }
 
 function writeActiveConnectionId(id: string | null) {
-  if (id) {
-    localStorage.setItem(ACTIVE_CONNECTION_STORAGE_KEY, id);
-    return;
+  try {
+    if (id) {
+      localStorage.setItem(ACTIVE_CONNECTION_STORAGE_KEY, id);
+    } else {
+      localStorage.removeItem(ACTIVE_CONNECTION_STORAGE_KEY);
+    }
+  } catch (error) {
+    console.warn('[PulseSQL] Failed to persist active connection id:', error);
   }
-
-  localStorage.removeItem(ACTIVE_CONNECTION_STORAGE_KEY);
 }
 
 function readFavoriteConnectionId(): string | null {
