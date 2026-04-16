@@ -192,6 +192,7 @@ fn finalize_startup(
     }
 
     if let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = main_window.maximize();
         let _ = main_window.show();
         if focus_main {
             let _ = main_window.set_focus();

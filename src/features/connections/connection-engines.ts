@@ -52,7 +52,7 @@ export function createDefaultConnectionForm(engine: DatabaseEngine = 'postgres')
           : 'Local Oracle',
     engine,
     host: definition.placeholderHost,
-    port: definition.defaultPort,
+    port: undefined,
     user: engine === 'postgres' ? 'postgres' : engine === 'mysql' ? 'root' : 'system',
     database: definition.defaultDatabase,
     connectTimeoutSeconds: 10,
