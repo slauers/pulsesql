@@ -33,20 +33,31 @@ public class OracleJdbcRunner {
 
     try {
       switch (command) {
-        case "test" -> {
+        case "test":
           testConnection(request);
           writeSuccess(responsePath, "{\"message\":\"Connection successful\"}");
-        }
-        case "open" -> {
+          break;
+        case "open":
           testConnection(request);
           writeSuccess(responsePath, "{\"message\":\"Connection opened\"}");
-        }
-        case "listDatabases" -> writeSuccess(responsePath, listItems(request, "SELECT SYS_CONTEXT('USERENV', 'DB_NAME') AS DB_NAME FROM dual"));
-        case "listSchemas" -> writeSuccess(responsePath, listItems(request, "SELECT username FROM all_users WHERE username NOT IN ('SYS', 'SYSTEM') ORDER BY username"));
-        case "listTables" -> writeSuccess(responsePath, listItems(request, "SELECT table_name FROM all_tables WHERE owner = '" + escapeSql(request.schema) + "' ORDER BY table_name"));
-        case "listColumns" -> writeSuccess(responsePath, listColumns(request));
-        case "executeQuery" -> writeSuccess(responsePath, executeQuery(request));
-        default -> throw new IllegalArgumentException("Unsupported Oracle sidecar command: " + command);
+          break;
+        case "listDatabases":
+          writeSuccess(responsePath, listItems(request, "SELECT SYS_CONTEXT('USERENV', 'DB_NAME') AS DB_NAME FROM dual"));
+          break;
+        case "listSchemas":
+          writeSuccess(responsePath, listItems(request, "SELECT username FROM all_users WHERE username NOT IN ('SYS', 'SYSTEM') ORDER BY username"));
+          break;
+        case "listTables":
+          writeSuccess(responsePath, listItems(request, "SELECT table_name FROM all_tables WHERE owner = '" + escapeSql(request.schema) + "' ORDER BY table_name"));
+          break;
+        case "listColumns":
+          writeSuccess(responsePath, listColumns(request));
+          break;
+        case "executeQuery":
+          writeSuccess(responsePath, executeQuery(request));
+          break;
+        default:
+          throw new IllegalArgumentException("Unsupported Oracle sidecar command: " + command);
       }
     } catch (Exception error) {
       writeError(responsePath, error);

@@ -6,11 +6,17 @@ use tauri::{AppHandle, Emitter};
 
 const JDK_DIR_NAME: &str = "jdk-bundled";
 
+/// Minimum Java major version required to compile and run the Oracle JDBC sidecar.
+/// - ojdbc11 requires Java 11+ at runtime.
+/// - OracleJdbcRunner.java uses Path.of / Files.readString which require Java 11+.
+const ORACLE_MIN_JAVA_VERSION: u32 = 11;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct JdkStatus {
     pub available: bool,
     pub version: Option<String>,
     pub source: String, // "bundled" | "system" | "none"
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -63,6 +69,7 @@ pub fn detect_jdk(sidecar_root: &Path) -> JdkStatus {
             available: true,
             version: read_java_version(&bundled),
             source: "bundled".to_string(),
+            reason: None,
         };
     }
 
@@ -70,10 +77,18 @@ pub fn detect_jdk(sidecar_root: &Path) -> JdkStatus {
     // global PATH; javac lives in the JDK bin dir pointed to by JAVA_HOME.
     if let Some(javac) = java_home_exe("javac") {
         if let Some(java) = java_home_exe("java") {
+            let version = read_java_version(&java);
+            if let Some(ref v) = version {
+                let major = parse_java_major_version(v).unwrap_or(0);
+                if major < ORACLE_MIN_JAVA_VERSION {
+                    return jdk_version_too_old(v.clone());
+                }
+            }
             return JdkStatus {
                 available: true,
-                version: read_java_version(&java),
+                version,
                 source: "system".to_string(),
+                reason: None,
             };
         }
         let _ = javac; // JAVA_HOME has javac but no java — unusual, fall through
@@ -83,6 +98,11 @@ pub fn detect_jdk(sidecar_root: &Path) -> JdkStatus {
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             if let Some(version) = parse_java_version(&stderr) {
+                let major = parse_java_major_version(&version).unwrap_or(0);
+                if major < ORACLE_MIN_JAVA_VERSION {
+                    return jdk_version_too_old(version);
+                }
+
                 // Confirm javac is also reachable; otherwise it is a JRE, not a JDK.
                 let javac_ok = java_home_exe("javac").is_some()
                     || background("javac")
@@ -96,6 +116,7 @@ pub fn detect_jdk(sidecar_root: &Path) -> JdkStatus {
                         available: true,
                         version: Some(version),
                         source: "system".to_string(),
+                        reason: None,
                     };
                 }
             }
@@ -110,6 +131,31 @@ fn jdk_not_found() -> JdkStatus {
         available: false,
         version: None,
         source: "none".to_string(),
+        reason: None,
+    }
+}
+
+fn jdk_version_too_old(version: String) -> JdkStatus {
+    JdkStatus {
+        available: false,
+        version: Some(version.clone()),
+        source: "system".to_string(),
+        reason: Some(format!(
+            "Java {ORACLE_MIN_JAVA_VERSION}+ necessário (detectado: {version}). Instale o JDK 21 automaticamente."
+        )),
+    }
+}
+
+/// Extracts the Java major version from a version string.
+/// Handles both legacy format ("1.8.0_232" → 8) and modern format ("21.0.5" → 21).
+fn parse_java_major_version(version: &str) -> Option<u32> {
+    let mut parts = version.splitn(3, '.');
+    let first: u32 = parts.next()?.parse().ok()?;
+    if first == 1 {
+        // Legacy scheme: 1.X.Y → major is X
+        parts.next()?.parse().ok()
+    } else {
+        Some(first)
     }
 }
 
