@@ -45,7 +45,7 @@ https://github.com/slauers/pulsesql/releases
 
 ## Screenshots
 
-![alt text](image.png)
+![PulseSQL workspace — query editor and result grid](docs/assets/screenshot-workspace.png)
 
 ---
 
