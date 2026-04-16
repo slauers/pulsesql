@@ -45,7 +45,7 @@ https://github.com/slauers/pulsesql/releases
 
 ## Screenshots
 
-*(add your screenshots here - the ones you sent are already good enough)*
+![alt text](image.png)
 
 ---
 
