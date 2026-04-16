@@ -24,3 +24,9 @@ dist-ssr
 *.sw?
 pulsesql.key
 pulsesql.key.pub
+
+# Local agent/AI files
+CLAUDE.md
+AGENTS.md
+.claude/
+.agents/
