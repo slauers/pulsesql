@@ -40,9 +40,7 @@
 
   html[data-splash='true'],
   body[data-splash='true'] {
-    background:
-      radial-gradient(circle at top center, rgba(43, 211, 201, 0.12), transparent 34%),
-      linear-gradient(180deg, #0d1218 0%, #0b0f14 52%, #090d11 100%);
+    background: transparent;
   }
 
   body[data-splash='true'] {
