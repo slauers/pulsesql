@@ -6,8 +6,9 @@
     <title>PulseSQL Splash</title>
     <style>
       html,
-      body {
-        height: 100%;
+      body,
+      #root {
+        background: transparent !important;
       }
 
       body {
@@ -16,15 +17,10 @@
         align-items: center;
         justify-content: center;
         overflow: hidden;
-        background: transparent;
       }
 
       #root {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: auto;
-        height: auto;
+        display: contents;
       }
     </style>
     <script type="module" src="/src/splash.tsx"></script>
