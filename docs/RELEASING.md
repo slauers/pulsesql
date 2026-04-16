@@ -1,81 +1,67 @@
 # Releasing PulseSQL
 
-This project publishes desktop builds through GitHub Releases.
+Desktop builds are published through GitHub Releases via GitHub Actions.
 
-## Current targets
+## Targets
 
+- macOS (Apple Silicon)
 - Windows
-- macOS
-
-Linux is intentionally not part of the release workflow right now.
+- Linux
 
 ## Versioning
 
-Keep the version aligned in these files:
+Keep the version in sync across these three files before tagging:
 
 - `package.json`
 - `src-tauri/tauri.conf.json`
 - `src-tauri/Cargo.toml`
 
-Use semantic versioning:
-
-- `0.1.0` for the first public release
-- `0.1.1` for fixes
-- `0.2.0` for new features
-- `1.0.0` when the app is considered stable
-
-Git tags should use the `v` prefix, for example:
-
-```bash
-git tag v0.1.0
-```
+Use semantic versioning: `0.1.x` for fixes, `0.x.0` for new features, `1.0.0` when stable.
 
 ## Release flow
 
 1. Update the version in the three files above.
 2. Commit the version bump.
-3. Push the branch.
-4. Create and push a tag:
+3. Push the branch and open a PR into `main`.
+4. Merge the PR.
+5. Create and push a tag from `main`:
 
 ```bash
-git tag v0.1.0
-git push origin main
-git push origin v0.1.0
+git tag v0.1.x
+git push origin v0.1.x
 ```
 
-5. Wait for the GitHub Actions workflow to finish.
-6. Open the draft release on GitHub.
-7. Review the attached artifacts and release notes.
-8. Publish the release.
+6. GitHub Actions builds macOS and Windows bundles and creates a draft release.
+7. Open the draft release on GitHub, review the artifacts, and publish.
 
-## GitHub Actions behavior
+Once published, users with older versions will see the update notification automatically on next app launch.
 
-The release workflow is triggered by tags matching:
+## Signing
 
-```text
-v*
+Binaries are signed with a Tauri minisign keypair.
+
+- The **public key** is stored in `src-tauri/tauri.conf.json` under `plugins.updater.pubkey`.
+- The **private key** is stored in the GitHub repository secret `TAURI_SIGNING_PRIVATE_KEY`.
+
+If you need to regenerate the keypair:
+
+```bash
+npm run tauri -- signer generate -w pulsesql.key --no-password
 ```
 
-It creates a draft GitHub Release and uploads the generated Windows and macOS bundles.
+Update the pubkey in `tauri.conf.json` and the private key in GitHub Secrets before the next release.
 
-## Planned package managers
+## Auto-update endpoint
 
-These are not wired up yet:
+The updater checks:
 
-- `winget`
-- `brew`
+```
+https://github.com/slauers/pulsesql/releases/latest/download/latest.json
+```
 
-Recommended order:
+This file is generated automatically by the CI when `includeUpdaterJson: true` is set in the workflow. It only becomes accessible after the release is **published** (not while it is a draft).
 
-1. Publish GitHub Releases first
-2. Add `winget`
-3. Add Homebrew cask support
+## Planned distribution
 
-## Signing and notarization
-
-Unsigned builds are fine for early releases, but later you will likely want:
-
-- Windows code signing certificate
-- Apple Developer signing and notarization for macOS
-
-Those steps require external credentials and are not automated in this repository yet.
+- `winget` — not wired up yet
+- Homebrew cask — not wired up yet
