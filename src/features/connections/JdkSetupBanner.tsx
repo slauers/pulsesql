@@ -7,6 +7,7 @@ interface JdkStatus {
   available: boolean;
   version: string | null;
   source: string;
+  reason: string | null;
 }
 
 interface JdkProgressPayload {
@@ -74,10 +75,13 @@ export default function JdkSetupBanner() {
       <div className="flex items-start gap-2.5">
         <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-400" />
         <div className="flex-1 min-w-0">
-          <div className="font-medium text-amber-300 mb-0.5">Java/JDK nao encontrado</div>
+          <div className="font-medium text-amber-300 mb-0.5">
+            {status.reason ? 'Java incompativel' : 'Java/JDK nao encontrado'}
+          </div>
           <p className="text-xs text-amber-400/75 leading-relaxed">
-            Conexoes Oracle requerem Java. O PulseSQL pode baixar e instalar o JDK Eclipse
-            Temurin&nbsp;21 automaticamente.
+            {status.reason
+              ? status.reason
+              : 'Conexoes Oracle requerem Java. O PulseSQL pode baixar e instalar o JDK Eclipse Temurin\u00a021 automaticamente.'}
           </p>
 
           {installing ? (

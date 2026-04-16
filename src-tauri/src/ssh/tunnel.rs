@@ -113,9 +113,21 @@ pub fn start_ssh_tunnel(config: &ConnectionConfig) -> Result<SshTunnelHandle, St
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
 
     let join_handle = thread::spawn(move || {
+        let mut last_keepalive = std::time::Instant::now();
+
         loop {
             if stop_rx.try_recv().is_ok() {
                 break;
+            }
+
+            // libssh2 does not send keepalives automatically — the application must
+            // call keepalive_send() at the configured interval to prevent the SSH
+            // server (or intermediate NAT/firewall) from closing the idle connection.
+            if last_keepalive.elapsed().as_secs() >= SSH_KEEPALIVE_INTERVAL_SECS as u64 {
+                if let Err(error) = session.keepalive_send() {
+                    eprintln!("SSH keepalive failed: {error}");
+                }
+                last_keepalive = std::time::Instant::now();
             }
 
             match listener.accept() {
