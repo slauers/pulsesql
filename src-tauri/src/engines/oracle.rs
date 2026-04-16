@@ -478,6 +478,19 @@ fn humanize_oracle_sidecar_error(message: &str) -> String {
         .join(" ");
     }
 
+    // Java version too old to load ojdbc11 (requires Java 11+)
+    if lower.contains("unsupported class file major version")
+        || lower.contains("has been compiled by a more recent version")
+    {
+        return [
+            "Versao do Java incompativel com o driver Oracle (ojdbc11 requer Java 11+).",
+            "Use o botao 'Instalar JDK' para instalar o JDK Eclipse Temurin 21 automaticamente.",
+            "Detalhe tecnico:",
+            normalized,
+        ]
+        .join(" ");
+    }
+
     normalized.to_string()
 }
 
