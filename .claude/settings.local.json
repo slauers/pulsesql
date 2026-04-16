@@ -8,7 +8,12 @@
       "Bash(ls /c/Users/HeliksonRufino/scoop/shims/cargo*)",
       "Bash(cargo check *)",
       "Bash(npx tauri *)",
-      "Bash(node_modules/.bin/tauri signer *)"
+      "Bash(node_modules/.bin/tauri signer *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git tag *)",
+      "Bash(git push *)",
+      "Bash(npm run *)"
     ]
   }
 }
