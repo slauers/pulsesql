@@ -3,23 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PulseSQL — Fast SQL Workstation for Developers</title>
-  <meta name="description" content="A lightweight SQL workstation built for speed, clarity, and flow. Multi-connection, fast execution, clean interface." />
+  <title>PulseSQL — SQL that gets out of your way</title>
+  <meta
+    name="description"
+    content="PulseSQL is a lightweight SQL workstation built for speed, clarity, and real developer workflows. Fast query execution, schema explorer, autocomplete, logs, and safe execution warnings."
+  />
   <meta property="og:title" content="PulseSQL" />
-  <meta property="og:description" content="A lightweight SQL workstation built for speed, clarity, and flow." />
+  <meta property="og:description" content="SQL that gets out of your way." />
   <meta property="og:type" content="website" />
+
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
       --bg:        #0e0e10;
       --surface:   #18181c;
+      --surface-2: #141418;
       --border:    #2a2a30;
       --text:      #e8e8ec;
       --muted:     #888896;
+      --muted-2:   #9a9aa8;
       --teal:      #2dd4bf;
       --teal-dim:  #1a9e8f;
       --purple:    #a78bfa;
+      --shadow:    0 28px 80px rgba(0,0,0,0.55);
     }
 
     html { scroll-behavior: smooth; }
@@ -113,6 +120,8 @@
       font-weight: 500;
       letter-spacing: 0.02em;
       margin-bottom: 2rem;
+      position: relative;
+      z-index: 1;
     }
 
     .badge-dot {
@@ -124,16 +133,18 @@
 
     @keyframes pulse {
       0%, 100% { opacity: 1; transform: scale(1); }
-      50%       { opacity: 0.4; transform: scale(0.85); }
+      50%      { opacity: 0.4; transform: scale(0.85); }
     }
 
     h1 {
-      font-size: clamp(2.5rem, 6vw, 4.5rem);
+      font-size: clamp(2.9rem, 6vw, 5rem);
       font-weight: 700;
-      letter-spacing: -0.03em;
-      line-height: 1.1;
-      margin-bottom: 1.5rem;
-      max-width: 800px;
+      letter-spacing: -0.04em;
+      line-height: 1.02;
+      margin-bottom: 1.2rem;
+      max-width: 900px;
+      position: relative;
+      z-index: 1;
     }
 
     h1 span {
@@ -144,11 +155,23 @@
     }
 
     .hero-sub {
-      font-size: clamp(1rem, 2.5vw, 1.2rem);
+      font-size: clamp(1rem, 2.2vw, 1.2rem);
+      color: var(--muted-2);
+      max-width: 660px;
+      margin-bottom: 1.25rem;
+      line-height: 1.75;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-sub-2 {
+      font-size: 0.95rem;
       color: var(--muted);
-      max-width: 520px;
-      margin-bottom: 2.75rem;
-      line-height: 1.7;
+      max-width: 720px;
+      margin-bottom: 2.5rem;
+      line-height: 1.75;
+      position: relative;
+      z-index: 1;
     }
 
     .btn-group {
@@ -157,13 +180,15 @@
       gap: 0.75rem;
       justify-content: center;
       margin-bottom: 1rem;
+      position: relative;
+      z-index: 1;
     }
 
     .btn {
       display: inline-flex;
       align-items: center;
       gap: 0.5rem;
-      padding: 0.7rem 1.5rem;
+      padding: 0.78rem 1.5rem;
       border-radius: 10px;
       font-size: 0.9rem;
       font-weight: 600;
@@ -175,164 +200,95 @@
     .btn-primary {
       background: var(--teal);
       color: #0a0a0c;
+      box-shadow: 0 0 0 1px rgba(45,212,191,0.05), 0 10px 30px rgba(45,212,191,0.18);
     }
-    .btn-primary:hover { background: #25c0ae; transform: translateY(-1px); }
+
+    .btn-primary:hover {
+      background: #25c0ae;
+      transform: translateY(-1px);
+    }
 
     .btn-secondary {
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
     }
-    .btn-secondary:hover { border-color: #444450; transform: translateY(-1px); }
 
-    .hero-note {
-      font-size: 0.78rem;
-      color: var(--muted);
+    .btn-secondary:hover {
+      border-color: #444450;
+      transform: translateY(-1px);
+      background: #1d1d22;
     }
 
-    /* ── SCREEN MOCKUP ── */
+    .hero-note {
+      font-size: 0.8rem;
+      color: var(--muted);
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-proof {
+      margin-top: 1rem;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.6rem;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-pill {
+      padding: 0.38rem 0.75rem;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      color: var(--muted-2);
+      font-size: 0.75rem;
+    }
+
+    /* ── SCREENSHOT / MOCKUP ── */
     .mockup-wrap {
       width: 100%;
-      max-width: 900px;
-      margin: 4rem auto 0;
+      max-width: 1040px;
+      margin: 4.5rem auto 0;
       position: relative;
+      z-index: 1;
+      padding: 20px;
     }
 
     .mockup-wrap::before {
       content: "";
       position: absolute;
-      inset: -2px;
-      border-radius: 14px;
-      background: linear-gradient(135deg, rgba(45,212,191,0.2), rgba(167,139,250,0.1), transparent 60%);
+      inset: -8px -10px -14px -10px;
+      border-radius: 28px;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(45,212,191,0.24), transparent 30%),
+        radial-gradient(circle at 80% 20%, rgba(167,139,250,0.18), transparent 28%),
+        radial-gradient(circle at 50% 100%, rgba(45,212,191,0.12), transparent 40%);
+      filter: blur(34px);
       z-index: 0;
+      pointer-events: none;
     }
 
     .mockup {
       position: relative;
       z-index: 1;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
+      background: rgba(20, 20, 24, 0.35);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 18px;
       overflow: hidden;
-      box-shadow: 0 32px 80px rgba(0,0,0,0.6);
+      box-shadow:
+        0 30px 90px rgba(0,0,0,0.58),
+        0 0 0 1px rgba(255,255,255,0.02) inset;
+      padding: 10px;
+      backdrop-filter: blur(8px);
     }
 
-    .mockup-bar {
-      background: #111114;
-      padding: 0.75rem 1rem;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .dot { width: 11px; height: 11px; border-radius: 50%; }
-    .dot-r { background: #ff5f57; }
-    .dot-y { background: #febc2e; }
-    .dot-g { background: #28c840; }
-
-    .mockup-tabs {
-      display: flex;
-      gap: 0;
-      margin-left: 1rem;
-      font-size: 0.75rem;
-    }
-
-    .tab {
-      padding: 0.25rem 1rem;
-      border-radius: 6px 6px 0 0;
-      color: var(--muted);
-      border: 1px solid transparent;
-    }
-
-    .tab.active {
-      background: var(--surface);
-      color: var(--text);
-      border-color: var(--border);
-      border-bottom-color: var(--surface);
-    }
-
-    .mockup-body {
-      display: grid;
-      grid-template-columns: 200px 1fr;
-      min-height: 320px;
-    }
-
-    .mockup-sidebar {
-      background: #111114;
-      border-right: 1px solid var(--border);
-      padding: 1rem 0;
-      font-size: 0.72rem;
-    }
-
-    .sidebar-section {
-      padding: 0.25rem 1rem;
-      color: var(--muted);
-      font-size: 0.65rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-top: 0.75rem;
-    }
-
-    .sidebar-item {
-      padding: 0.35rem 1rem;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      color: var(--muted);
-      font-size: 0.75rem;
-    }
-
-    .sidebar-item.active {
-      background: rgba(45,212,191,0.08);
-      color: var(--teal);
-      border-left: 2px solid var(--teal);
-    }
-
-    .sidebar-icon {
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: var(--border);
-    }
-
-    .sidebar-icon.connected { background: #4ade80; }
-
-    .mockup-editor {
-      display: flex;
-      flex-direction: column;
-    }
-
-    .editor-area {
-      flex: 1;
-      padding: 1.25rem 1.5rem;
-      font-family: "SF Mono", "Fira Code", monospace;
-      font-size: 0.78rem;
-      line-height: 1.9;
-      color: var(--muted);
-    }
-
-    .kw  { color: var(--purple); }
-    .fn  { color: var(--teal); }
-    .str { color: #fb923c; }
-    .cm  { color: #555560; }
-
-    .result-bar {
-      border-top: 1px solid var(--border);
-      background: #111114;
-      padding: 0.4rem 1.5rem;
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      font-size: 0.7rem;
-      color: var(--muted);
-    }
-
-    .result-pill {
-      background: rgba(45,212,191,0.1);
-      color: var(--teal);
-      padding: 0.15rem 0.6rem;
-      border-radius: 99px;
-      font-size: 0.68rem;
+    .mockup img {
+      width: 100%;
+      display: block;
+      border-radius: 12px;
+      background: #0f1115;
     }
 
     /* ── FEATURES ── */
@@ -352,18 +308,18 @@
     }
 
     .section-title {
-      font-size: clamp(1.75rem, 4vw, 2.5rem);
+      font-size: clamp(1.85rem, 4vw, 2.7rem);
       font-weight: 700;
-      letter-spacing: -0.025em;
-      line-height: 1.2;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
       margin-bottom: 1rem;
     }
 
     .section-sub {
       color: var(--muted);
-      max-width: 480px;
+      max-width: 620px;
       margin-bottom: 3.5rem;
-      line-height: 1.7;
+      line-height: 1.8;
     }
 
     .features-grid {
@@ -399,13 +355,13 @@
     .feature-title {
       font-size: 0.95rem;
       font-weight: 600;
-      margin-bottom: 0.4rem;
+      margin-bottom: 0.45rem;
     }
 
     .feature-desc {
       font-size: 0.85rem;
       color: var(--muted);
-      line-height: 1.6;
+      line-height: 1.68;
     }
 
     /* ── PHILOSOPHY ── */
@@ -417,7 +373,7 @@
     }
 
     .philosophy-inner {
-      max-width: 800px;
+      max-width: 860px;
       margin: 0 auto;
       text-align: center;
     }
@@ -434,11 +390,6 @@
       flex-direction: column;
       align-items: center;
       gap: 0.5rem;
-    }
-
-    .principle-vs {
-      font-size: 0.75rem;
-      color: var(--muted);
     }
 
     .principle-main {
@@ -476,19 +427,23 @@
       pointer-events: none;
     }
 
-    .download-inner { max-width: 560px; margin: 0 auto; position: relative; }
+    .download-inner {
+      max-width: 640px;
+      margin: 0 auto;
+      position: relative;
+    }
 
     .download h2 {
-      font-size: clamp(1.75rem, 4vw, 2.5rem);
+      font-size: clamp(1.9rem, 4vw, 2.7rem);
       font-weight: 700;
-      letter-spacing: -0.025em;
+      letter-spacing: -0.03em;
       margin-bottom: 1rem;
     }
 
     .download p {
       color: var(--muted);
       margin-bottom: 2.5rem;
-      line-height: 1.7;
+      line-height: 1.8;
     }
 
     .platform-cards {
@@ -508,7 +463,7 @@
       flex-direction: column;
       align-items: center;
       gap: 0.6rem;
-      min-width: 150px;
+      min-width: 170px;
       transition: all 0.15s;
       cursor: pointer;
     }
@@ -523,16 +478,22 @@
     .platform-card:hover svg { color: var(--teal); }
 
     .platform-name {
-      font-size: 0.85rem;
+      font-size: 0.9rem;
       font-weight: 600;
     }
 
     .platform-ext {
-      font-size: 0.72rem;
+      font-size: 0.74rem;
       color: var(--muted);
     }
 
     .version-note {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .download-meta {
+      margin-top: 1rem;
       font-size: 0.78rem;
       color: var(--muted);
     }
@@ -563,6 +524,7 @@
     .footer-links {
       display: flex;
       gap: 1.5rem;
+      flex-wrap: wrap;
     }
 
     .footer-links a:hover { color: var(--text); }
@@ -571,8 +533,8 @@
     @media (max-width: 640px) {
       nav { padding: 0 1rem; }
       .nav-links { gap: 1rem; }
-      .mockup-body { grid-template-columns: 1fr; }
-      .mockup-sidebar { display: none; }
+      .nav-links a:not(.gh-link) { display: none; }
+      .section, .philosophy, .download { padding-left: 1rem; padding-right: 1rem; }
     }
   </style>
 </head>
@@ -602,14 +564,17 @@
 <section class="hero">
   <div class="badge">
     <span class="badge-dot"></span>
-    v0.1.3 — now with auto-update
+    Free & open source
   </div>
 
-  <h1>A SQL workstation<br/>built for <span>developer flow</span></h1>
+  <h1>Stop fighting your <span>SQL client</span>.</h1>
 
   <p class="hero-sub">
-    Fast query execution, clean result grids, multi-connection workspace.
-    No bloat. No distractions. Just you and your database.
+    PulseSQL is a lightweight SQL workstation built for speed, clarity, and focused database work.
+  </p>
+
+  <p class="hero-sub-2">
+    Fast query execution, schema-aware autocomplete, clean result grids, and multi-connection workflows — without the weight and friction of traditional database tools.
   </p>
 
   <div class="btn-group">
@@ -617,7 +582,7 @@
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
       </svg>
-      Download free
+      Download latest release
     </a>
     <a href="https://github.com/slauers/pulsesql" target="_blank" rel="noopener" class="btn btn-secondary">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
@@ -626,12 +591,19 @@
       View on GitHub
     </a>
   </div>
-  <p class="hero-note">macOS · Windows · Free &amp; open source</p>
+
+  <p class="hero-note">Windows · macOS · Linux · Free &amp; open source</p>
+
+  <div class="hero-proof">
+    <span class="hero-pill">PostgreSQL support</span>
+    <span class="hero-pill">Oracle support</span>
+    <span class="hero-pill">Auto-update built in</span>
+  </div>
 
   <!-- APP SCREENSHOT -->
   <div class="mockup-wrap">
     <div class="mockup">
-      <img src="assets/screenshot-workspace.png" alt="PulseSQL workspace" style="width:100%;display:block;border-radius:11px;" />
+      <img src="assets/screenshot-workspace.png" alt="PulseSQL workspace" />
     </div>
   </div>
 </section>
@@ -640,7 +612,9 @@
 <section class="section" id="features">
   <div class="section-label">Features</div>
   <h2 class="section-title">Everything you need,<br/>nothing you don't</h2>
-  <p class="section-sub">Built around real workflows — writing queries, inspecting data, and switching contexts without losing momentum.</p>
+  <p class="section-sub">
+    Built around real workflows: connecting fast, exploring schemas, writing queries, inspecting results, and staying in context without wrestling the tool.
+  </p>
 
   <div class="features-grid">
     <div class="feature-card">
@@ -650,8 +624,9 @@
         </svg>
       </div>
       <div class="feature-title">Multi-tab query editor</div>
-      <div class="feature-desc">Open multiple queries side by side. Monaco-powered editor with SQL syntax highlighting and table autocomplete.</div>
+      <div class="feature-desc">Write and switch between queries without losing flow. Monaco-powered editing with syntax highlighting and table autocomplete built in.</div>
     </div>
+
     <div class="feature-card">
       <div class="feature-icon">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -659,8 +634,9 @@
         </svg>
       </div>
       <div class="feature-title">Multi-connection workspace</div>
-      <div class="feature-desc">Connect to PostgreSQL, MySQL, and Oracle simultaneously. Switch between databases without closing anything.</div>
+      <div class="feature-desc">Work across databases without closing tabs or reconnecting all day like it’s some kind of ritual punishment.</div>
     </div>
+
     <div class="feature-card">
       <div class="feature-icon">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -668,8 +644,9 @@
         </svg>
       </div>
       <div class="feature-title">Fast result grid</div>
-      <div class="feature-desc">Virtualized table renders thousands of rows instantly. Column resizing, filtering, and copy support built in.</div>
+      <div class="feature-desc">Inspect results quickly with filtering, export, and a layout designed to stay readable instead of collapsing into UI soup.</div>
     </div>
+
     <div class="feature-card">
       <div class="feature-icon">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -677,25 +654,27 @@
         </svg>
       </div>
       <div class="feature-title">Schema explorer</div>
-      <div class="feature-desc">Browse schemas, tables, and columns without leaving your query. Metadata cached per connection for instant access.</div>
+      <div class="feature-desc">Browse schemas, tables, and columns with instant access to metadata, so you spend less time guessing and more time writing SQL.</div>
     </div>
+
     <div class="feature-card">
       <div class="feature-icon">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
         </svg>
       </div>
-      <div class="feature-title">SSH tunneling</div>
-      <div class="feature-desc">Connect to databases behind a jump host. First-class SSH tunnel support built directly into the connection manager.</div>
+      <div class="feature-title">Safe execution warnings</div>
+      <div class="feature-desc">PulseSQL warns before risky operations, because “I thought it had a WHERE” is not a recovery strategy.</div>
     </div>
+
     <div class="feature-card">
       <div class="feature-icon">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
         </svg>
       </div>
-      <div class="feature-title">Query history</div>
-      <div class="feature-desc">Every query is saved automatically. Search, filter by connection, and re-run past queries in one click.</div>
+      <div class="feature-title">Connection logs & history</div>
+      <div class="feature-desc">Track what happened, reconnect with confidence, and bring old queries back without pretending you’ll remember them later.</div>
     </div>
   </div>
 </section>
@@ -705,8 +684,8 @@
   <div class="philosophy-inner">
     <div class="section-label" style="text-align:center">Philosophy</div>
     <h2 class="section-title">Designed with one goal:<br/>stay in the flow</h2>
-    <p style="color:var(--muted);line-height:1.7;margin:0 auto;max-width:440px">
-      Most database tools try to do everything. PulseSQL does three things well — write queries, inspect data, switch contexts fast.
+    <p style="color:var(--muted);line-height:1.75;margin:0 auto;max-width:560px">
+      Most database tools try to do everything at once. PulseSQL focuses on the workflows developers repeat every day: write queries, inspect data, and switch contexts fast.
     </p>
     <div class="principles">
       <div class="principle">
@@ -733,7 +712,7 @@
   <div class="download-inner">
     <div class="section-label" style="display:inline-block;margin-bottom:0.75rem">Download</div>
     <h2>Get PulseSQL</h2>
-    <p>Free and open source. No account required. Auto-updates built in.</p>
+    <p>Free and open source. No account wall. No weird onboarding ceremony. Just download it and get to work.</p>
 
     <div class="platform-cards">
       <a href="https://github.com/slauers/pulsesql/releases/latest" class="platform-card">
@@ -741,17 +720,28 @@
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M8 12h8M12 8l4 4-4 4"/>
         </svg>
         <div class="platform-name">macOS</div>
-        <div class="platform-ext">.dmg — Apple Silicon</div>
+        <div class="platform-ext">DMG installer</div>
       </a>
+
       <a href="https://github.com/slauers/pulsesql/releases/latest" class="platform-card">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
           <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
         </svg>
         <div class="platform-name">Windows</div>
-        <div class="platform-ext">.msi installer</div>
+        <div class="platform-ext">MSI installer</div>
+      </a>
+
+      <a href="https://github.com/slauers/pulsesql/releases/latest" class="platform-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M14.62 8.35c-.2-.62-.77-1.05-1.42-1.1-.69-.05-1.37.28-1.76.86-.39-.58-1.07-.91-1.76-.86-.65.05-1.22.48-1.42 1.1-.27.84.03 1.77.74 2.3.31.24.64.45.98.64-.34.19-.67.4-.98.64-.71.53-1.01 1.46-.74 2.3.2.62.77 1.05 1.42 1.1.69.05 1.37-.28 1.76-.86.39.58 1.07.91 1.76.86.65-.05 1.22-.48 1.42-1.1.27-.84-.03-1.77-.74-2.3-.31-.24-.64-.45-.98-.64.34-.19.67-.4.98-.64.71-.53 1.01-1.46.74-2.3ZM19 4l-1.26 2.75A9 9 0 1 1 6.27 17.74L4 19l.79-2.26A9 9 0 0 1 19 4Z"/>
+        </svg>
+        <div class="platform-name">Linux</div>
+        <div class="platform-ext">AppImage / tar.gz</div>
       </a>
     </div>
-    <p class="version-note">Latest release on <a href="https://github.com/slauers/pulsesql/releases" style="color:var(--teal)">GitHub Releases</a></p>
+
+    <p class="version-note">Latest version available on <a href="https://github.com/slauers/pulsesql/releases" style="color:var(--teal)">GitHub Releases</a></p>
+    <p class="download-meta">Built for developers who got tired of slow SQL tools.</p>
   </div>
 </section>
 
