@@ -17,8 +17,6 @@ jobs:
         include:
           - platform: macos-latest
             args: "--target aarch64-apple-darwin"
-          - platform: macos-13
-            args: "--target x86_64-apple-darwin"
           - platform: windows-latest
             args: ""
           - platform: ubuntu-22.04
