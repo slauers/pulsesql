@@ -111,7 +111,7 @@ Open an issue on GitHub.
 
 ## License
 
-MIT License *(or change if you want)*
+MIT License
 
 ---
 
