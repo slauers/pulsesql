@@ -14,7 +14,7 @@ import { useUiPreferencesStore } from './store/uiPreferences';
 import { APP_THEMES, getThemeById } from './themes';
 import { translate, type AppLocale } from './i18n';
 import { LOCK_SPLASH_FOR_DEV } from './devFlags';
-import { UpdateNotifier, type UpdateInfo } from './features/updater/UpdateNotifier';
+import { UpdateButton, type UpdateInfo } from './features/updater/UpdateNotifier';
 
 function App() {
   const menuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -374,7 +374,9 @@ function App() {
               </div>
             </div>
           </div>
-          <div className="relative hidden min-[880px]:flex items-center shrink-0">
+          <div className="hidden min-[880px]:flex items-center gap-1 shrink-0">
+            {pendingUpdate ? <UpdateButton update={pendingUpdate} /> : null}
+          <div className="relative flex items-center">
             <button
               ref={themeButtonRef}
               type="button"
@@ -419,6 +421,7 @@ function App() {
                 ))}
               </div>
             ) : null}
+          </div>
           </div>
         </div>
       </div>
@@ -491,9 +494,6 @@ function App() {
           `${translate(locale, 'file')} > ${translate(locale, 'configuration')}: ${translate(locale, 'opensSystemConfiguration')}`,
         ]}
       />
-      {pendingUpdate ? (
-        <UpdateNotifier update={pendingUpdate} onDismiss={() => setPendingUpdate(null)} />
-      ) : null}
       <InfoDialog
         open={aboutOpen}
         locale={locale}
