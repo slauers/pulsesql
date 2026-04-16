@@ -1,6 +1,6 @@
 [package]
 name = "pulsesql"
-version = "0.1.5"
+version = "0.1.6"
 description = "PulseSQL desktop SQL workstation"
 authors = ["Saulo"]
 edition = "2021"
