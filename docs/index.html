@@ -628,63 +628,10 @@
   </div>
   <p class="hero-note">macOS · Windows · Free &amp; open source</p>
 
-  <!-- APP MOCKUP -->
+  <!-- APP SCREENSHOT -->
   <div class="mockup-wrap">
     <div class="mockup">
-      <div class="mockup-bar">
-        <div class="dot dot-r"></div>
-        <div class="dot dot-y"></div>
-        <div class="dot dot-g"></div>
-        <div class="mockup-tabs">
-          <div class="tab active">query_1.sql</div>
-          <div class="tab">analytics.sql</div>
-        </div>
-      </div>
-      <div class="mockup-body">
-        <div class="mockup-sidebar">
-          <div class="sidebar-section">Connections</div>
-          <div class="sidebar-item active">
-            <div class="sidebar-icon connected"></div>
-            prod-postgres
-          </div>
-          <div class="sidebar-item">
-            <div class="sidebar-icon"></div>
-            analytics-db
-          </div>
-          <div class="sidebar-section">Tables</div>
-          <div class="sidebar-item">
-            <div class="sidebar-icon"></div>
-            users
-          </div>
-          <div class="sidebar-item">
-            <div class="sidebar-icon"></div>
-            orders
-          </div>
-          <div class="sidebar-item">
-            <div class="sidebar-icon"></div>
-            events
-          </div>
-        </div>
-        <div class="mockup-editor">
-          <div class="editor-area">
-            <div><span class="cm">-- find top customers this month</span></div>
-            <div><span class="kw">SELECT</span> u.id, u.email,</div>
-            <div>&nbsp;&nbsp;&nbsp;&nbsp;<span class="fn">COUNT</span>(o.id) <span class="kw">AS</span> total_orders,</div>
-            <div>&nbsp;&nbsp;&nbsp;&nbsp;<span class="fn">SUM</span>(o.amount) <span class="kw">AS</span> revenue</div>
-            <div><span class="kw">FROM</span> users u</div>
-            <div><span class="kw">JOIN</span> orders o <span class="kw">ON</span> o.user_id = u.id</div>
-            <div><span class="kw">WHERE</span> o.created_at &gt;= <span class="str">'2026-04-01'</span></div>
-            <div><span class="kw">GROUP BY</span> u.id, u.email</div>
-            <div><span class="kw">ORDER BY</span> revenue <span class="kw">DESC</span></div>
-            <div><span class="kw">LIMIT</span> <span class="str">25</span>;</div>
-          </div>
-          <div class="result-bar">
-            <span class="result-pill">25 rows</span>
-            <span>42 ms</span>
-            <span style="margin-left:auto">⌘ Enter to run</span>
-          </div>
-        </div>
-      </div>
+      <img src="assets/screenshot-workspace.png" alt="PulseSQL workspace" style="width:100%;display:block;border-radius:11px;" />
     </div>
   </div>
 </section>
