@@ -81,6 +81,17 @@ fn reveal_main_window(
 }
 
 #[tauri::command]
+fn show_splash_window(app: AppHandle) -> Result<(), String> {
+    if let Some(splash_window) = app.get_webview_window(SPLASH_WINDOW_LABEL) {
+        splash_window
+            .show()
+            .map_err(|error| format!("Failed to show splash window: {error}"))?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn close_splash_window(app: AppHandle) -> Result<(), String> {
     if let Some(splash_window) = app.get_webview_window(SPLASH_WINDOW_LABEL) {
         splash_window
@@ -239,7 +250,7 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(4)).await;
                     let splash_state = app_handle.state::<Mutex<SplashState>>();
-                    let _ = finalize_startup(&app_handle, &splash_state, false);
+                    let _ = finalize_startup(&app_handle, &splash_state, true);
                 });
             }
 
@@ -253,6 +264,7 @@ pub fn run() {
             greet,
             update_splash_progress,
             reveal_main_window,
+            show_splash_window,
             close_splash_window,
             get_splash_state,
             reopen_splash_window,
