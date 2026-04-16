@@ -14,9 +14,8 @@ const SSH_KEEPALIVE_INTERVAL_SECS: u32 = 30;
 /// ssh2::ErrorCode returned when an operation would block in non-blocking mode.
 const SSH_EAGAIN: ssh2::ErrorCode = ssh2::ErrorCode::Session(-37);
 
-/// Max event-loop iterations spent retrying channel_direct_tcpip for one
-/// accepted TCP connection (~2 s at 1 ms/iter).
-const CHANNEL_OPEN_MAX_RETRIES: u32 = 2_000;
+/// Timeout (ms) used when opening a new direct-tcpip channel in blocking mode.
+const CHANNEL_OPEN_TIMEOUT_MS: u32 = 15_000;
 
 pub struct SshTunnelHandle {
     local_port: u16,
@@ -38,13 +37,6 @@ impl SshTunnelHandle {
 }
 
 // ── per-connection state ──────────────────────────────────────────────────────
-
-/// A TCP connection that is waiting for its SSH direct-tcpip channel to be
-/// opened (channel_direct_tcpip may return EAGAIN in non-blocking mode).
-struct PendingConn {
-    stream: TcpStream,
-    retries: u32,
-}
 
 /// An active proxied connection: one local TCP client ↔ one SSH channel.
 ///
@@ -272,9 +264,6 @@ pub fn start_ssh_tunnel(config: &ConnectionConfig) -> Result<SshTunnelHandle, St
     // ── event loop ────────────────────────────────────────────────────────────
 
     let join_handle = thread::spawn(move || {
-        // Connections waiting for channel_direct_tcpip to complete (EAGAIN retry).
-        let mut pending: Vec<PendingConn> = Vec::new();
-        // Active proxied connections.
         let mut connections: Vec<ProxyConn> = Vec::new();
         let mut last_keepalive = Instant::now();
 
@@ -284,8 +273,8 @@ pub fn start_ssh_tunnel(config: &ConnectionConfig) -> Result<SshTunnelHandle, St
             }
 
             // ── keepalive ─────────────────────────────────────────────────────
-            // keepalive_send() in non-blocking mode may return EAGAIN; we just
-            // try again on the next iteration when it's due.
+            // keepalive_send() in non-blocking mode may return EAGAIN; retry
+            // on the next iteration when it's due.
             if last_keepalive.elapsed().as_secs() >= SSH_KEEPALIVE_INTERVAL_SECS as u64 {
                 match session.keepalive_send() {
                     Ok(_) => {
@@ -304,7 +293,31 @@ pub fn start_ssh_tunnel(config: &ConnectionConfig) -> Result<SshTunnelHandle, St
                 Ok((stream, _)) => {
                     let _ = stream.set_nodelay(true);
                     let _ = stream.set_nonblocking(true);
-                    pending.push(PendingConn { stream, retries: 0 });
+
+                    // Open the SSH channel in blocking mode so the handshake
+                    // completes reliably even when the SSH server needs time to
+                    // establish the TCP connection to the database host (e.g.
+                    // EC2 bastion → Amazon RDS can take several hundred ms).
+                    // Active proxy connections pause briefly while this runs
+                    // (typically < 100 ms in AWS), which is acceptable for a
+                    // database client.
+                    session.set_blocking(true);
+                    session.set_timeout(CHANNEL_OPEN_TIMEOUT_MS);
+                    let channel_result =
+                        session.channel_direct_tcpip(&db_host, db_port, None);
+                    session.set_blocking(false);
+                    session.set_timeout(0);
+
+                    match channel_result {
+                        Ok(channel) => connections.push(ProxyConn::new(stream, channel)),
+                        Err(error) => {
+                            eprintln!(
+                                "SSH direct-tcpip failed for {}:{}: {}",
+                                db_host, db_port, error
+                            );
+                            // stream dropped → RST sent to client
+                        }
+                    }
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
                 Err(error) => {
@@ -312,48 +325,10 @@ pub fn start_ssh_tunnel(config: &ConnectionConfig) -> Result<SshTunnelHandle, St
                 }
             }
 
-            // ── open SSH channels for pending connections ─────────────────────
-            // channel_direct_tcpip may return EAGAIN in non-blocking mode; we
-            // retry up to CHANNEL_OPEN_MAX_RETRIES times before giving up.
-            let mut still_pending: Vec<PendingConn> = Vec::new();
-            for mut p in pending.drain(..) {
-                match session.channel_direct_tcpip(&db_host, db_port, None) {
-                    Ok(channel) => {
-                        connections.push(ProxyConn::new(p.stream, channel));
-                    }
-                    Err(ref e) if e.code() == SSH_EAGAIN => {
-                        p.retries += 1;
-                        if p.retries < CHANNEL_OPEN_MAX_RETRIES {
-                            still_pending.push(p);
-                        } else {
-                            eprintln!(
-                                "SSH channel open timed out for {}:{}",
-                                db_host, db_port
-                            );
-                            // p.stream dropped → RST sent to client
-                        }
-                    }
-                    Err(error) => {
-                        eprintln!(
-                            "SSH direct-tcpip open failed for {}:{}: {}",
-                            db_host, db_port, error
-                        );
-                        // p.stream dropped → RST sent to client
-                    }
-                }
-            }
-            pending = still_pending;
-
             // ── drive active proxy connections ────────────────────────────────
-            let mut had_activity = !connections.is_empty() || !pending.is_empty();
             connections.retain_mut(|conn| conn.pump());
 
-            // Sleep only when there is nothing to do, to avoid busy-spinning
-            // while still being responsive when data arrives.
-            if !had_activity {
-                had_activity = !connections.is_empty();
-            }
-            if !had_activity {
+            if connections.is_empty() {
                 thread::sleep(Duration::from_millis(1));
             }
         }
