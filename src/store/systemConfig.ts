@@ -46,7 +46,11 @@ export function readSystemConfig(): SystemConfig {
 }
 
 export function writeSystemConfig(config: SystemConfig) {
-  localStorage.setItem(SYSTEM_CONFIG_STORAGE_KEY, JSON.stringify(normalizeSystemConfig(config)));
+  try {
+    localStorage.setItem(SYSTEM_CONFIG_STORAGE_KEY, JSON.stringify(normalizeSystemConfig(config)));
+  } catch (error) {
+    console.warn('[PulseSQL] Failed to persist system config — localStorage may be full:', error);
+  }
 }
 
 export function updateSystemConfig(updater: (current: SystemConfig) => SystemConfig) {
