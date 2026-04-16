@@ -118,7 +118,12 @@ export default function QueryWorkspace() {
   const [results, setResults] = useState<QueryExecutionResult[]>([]);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [quickFilterInput, setQuickFilterInput] = useState('');
   const [quickFilter, setQuickFilter] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setQuickFilter(quickFilterInput), 150);
+    return () => clearTimeout(timer);
+  }, [quickFilterInput]);
   const [resultsHeight, setResultsHeight] = useState(34);
   const [resultsResizing, setResultsResizing] = useState(false);
   const [pendingRiskyExecution, setPendingRiskyExecution] = useState<string[] | null>(null);
@@ -901,11 +906,10 @@ export default function QueryWorkspace() {
                         <div className="flex items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
                           <label className="inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-muted">
                             <input
-                              type="number"
-                              min={1}
-                              max={1000}
+                              type="text"
+                              inputMode="numeric"
                               value={pageSizeDraft}
-                              onChange={(event) => setPageSizeDraft(event.target.value)}
+                              onChange={(event) => setPageSizeDraft(event.target.value.replace(/[^0-9]/g, ''))}
                               onBlur={() => void applyPageSize()}
                               onKeyDown={(event) => {
                                 if (event.key === 'Enter') {
@@ -941,8 +945,8 @@ export default function QueryWorkspace() {
                       <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5 min-w-[180px] md:min-w-[220px]">
                         <Search size={13} className="shrink-0 text-muted" />
                         <input
-                          value={quickFilter}
-                          onChange={(event) => setQuickFilter(event.target.value)}
+                          value={quickFilterInput}
+                          onChange={(event) => setQuickFilterInput(event.target.value)}
                           placeholder={t('quickFilter')}
                           className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
                         />

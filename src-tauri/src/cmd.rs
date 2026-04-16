@@ -5,12 +5,14 @@ use std::process::Command;
 /// On Windows this sets the `CREATE_NO_WINDOW` creation flag (0x08000000).
 /// On other platforms it behaves identically to `Command::new`.
 pub fn background<S: AsRef<OsStr>>(program: S) -> Command {
-    let mut cmd = Command::new(program);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = Command::new(program);
         cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd
     }
-    cmd
+    #[cfg(not(windows))]
+    Command::new(program)
 }
