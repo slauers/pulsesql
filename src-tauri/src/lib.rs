@@ -150,7 +150,7 @@ fn create_splash_window(app: &AppHandle) -> Result<(), String> {
         .closable(false)
         .decorations(false)
         .center()
-        .visible(true)
+        .visible(false)
         .always_on_top(true)
         .transparent(true);
 

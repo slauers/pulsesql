@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import brandLogo from './assets/pulsesql-logo.svg';
 import { getInitialLocale, translate } from './i18n';
 import { LOCK_SPLASH_FOR_DEV } from './devFlags';
@@ -19,6 +20,10 @@ export default function SplashScreen() {
   const [finishing, setFinishing] = useState(false);
 
   const normalizedProgress = useMemo(() => Math.max(0, Math.min(progress, 100)), [progress]);
+
+  useEffect(() => {
+    void getCurrentWindow().show().catch(() => null);
+  }, []);
 
   useEffect(() => {
     if (LOCK_SPLASH_FOR_DEV) {
