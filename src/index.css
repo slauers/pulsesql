@@ -38,22 +38,6 @@
     background: var(--bt-body-background);
   }
 
-  html[data-splash='true'],
-  body[data-splash='true'] {
-    background:
-      radial-gradient(circle at top center, rgba(43, 211, 201, 0.12), transparent 34%),
-      linear-gradient(180deg, #0d1218 0%, #0b0f14 52%, #090d11 100%);
-  }
-
-  body[data-splash='true'] {
-    min-height: 100vh;
-    margin: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-  }
-
   body[data-splash='true'] #root {
     width: auto;
     height: auto;

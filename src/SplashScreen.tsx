@@ -21,6 +21,10 @@ export default function SplashScreen() {
   const normalizedProgress = useMemo(() => Math.max(0, Math.min(progress, 100)), [progress]);
 
   useEffect(() => {
+    void invoke('show_splash_window').catch(() => null);
+  }, []);
+
+  useEffect(() => {
     if (LOCK_SPLASH_FOR_DEV) {
       return;
     }
