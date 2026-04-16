@@ -466,9 +466,12 @@ export default function ConnectionManager() {
                               {conn.database ? `/${conn.database}` : ''}
                             </div>
                           </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                              <ConnectionBadge locale={locale} state={connectionState} compact />
-                            </div>
+                          <div className="flex items-center shrink-0">
+                            <span
+                              className={`h-2.5 w-2.5 rounded-full ${connectionStateDot(connectionState)}`}
+                              title={translate(locale, connectionStatusLabelKey(connectionState))}
+                            />
+                          </div>
                           </div>
                         </button>
 
@@ -516,12 +519,12 @@ export default function ConnectionManager() {
           )}
 
           <div
-            className={`shrink-0 border-t border-border/70 bg-background/26 ${
+            className={`shrink-0 border-border/70 bg-background/26 ${
               sidebarCollapsed ? 'px-1.5 py-2' : 'px-3 py-3'
             }`}
           >
             <div
-              className={`rounded-xl border border-border/60 bg-background/36 ${
+              className={`rounded-xl border-border/60 bg-background/36 ${
                 sidebarCollapsed
                   ? 'flex items-center justify-center px-1 py-2'
                   : 'px-3 py-2'
@@ -862,6 +865,21 @@ function connectionStateDot(state: RuntimeConnectionState): string {
   }
 
   return 'bg-muted';
+}
+
+function connectionStatusLabelKey(state: RuntimeConnectionState) {
+  const labels: Record<
+    RuntimeConnectionState,
+    'statusDisconnected' | 'statusConnecting' | 'statusConnected' | 'statusReconnecting' | 'statusFailed'
+  > = {
+    disconnected: 'statusDisconnected',
+    connecting: 'statusConnecting',
+    connected: 'statusConnected',
+    reconnecting: 'statusReconnecting',
+    failed: 'statusFailed',
+  };
+
+  return labels[state];
 }
 
 function ConnectionBadge({
