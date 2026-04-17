@@ -631,6 +631,20 @@ export default function ConnectionManager() {
           <button
             type="button"
             onClick={() => {
+              const conn = connections.find((item) => item.id === connectionContextMenu.connId);
+              setConnectionContextMenu(null);
+              if (conn) {
+                void openConnection(conn);
+              }
+            }}
+            className="mb-1 flex w-full items-center gap-2 rounded-lg border border-emerald-400/35 bg-emerald-400/14 px-3 py-2 text-sm font-medium text-emerald-200 transition-colors hover:bg-emerald-400/22"
+          >
+            <Plug size={14} className="text-emerald-300" />
+            <span>{t('openConnectionAction')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               const connId = connectionContextMenu.connId;
               const isFavorite = favoriteConnectionId === connId;
               setConnectionContextMenu(null);
