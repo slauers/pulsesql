@@ -21,6 +21,9 @@ import {
   ChevronRight,
   ChevronDown,
   Check,
+  Trash2,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import ResultGrid from './ResultGrid';
 import QueryHistoryDrawer from '../history/components/QueryHistoryDrawer';
@@ -137,6 +140,9 @@ export default function QueryWorkspace() {
   const exportFeedbackRef = useRef<number | null>(null);
   const [editingCell, setEditingCell] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [selectedSourceRowIndex, setSelectedSourceRowIndex] = useState<number | null>(null);
+  const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
+  const [gridFullscreen, setGridFullscreen] = useState(false);
   const editErrorTimeoutRef = useRef<number | null>(null);
   const executeQueryRef = useRef<() => void>(() => {});
   const editorRef = useRef<any>(null);
@@ -180,6 +186,24 @@ export default function QueryWorkspace() {
       window.clearTimeout(semanticResetTimeoutRef.current);
     }
   }, []);
+
+  useEffect(() => {
+    if (!gridFullscreen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setGridFullscreen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [gridFullscreen]);
 
   useEffect(() => {
     if (!connectionMenuOpen) {
@@ -560,10 +584,18 @@ export default function QueryWorkspace() {
   const totalPages = Math.max(1, Math.ceil(totalRows / Math.max(pageSize, 1)));
   const canPaginate = hasGridResult && activeResult?.page != null && activeResult?.page_size != null;
   const rowNumberOffset = canPaginate ? (currentPage - 1) * pageSize : 0;
+  const selectedDisplayRowIndex =
+    selectedSourceRowIndex != null && activeResult
+      ? filteredRows.findIndex((row) => activeResult.rows[selectedSourceRowIndex] === row)
+      : null;
   const gridColumns = useMemo(
     () => buildGridColumns(activeResult, cachedSourceColumns),
     [activeResult, cachedSourceColumns],
   );
+
+  useEffect(() => {
+    setSelectedSourceRowIndex(null);
+  }, [activeResultIndex, resolvedConnectionId, quickFilter, activeResult?.statement]);
 
   useEffect(() => {
     if (!resolvedConnectionId || !engine || !activeSourceTable?.schemaName || !activeSourceTable.tableName || runtimeStatus !== 'connected') {
@@ -651,6 +683,7 @@ export default function QueryWorkspace() {
 
     try {
       await ensureExecutionConnectionReady(resolvedConnectionId);
+      const sourceRowIndex = activeResult?.rows.indexOf(row) ?? -1;
       const sql = buildUpdateSql(
         activeSourceTable.schemaName,
         activeSourceTable.tableName,
@@ -666,13 +699,14 @@ export default function QueryWorkspace() {
         page: 1,
         pageSize: 1,
       });
+      setHistoryRefreshToken((current) => current + 1);
       setResults((current) =>
         current.map((item, idx) =>
           idx === activeResultIndex
             ? {
                 ...item,
                 rows: item.rows.map((r, rIdx) =>
-                  rIdx === rowIndex ? { ...r, [colName]: newValue } : r,
+                  rIdx === sourceRowIndex ? { ...r, [colName]: newValue } : r,
                 ),
               }
             : item,
@@ -690,7 +724,100 @@ export default function QueryWorkspace() {
     }
 
     setEditingCell(null);
-  }, [activeResultIndex, activeSourceTable, cachedSourceColumns, engine, ensureExecutionConnectionReady, resolvedConnectionId]);
+  }, [activeResult, activeResultIndex, activeSourceTable, cachedSourceColumns, engine, ensureExecutionConnectionReady, resolvedConnectionId]);
+
+  const handleRowSelect = useCallback((_rowIndex: number, row: Record<string, unknown>) => {
+    if (!activeResult) {
+      setSelectedSourceRowIndex(null);
+      return;
+    }
+
+    const sourceIndex = activeResult.rows.indexOf(row);
+    if (sourceIndex < 0) {
+      setSelectedSourceRowIndex(null);
+      return;
+    }
+
+    setSelectedSourceRowIndex((current) => (current === sourceIndex ? null : sourceIndex));
+  }, [activeResult]);
+
+  const handleDeleteSelectedRow = useCallback(async () => {
+    if (
+      !resolvedConnectionId ||
+      !activeSourceTable?.tableName ||
+      selectedSourceRowIndex == null ||
+      !activeResult?.rows[selectedSourceRowIndex]
+    ) {
+      return;
+    }
+
+    const pkCols = cachedSourceColumns?.filter((c) => c.isPrimaryKey) ?? [];
+    if (!pkCols.length) {
+      setEditError('No primary key detected — cannot safely delete this row.');
+      if (editErrorTimeoutRef.current) window.clearTimeout(editErrorTimeoutRef.current);
+      editErrorTimeoutRef.current = window.setTimeout(() => {
+        setEditError(null);
+      }, 3500);
+      return;
+    }
+
+    const row = activeResult.rows[selectedSourceRowIndex] as Record<string, unknown>;
+    setEditError(null);
+
+    try {
+      await ensureExecutionConnectionReady(resolvedConnectionId);
+      const sql = buildDeleteSql(
+        activeSourceTable.schemaName,
+        activeSourceTable.tableName,
+        row,
+        pkCols,
+        engine ?? 'postgres',
+      );
+
+      await invoke('execute_query', {
+        connId: resolvedConnectionId,
+        query: sql,
+        page: 1,
+        pageSize: 1,
+      });
+
+      setHistoryRefreshToken((current) => current + 1);
+      setResults((current) =>
+        current.map((item, idx) => {
+          if (idx !== activeResultIndex) {
+            return item;
+          }
+
+          const nextRows = item.rows.filter((_, rowIdx) => rowIdx !== selectedSourceRowIndex);
+          return {
+            ...item,
+            rows: nextRows,
+            total_rows:
+              typeof item.total_rows === 'number'
+                ? Math.max(0, item.total_rows - 1)
+                : item.total_rows,
+          };
+        }),
+      );
+      setSelectedSourceRowIndex(null);
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setEditError(msg);
+      if (editErrorTimeoutRef.current) window.clearTimeout(editErrorTimeoutRef.current);
+      editErrorTimeoutRef.current = window.setTimeout(() => {
+        setEditError(null);
+      }, 3500);
+    }
+  }, [
+    activeResult,
+    activeResultIndex,
+    activeSourceTable,
+    cachedSourceColumns,
+    engine,
+    ensureExecutionConnectionReady,
+    resolvedConnectionId,
+    selectedSourceRowIndex,
+  ]);
 
   const handleConnectionChange = useCallback((nextConnectionId: string) => {
     if (!activeTab) {
@@ -723,6 +850,222 @@ export default function QueryWorkspace() {
 
     setTabConnection(activeTab.id, activeConnectionId);
   }, [activeConnectionId, activeTab, setTabConnection]);
+
+  const renderResultsPanel = (fullscreen = false) => (
+    <div
+      className={`rounded-lg border border-border/80 glass-panel flex flex-col relative overflow-hidden shadow-[0_18px_48px_rgba(0,0,0,0.24)] ${
+        fullscreen
+          ? 'h-full min-h-0'
+          : 'min-h-[190px] max-h-[58%] shrink-0 flex-grow-0 max-[720px]:h-[40%]'
+      }`}
+      style={fullscreen ? undefined : { height: `${resultsHeight}%` }}
+    >
+      <div className="p-2 border-b border-border text-sm font-medium text-muted flex justify-between items-center bg-background/42">
+        <div className="flex gap-2 px-2 shrink-0 overflow-x-auto scrollbar-hide">
+          {(results.length ? results : [{ title: t('result') } as QueryExecutionResult]).map((item, index) => (
+            <div
+              key={`${item.title}-${index}`}
+              className={`rounded-t-lg border-b-2 px-2.5 pb-1 pt-0.5 text-xs transition-colors ${
+                activeResultIndex === index
+                  ? 'text-text border-primary'
+                  : 'text-muted border-transparent hover:text-text hover:border-border/70'
+              }`}
+            >
+              <button
+                onClick={() => setActiveResultIndex(index)}
+                className="inline-flex items-center gap-1.5"
+              >
+                <span>{results.length <= 1 ? t('result') : item.title}</span>
+              </button>
+              {results.length > 1 ? (
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeResultTab(index);
+                  }}
+                  className="ml-1 inline-flex items-center text-muted transition-colors hover:text-text"
+                  aria-label={`Fechar ${item.title}`}
+                >
+                  <X size={12} />
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+        {activeResult ? (
+          <div className="flex items-center gap-2 px-2 min-w-0">
+            <div className="hidden md:flex items-center gap-2 text-xs text-muted shrink-0">
+              {hasGridResult ? (
+                <span>
+                  {formatNumber(locale, filteredRows.length)}
+                  {quickFilter ? ` / ${formatNumber(locale, activeResult.rows.length)}` : ''} {t('rowsLabel')}
+                </span>
+              ) : null}
+              {hasGridResult ? <span>{t('totalRecords', { count: formatNumber(locale, totalRows) })}</span> : null}
+              {canPaginate ? <span>{t('pageOf', { page: currentPage, total: totalPages })}</span> : null}
+              <span>{activeResult.execution_time}ms</span>
+            </div>
+            {hasGridResult ? (
+              <>
+                {canPaginate ? (
+                  <div className="flex items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
+                    <label className="inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-muted">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={pageSizeDraft}
+                        onChange={(event) => setPageSizeDraft(event.target.value.replace(/[^0-9]/g, ''))}
+                        onBlur={() => void applyPageSize()}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void applyPageSize();
+                          }
+                        }}
+                        className="w-14 rounded border border-border/70 bg-background/35 px-1.5 py-1 text-right text-[11px] text-text outline-none focus:border-primary"
+                      />
+                      <span>{t('rowsLabel')}</span>
+                    </label>
+                    <button
+                      onClick={() => void loadResultPage(activeResultIndex, currentPage - 1)}
+                      disabled={loading || currentPage <= 1}
+                      className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={t('previousPage')}
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <span className="px-1 text-[11px] text-muted">
+                      {currentPage}/{totalPages}
+                    </span>
+                    <button
+                      onClick={() => void loadResultPage(activeResultIndex, currentPage + 1)}
+                      disabled={loading || currentPage >= totalPages}
+                      className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={t('nextPage')}
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                ) : null}
+                <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5 min-w-[180px] md:min-w-[220px]">
+                  <Search size={13} className="shrink-0 text-muted" />
+                  <input
+                    value={quickFilterInput}
+                    onChange={(event) => setQuickFilterInput(event.target.value)}
+                    placeholder={t('quickFilter')}
+                    className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteSelectedRow()}
+                  disabled={selectedSourceRowIndex == null || loading}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/25 px-2.5 py-1.5 text-xs text-red-300 transition-colors hover:bg-red-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+                  title={t('deleteSelectedRow')}
+                >
+                  <Trash2 size={13} />
+                  {t('deleteRow')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGridFullscreen((current) => !current)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text"
+                  title={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
+                >
+                  {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                  {fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
+                </button>
+                <button
+                  onClick={() => {
+                    exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel));
+                    if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
+                    setExportedFormat('csv');
+                    exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                    exportedFormat === 'csv'
+                      ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
+                      : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                  }`}
+                >
+                  {exportedFormat === 'csv' ? <Check size={13} /> : <Download size={13} />}
+                  CSV
+                </button>
+                <button
+                  onClick={() => {
+                    exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel));
+                    if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
+                    setExportedFormat('json');
+                    exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                    exportedFormat === 'json'
+                      ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
+                      : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                  }`}
+                >
+                  {exportedFormat === 'json' ? <Check size={13} /> : <FileJson size={13} />}
+                  JSON
+                </button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="flex-1 overflow-auto bg-background/10 relative">
+        {loading ? (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/55 backdrop-blur-[1px]">
+            <div className="flex items-center gap-3">
+              <LoaderCircle size={16} className="animate-spin text-primary" />
+              <span className="text-[10px] uppercase tracking-[0.14em] text-primary/70">
+                {t('loadingResults')}
+              </span>
+            </div>
+          </div>
+        ) : null}
+        {error && !loading ? (
+          <QueryErrorPanel error={error} activeSchema={schemaLabel} />
+        ) : activeResult ? (
+          <div className="flex h-full min-h-0 flex-col">
+            {activeResult.summary ? (
+              <div className="border-b border-border/60 bg-emerald-400/5 px-4 py-3 text-xs text-emerald-100/90">
+                <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-emerald-300/80">
+                  {t('executionSummary')}
+                </div>
+                <pre className="whitespace-pre-wrap font-mono text-[12px] leading-6 text-emerald-100/90">
+                  {activeResult.summary}
+                </pre>
+              </div>
+            ) : null}
+            <div className="min-h-0 flex-1">
+              {hasGridResult ? (
+                <ResultGrid
+                  columns={gridColumns}
+                  rows={filteredRows}
+                  rowNumberOffset={quickFilter ? 0 : rowNumberOffset}
+                  density={density}
+                  onCellEdit={activeSourceTable ? handleCellEdit : undefined}
+                  editingCell={editingCell}
+                  editError={editError}
+                  selectedRowIndex={selectedDisplayRowIndex}
+                  onRowSelect={handleRowSelect}
+                />
+              ) : (
+                <div className="h-full flex items-center justify-center text-muted/50 text-sm">
+                  {t('executionWithoutResultSet')}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="h-full flex items-center justify-center text-muted/50 text-sm">
+            {t('runQueryToSeeResults')}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex flex-col h-full bg-transparent overflow-hidden relative min-h-0">
@@ -924,208 +1267,24 @@ export default function QueryWorkspace() {
             )}
           </div>
 
-          <div
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize results panel"
-            onPointerDown={() => setResultsResizing(true)}
-            className="shrink-0 px-3"
-          >
-            <div className={`h-1 cursor-row-resize rounded-full bg-transparent transition-colors ${
-              resultsResizing ? 'bg-primary/40' : 'hover:bg-primary/25'
-            }`}>
-              <div className="mx-auto h-full w-24 rounded-full bg-border/70" />
-            </div>
-          </div>
-
-          <div
-            className="min-h-[190px] max-h-[58%] rounded-lg border border-border/80 glass-panel flex flex-col shrink-0 flex-grow-0 relative max-[720px]:h-[40%] overflow-hidden shadow-[0_18px_48px_rgba(0,0,0,0.24)]"
-            style={{ height: `${resultsHeight}%` }}
-          >
-            <div className="p-2 border-b border-border text-sm font-medium text-muted flex justify-between items-center bg-background/42">
-              <div className="flex gap-2 px-2 shrink-0 overflow-x-auto scrollbar-hide">
-                {(results.length ? results : [{ title: t('result') } as QueryExecutionResult]).map((item, index) => (
-                  <div
-                    key={`${item.title}-${index}`}
-                    className={`rounded-t-lg border-b-2 px-2.5 pb-1 pt-0.5 text-xs transition-colors ${
-                      activeResultIndex === index
-                        ? 'text-text border-primary'
-                        : 'text-muted border-transparent hover:text-text hover:border-border/70'
-                    }`}
-                  >
-                    <button
-                      onClick={() => setActiveResultIndex(index)}
-                      className="inline-flex items-center gap-1.5"
-                    >
-                      <span>{results.length <= 1 ? t('result') : item.title}</span>
-                    </button>
-                    {results.length > 1 ? (
-                      <button
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          closeResultTab(index);
-                        }}
-                        className="ml-1 inline-flex items-center text-muted transition-colors hover:text-text"
-                        aria-label={`Fechar ${item.title}`}
-                      >
-                        <X size={12} />
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
+          {!gridFullscreen ? (
+            <>
+              <div
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="Resize results panel"
+                onPointerDown={() => setResultsResizing(true)}
+                className="shrink-0 px-3"
+              >
+                <div className={`h-1 cursor-row-resize rounded-full bg-transparent transition-colors ${
+                  resultsResizing ? 'bg-primary/40' : 'hover:bg-primary/25'
+                }`}>
+                  <div className="mx-auto h-full w-24 rounded-full bg-border/70" />
+                </div>
               </div>
-              {activeResult ? (
-                <div className="flex items-center gap-2 px-2 min-w-0">
-                  <div className="hidden md:flex items-center gap-2 text-xs text-muted shrink-0">
-                    {hasGridResult ? (
-                      <span>
-                        {formatNumber(locale, filteredRows.length)}
-                        {quickFilter ? ` / ${formatNumber(locale, activeResult.rows.length)}` : ''} {t('rowsLabel')}
-                      </span>
-                    ) : null}
-                    {hasGridResult ? <span>{t('totalRecords', { count: formatNumber(locale, totalRows) })}</span> : null}
-                    {canPaginate ? <span>{t('pageOf', { page: currentPage, total: totalPages })}</span> : null}
-                    <span>{activeResult.execution_time}ms</span>
-                  </div>
-                  {hasGridResult ? (
-                    <>
-                      {canPaginate ? (
-                        <div className="flex items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
-                          <label className="inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-muted">
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              value={pageSizeDraft}
-                              onChange={(event) => setPageSizeDraft(event.target.value.replace(/[^0-9]/g, ''))}
-                              onBlur={() => void applyPageSize()}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter') {
-                                  event.preventDefault();
-                                  void applyPageSize();
-                                }
-                              }}
-                              className="w-14 rounded border border-border/70 bg-background/35 px-1.5 py-1 text-right text-[11px] text-text outline-none focus:border-primary"
-                            />
-                        <span>{t('rowsLabel')}</span>
-                          </label>
-                          <button
-                            onClick={() => void loadResultPage(activeResultIndex, currentPage - 1)}
-                            disabled={loading || currentPage <= 1}
-                            className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                            aria-label={t('previousPage')}
-                          >
-                            <ChevronLeft size={14} />
-                          </button>
-                          <span className="px-1 text-[11px] text-muted">
-                            {currentPage}/{totalPages}
-                          </span>
-                          <button
-                            onClick={() => void loadResultPage(activeResultIndex, currentPage + 1)}
-                            disabled={loading || currentPage >= totalPages}
-                            className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                            aria-label={t('nextPage')}
-                          >
-                            <ChevronRight size={14} />
-                          </button>
-                        </div>
-                      ) : null}
-                      <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5 min-w-[180px] md:min-w-[220px]">
-                        <Search size={13} className="shrink-0 text-muted" />
-                        <input
-                          value={quickFilterInput}
-                          onChange={(event) => setQuickFilterInput(event.target.value)}
-                          placeholder={t('quickFilter')}
-                          className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
-                        />
-                      </label>
-                      <button
-                        onClick={() => {
-                          exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel));
-                          if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
-                          setExportedFormat('csv');
-                          exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
-                        }}
-                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                          exportedFormat === 'csv'
-                            ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
-                            : 'border-border text-muted hover:bg-border/30 hover:text-text'
-                        }`}
-                      >
-                        {exportedFormat === 'csv' ? <Check size={13} /> : <Download size={13} />}
-                        CSV
-                      </button>
-                      <button
-                        onClick={() => {
-                          exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel));
-                          if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
-                          setExportedFormat('json');
-                          exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
-                        }}
-                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                          exportedFormat === 'json'
-                            ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
-                            : 'border-border text-muted hover:bg-border/30 hover:text-text'
-                        }`}
-                      >
-                        {exportedFormat === 'json' ? <Check size={13} /> : <FileJson size={13} />}
-                        JSON
-                      </button>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="flex-1 overflow-auto bg-background/10 relative">
-              {loading ? (
-                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/55 backdrop-blur-[1px]">
-                  <div className="flex items-center gap-3">
-                    <LoaderCircle size={16} className="animate-spin text-primary" />
-                    <span className="text-[10px] uppercase tracking-[0.14em] text-primary/70">
-                      {t('loadingResults')}
-                    </span>
-                  </div>
-                </div>
-              ) : null}
-              {error && !loading ? (
-                <QueryErrorPanel error={error} activeSchema={schemaLabel} />
-              ) : activeResult ? (
-                <div className="flex h-full min-h-0 flex-col">
-                  {activeResult.summary ? (
-                    <div className="border-b border-border/60 bg-emerald-400/5 px-4 py-3 text-xs text-emerald-100/90">
-                      <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-emerald-300/80">
-                        {t('executionSummary')}
-                      </div>
-                      <pre className="whitespace-pre-wrap font-mono text-[12px] leading-6 text-emerald-100/90">
-                        {activeResult.summary}
-                      </pre>
-                    </div>
-                  ) : null}
-                  <div className="min-h-0 flex-1">
-                    {hasGridResult ? (
-                      <ResultGrid
-                        columns={gridColumns}
-                        rows={filteredRows}
-                        rowNumberOffset={quickFilter ? 0 : rowNumberOffset}
-                        density={density}
-                        onCellEdit={activeSourceTable ? handleCellEdit : undefined}
-                        editingCell={editingCell}
-                        editError={editError}
-                      />
-                    ) : (
-                      <div className="h-full flex items-center justify-center text-muted/50 text-sm">
-                        {t('executionWithoutResultSet')}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="h-full flex items-center justify-center text-muted/50 text-sm">
-                  {t('runQueryToSeeResults')}
-                </div>
-              )}
-            </div>
-          </div>
+              {renderResultsPanel(false)}
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -1133,11 +1292,47 @@ export default function QueryWorkspace() {
         open={historyOpen}
         locale={locale}
         connections={connections}
+        refreshToken={historyRefreshToken}
         onClose={() => setHistoryOpen(false)}
         onOpenInNewTab={openHistoryInNewTab}
         onReplaceCurrent={replaceCurrentWithHistory}
         onRunAgain={(item) => void runHistoryItem(item, true)}
       />
+
+      {gridFullscreen
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[155] flex items-center justify-center bg-background/76 p-6 backdrop-blur-sm"
+              onMouseDown={() => setGridFullscreen(false)}
+            >
+              <div
+                className="flex h-[86vh] w-full max-w-[96vw] flex-col rounded-lg border border-border bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                  <div>
+                    <div className="text-sm font-semibold text-text">{t('resultGridFullscreen')}</div>
+                    <div className="text-xs text-muted">{activeResult?.title ?? t('result')}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setGridFullscreen(false)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+                    >
+                      <Minimize2 size={12} />
+                      {t('close')}
+                    </button>
+                  </div>
+                </div>
+                <div className="min-h-0 flex-1 p-4">
+                  {renderResultsPanel(true)}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
 
       {pendingRiskyExecution ? (
         <DangerousUpdateModal
@@ -1709,4 +1904,25 @@ function buildUpdateSql(
     .join(' AND ');
 
   return `UPDATE ${tableRef} SET ${setClause} WHERE ${whereClause}`;
+}
+
+function buildDeleteSql(
+  schemaName: string | null,
+  tableName: string,
+  row: Record<string, unknown>,
+  pkCols: import('./../../features/database/types').MetadataColumn[],
+  engine: DatabaseEngine,
+): string {
+  const qi = (n: string) => quoteIdentifier(n, engine);
+  const tableRef = schemaName ? `${qi(schemaName)}.${qi(tableName)}` : qi(tableName);
+
+  const whereClause = pkCols
+    .map((pk) => {
+      const pkVal = row[pk.columnName];
+      const rawPkStr = pkVal === null || pkVal === undefined ? null : String(pkVal);
+      return `${qi(pk.columnName)} = ${quoteValue(rawPkStr, pk.dataType, engine)}`;
+    })
+    .join(' AND ');
+
+  return `DELETE FROM ${tableRef} WHERE ${whereClause}`;
 }
