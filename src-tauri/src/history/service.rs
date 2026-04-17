@@ -40,6 +40,17 @@ impl HistoryState {
         Ok(())
     }
 
+    /// Records history in a background task — does not block the caller.
+    pub fn record_spawned(&self, item: NewQueryHistoryItem) {
+        let pool = self.pool.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = repository::insert(&pool, &item).await {
+                eprintln!("[history] Failed to record query: {error}");
+            }
+            let _ = repository::trim_excess(&pool, MAX_HISTORY_ITEMS).await;
+        });
+    }
+
     pub async fn list(&self, filter: QueryHistoryFilter) -> Result<Vec<QueryHistoryItem>, String> {
         repository::list(&self.pool, &filter).await
     }
