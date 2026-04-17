@@ -70,9 +70,20 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "PulseSQL ${{ github.ref_name }}"
-          releaseBody: "Desktop builds for macOS (Apple Silicon + Intel), Windows, and Linux."
+          releaseBody: "Desktop builds for macOS (Apple Silicon), Windows, and Linux."
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+  publish-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish release
+        run: gh release edit "${{ github.ref_name }}" --draft=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
