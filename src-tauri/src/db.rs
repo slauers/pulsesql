@@ -17,6 +17,8 @@ pub struct ColumnDef {
     pub nullable: Option<bool>,
     pub default_value: Option<String>,
     pub is_auto_increment: Option<bool>,
+    pub is_primary_key: Option<bool>,
+    pub is_foreign_key: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
