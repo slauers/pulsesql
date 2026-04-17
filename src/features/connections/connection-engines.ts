@@ -5,6 +5,8 @@ export interface EngineDefinition {
   label: string;
   defaultPort: number;
   defaultDatabase: string;
+  defaultHost: string;
+  defaultUser: string;
   placeholderHost: string;
   placeholderDatabase: string;
   databaseLabel: string;
@@ -16,6 +18,8 @@ export const ENGINE_DEFINITIONS: Record<DatabaseEngine, EngineDefinition> = {
     label: 'PostgreSQL',
     defaultPort: 5432,
     defaultDatabase: 'postgres',
+    defaultHost: 'localhost',
+    defaultUser: 'postgres',
     placeholderHost: 'localhost',
     placeholderDatabase: 'postgres',
     databaseLabel: 'Database',
@@ -25,6 +29,8 @@ export const ENGINE_DEFINITIONS: Record<DatabaseEngine, EngineDefinition> = {
     label: 'MySQL',
     defaultPort: 3306,
     defaultDatabase: '',
+    defaultHost: 'localhost',
+    defaultUser: 'root',
     placeholderHost: 'localhost',
     placeholderDatabase: 'mysql',
     databaseLabel: 'Database',
@@ -33,15 +39,28 @@ export const ENGINE_DEFINITIONS: Record<DatabaseEngine, EngineDefinition> = {
     id: 'oracle',
     label: 'Oracle',
     defaultPort: 1521,
-    defaultDatabase: 'FREEPDB1',
+    defaultDatabase: 'ORCL',
+    defaultHost: 'localhost',
+    defaultUser: 'system',
     placeholderHost: 'localhost',
-    placeholderDatabase: 'FREEPDB1',
+    placeholderDatabase: 'ORCL',
     databaseLabel: 'Service Name',
   },
 };
 
-export function createDefaultConnectionForm(engine: DatabaseEngine = 'postgres'): Partial<ConnectionConfig> {
+export function getEngineFieldDefaults(engine: DatabaseEngine) {
   const definition = ENGINE_DEFINITIONS[engine];
+
+  return {
+    host: definition.defaultHost,
+    port: definition.defaultPort,
+    database: definition.defaultDatabase,
+    user: definition.defaultUser,
+  };
+}
+
+export function createDefaultConnectionForm(engine: DatabaseEngine = 'postgres'): Partial<ConnectionConfig> {
+  const fieldDefaults = getEngineFieldDefaults(engine);
 
   return {
     name:
@@ -51,10 +70,10 @@ export function createDefaultConnectionForm(engine: DatabaseEngine = 'postgres')
           ? 'Local MySQL'
           : 'Local Oracle',
     engine,
-    host: definition.placeholderHost,
-    port: undefined,
-    user: engine === 'postgres' ? 'postgres' : engine === 'mysql' ? 'root' : 'system',
-    database: definition.defaultDatabase,
+    host: fieldDefaults.host,
+    port: fieldDefaults.port,
+    user: fieldDefaults.user,
+    database: fieldDefaults.database,
     connectTimeoutSeconds: 10,
     autoReconnect: true,
     postgresSslMode: engine === 'postgres' ? 'prefer' : undefined,
