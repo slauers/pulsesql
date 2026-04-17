@@ -6,6 +6,8 @@ export interface ColumnDef {
   nullable?: boolean | null;
   default_value?: string | null;
   is_auto_increment?: boolean | null;
+  is_primary_key?: boolean | null;
+  is_foreign_key?: boolean | null;
 }
 
 export interface MetadataColumn {
@@ -14,6 +16,8 @@ export interface MetadataColumn {
   nullable: boolean | null;
   defaultValue: string | null;
   isAutoIncrement: boolean | null;
+  isPrimaryKey: boolean | null;
+  isForeignKey: boolean | null;
 }
 
 export interface MetadataTableEntry {
@@ -47,5 +51,7 @@ export function normalizeColumnDef(column: ColumnDef): MetadataColumn {
     nullable: typeof column.nullable === 'boolean' ? column.nullable : null,
     defaultValue: typeof column.default_value === 'string' ? column.default_value.trim() || null : null,
     isAutoIncrement: typeof column.is_auto_increment === 'boolean' ? column.is_auto_increment : null,
+    isPrimaryKey: typeof column.is_primary_key === 'boolean' ? column.is_primary_key : null,
+    isForeignKey: typeof column.is_foreign_key === 'boolean' ? column.is_foreign_key : null,
   };
 }
