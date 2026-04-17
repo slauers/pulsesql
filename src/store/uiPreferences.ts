@@ -7,6 +7,7 @@ type SemanticBackgroundState = 'idle' | 'running' | 'success' | 'warning' | 'err
 interface UiPreferencesState {
   locale: AppLocale;
   semanticBackgroundEnabled: boolean;
+  showServerTimeInStatusBar: boolean;
   semanticBackgroundState: SemanticBackgroundState;
   semanticBackgroundVersion: number;
   resultPageSize: number;
@@ -20,6 +21,7 @@ interface UiPreferencesState {
   newQueryTabShortcut: string;
   closeQueryTabShortcut: string;
   setSemanticBackgroundEnabled: (enabled: boolean) => void;
+  setShowServerTimeInStatusBar: (enabled: boolean) => void;
   setLocale: (locale: AppLocale) => void;
   setSemanticBackgroundState: (state: SemanticBackgroundState) => void;
   setResultPageSize: (pageSize: number) => void;
@@ -39,6 +41,7 @@ const systemConfig = readSystemConfig();
 export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
   locale: systemConfig.ui.locale,
   semanticBackgroundEnabled: systemConfig.ui.semanticBackgroundEnabled,
+  showServerTimeInStatusBar: systemConfig.ui.showServerTimeInStatusBar,
   resultPageSize: systemConfig.ui.resultPageSize,
   themeId: systemConfig.ui.themeId,
   density: systemConfig.ui.density,
@@ -72,6 +75,17 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
         },
       }));
       return { semanticBackgroundEnabled: enabled };
+    }),
+  setShowServerTimeInStatusBar: (enabled) =>
+    set(() => {
+      updateSystemConfig((current) => ({
+        ...current,
+        ui: {
+          ...current.ui,
+          showServerTimeInStatusBar: enabled,
+        },
+      }));
+      return { showServerTimeInStatusBar: enabled };
     }),
   setSemanticBackgroundState: (state) =>
     set((current) => ({

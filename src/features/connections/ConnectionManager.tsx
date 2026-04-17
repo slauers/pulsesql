@@ -44,6 +44,10 @@ type ConnectionContextMenuState = {
   connId: string;
 };
 
+type ServerTimePayload = {
+  value: string;
+};
+
 export default function ConnectionManager() {
   const { connections, activeConnectionId, favoriteConnectionId, removeConnection, setActiveConnection, setFavoriteConnection } =
     useConnectionsStore();
@@ -66,6 +70,7 @@ export default function ConnectionManager() {
   const setLogsExpanded = useConnectionRuntimeStore((state) => state.setLogsExpanded);
   const removeConnectionRuntime = useConnectionRuntimeStore((state) => state.removeConnectionRuntime);
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
+  const showServerTimeInStatusBar = useUiPreferencesStore((state) => state.showServerTimeInStatusBar);
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
   const locale = useUiPreferencesStore((state) => state.locale);
   const sidebarWidth = useUiPreferencesStore((state) => state.sidebarWidth);
@@ -79,10 +84,12 @@ export default function ConnectionManager() {
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [connectionContextMenu, setConnectionContextMenu] = useState<ConnectionContextMenuState | null>(null);
   const [expandedLogsConnectionId, setExpandedLogsConnectionId] = useState<string | null>(null);
+  const [serverTimeValue, setServerTimeValue] = useState<string | null>(null);
   const [compactViewport, setCompactViewport] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth < 980 || window.innerHeight < 700 : false,
   );
   const semanticToggleRef = useRef<HTMLButtonElement | null>(null);
+  const serverTimeRequestInFlightRef = useRef(false);
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
@@ -94,6 +101,7 @@ export default function ConnectionManager() {
   const statusBarState = statusBarConnection ? resolveRuntimeConnectionState(runtimeStatus, statusBarConnection.id) : 'disconnected';
   const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
     translate(locale, key, params);
+  const activeConnectionState = activeConnection ? resolveRuntimeConnectionState(runtimeStatus, activeConnection.id) : 'disconnected';
   const statusBarText =
     activeSchema && !activeSchemaMetadata?.tablesLoadedAt && !activeSchemaMetadata?.tablesError
       ? `${t('loadingTables')} • ${activeSchema}`
@@ -106,6 +114,10 @@ export default function ConnectionManager() {
               : activeConnectionId
                 ? t('ready')
                 : t('noActiveConnection');
+  const serverTimeIndicator =
+    showServerTimeInStatusBar && activeConnectionState === 'connected' && serverTimeValue
+      ? `${t('serverTimePrefix')} ${serverTimeValue}`
+      : null;
   const effectiveSidebarWidth = sidebarCollapsed ? 68 : compactViewport ? Math.min(sidebarWidth, 260) : sidebarWidth;
 
   useEffect(() => {
@@ -138,6 +150,52 @@ export default function ConnectionManager() {
       window.removeEventListener('resize', updateViewportMode);
     };
   }, []);
+
+  useEffect(() => {
+    if (!showServerTimeInStatusBar || !activeConnection || activeConnectionState !== 'connected') {
+      setServerTimeValue(null);
+      serverTimeRequestInFlightRef.current = false;
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollServerTime = async () => {
+      if (serverTimeRequestInFlightRef.current) {
+        return;
+      }
+
+      serverTimeRequestInFlightRef.current = true;
+
+      try {
+        const payload = await invoke<ServerTimePayload>('get_server_time', {
+          connId: activeConnection.id,
+        });
+
+        if (!cancelled) {
+          setServerTimeValue(payload.value);
+        }
+      } catch {
+        if (!cancelled) {
+          setServerTimeValue(null);
+        }
+      } finally {
+        serverTimeRequestInFlightRef.current = false;
+      }
+    };
+
+    void pollServerTime();
+    const intervalId = window.setInterval(() => {
+      void pollServerTime();
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      setServerTimeValue(null);
+      serverTimeRequestInFlightRef.current = false;
+    };
+  }, [activeConnection, activeConnectionState, showServerTimeInStatusBar]);
 
   useEffect(() => {
     const handleToggleSidebar = () => {
@@ -655,6 +713,12 @@ export default function ConnectionManager() {
                 {semanticBackgroundEnabled ? 'ON' : 'OFF'}
               </button>
             </span>
+            {serverTimeIndicator ? (
+              <>
+                <span className="hidden md:inline text-muted/70">•</span>
+                <span className="hidden md:inline text-slate-200/90">{serverTimeIndicator}</span>
+              </>
+            ) : null}
           </div>
           {statusBarConnection ? (
             <div className="flex items-center gap-2 shrink-0">

@@ -20,6 +20,7 @@ export default function ConfigurationDialog({
   onClose: () => void;
 }) {
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
+  const showServerTimeInStatusBar = useUiPreferencesStore((state) => state.showServerTimeInStatusBar);
   const locale = useUiPreferencesStore((state) => state.locale);
   const resultPageSize = useUiPreferencesStore((state) => state.resultPageSize);
   const themeId = useUiPreferencesStore((state) => state.themeId);
@@ -32,6 +33,7 @@ export default function ConfigurationDialog({
   const newQueryTabShortcut = useUiPreferencesStore((state) => state.newQueryTabShortcut);
   const closeQueryTabShortcut = useUiPreferencesStore((state) => state.closeQueryTabShortcut);
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
+  const setShowServerTimeInStatusBar = useUiPreferencesStore((state) => state.setShowServerTimeInStatusBar);
   const setLocale = useUiPreferencesStore((state) => state.setLocale);
   const setResultPageSize = useUiPreferencesStore((state) => state.setResultPageSize);
   const setThemeId = useUiPreferencesStore((state) => state.setThemeId);
@@ -49,10 +51,11 @@ export default function ConfigurationDialog({
 
   const currentConfig = useMemo<SystemConfig>(
     () => ({
-      version: 3,
+      version: 4,
       ui: {
         locale,
         semanticBackgroundEnabled,
+        showServerTimeInStatusBar,
         resultPageSize,
         themeId,
         density,
@@ -83,6 +86,7 @@ export default function ConfigurationDialog({
       newQueryTabShortcut,
       resultPageSize,
       semanticBackgroundEnabled,
+      showServerTimeInStatusBar,
       sidebarCollapsed,
       sidebarWidth,
       themeId,
@@ -120,6 +124,7 @@ export default function ConfigurationDialog({
 
     setLocale(nextConfig.ui.locale);
     setSemanticBackgroundEnabled(nextConfig.ui.semanticBackgroundEnabled);
+    setShowServerTimeInStatusBar(nextConfig.ui.showServerTimeInStatusBar);
     setResultPageSize(nextConfig.ui.resultPageSize);
     setThemeId(nextConfig.ui.themeId);
     setDensity(nextConfig.ui.density);
@@ -344,6 +349,27 @@ export default function ConfigurationDialog({
                             ui: {
                               ...current.ui,
                               semanticBackgroundEnabled: event.target.checked,
+                            },
+                          }))
+                        }
+                        className="accent-primary"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
+                      <div>
+                        <div className="text-sm text-text">{translate(locale, 'showServerTimeInStatusBar')}</div>
+                        <div className="text-xs text-muted">{translate(locale, 'showServerTimeInStatusBarDescription')}</div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={draft.ui.showServerTimeInStatusBar}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            ui: {
+                              ...current.ui,
+                              showServerTimeInStatusBar: event.target.checked,
                             },
                           }))
                         }
@@ -618,10 +644,11 @@ function normalizeJsonConfig(input: unknown): SystemConfig {
     raw.startup && typeof raw.startup === 'object' ? (raw.startup as Record<string, unknown>) : {};
 
   return {
-    version: 3,
+    version: 4,
     ui: {
       locale: ui.locale === 'en-US' ? 'en-US' : 'pt-BR',
       semanticBackgroundEnabled: ui.semanticBackgroundEnabled !== false,
+      showServerTimeInStatusBar: ui.showServerTimeInStatusBar === true,
       resultPageSize: normalizePageSize(ui.resultPageSize),
       themeId: normalizeThemeId(ui.themeId),
       density: normalizeDensity(ui.density),

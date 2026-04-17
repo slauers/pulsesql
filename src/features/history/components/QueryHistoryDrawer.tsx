@@ -11,6 +11,7 @@ export default function QueryHistoryDrawer({
   open,
   locale,
   connections,
+  refreshToken,
   onClose,
   onOpenInNewTab,
   onReplaceCurrent,
@@ -19,6 +20,7 @@ export default function QueryHistoryDrawer({
   open: boolean;
   locale: AppLocale;
   connections: ConnectionConfig[];
+  refreshToken?: number;
   onClose: () => void;
   onOpenInNewTab: (item: QueryHistoryItem) => void;
   onReplaceCurrent: (item: QueryHistoryItem) => void;
@@ -67,6 +69,14 @@ export default function QueryHistoryDrawer({
       window.removeEventListener('pointerup', handlePointerUp);
     };
   }, [resizing]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    void refresh();
+  }, [open, refreshToken]);
 
   return (
     <>
