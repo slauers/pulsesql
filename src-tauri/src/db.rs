@@ -84,6 +84,11 @@ pub struct ExecuteQueryPayload {
     pub history_item_id: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ServerTimePayload {
+    pub value: String,
+}
+
 fn resolve_runtime_target(
     config: &ConnectionConfig,
 ) -> Result<(String, u16, Option<SshTunnelHandle>), String> {
@@ -347,6 +352,30 @@ pub async fn execute_query(
 }
 
 #[tauri::command]
+pub async fn get_server_time(
+    state: tauri::State<'_, DbState>,
+    conn_id: String,
+) -> Result<ServerTimePayload, String> {
+    let pool = get_connection_pool(&state, &conn_id).await?;
+    let query = match &pool {
+        ConnectionPool::Postgres(_) | ConnectionPool::Mysql(_) => "SELECT NOW()",
+        ConnectionPool::Oracle(_) => "SELECT SYSDATE FROM DUAL",
+    };
+
+    let result = match pool {
+        ConnectionPool::Postgres(pool) => postgres::execute_query(&pool, query, None, None).await,
+        ConnectionPool::Mysql(pool) => mysql::execute_query(&pool, query, None, None).await,
+        ConnectionPool::Oracle(connection) => {
+            oracle::execute_query(&connection, query, None, None).await
+        }
+    }?;
+
+    Ok(ServerTimePayload {
+        value: extract_server_time_value(&result)?,
+    })
+}
+
+#[tauri::command]
 pub async fn list_query_history(
     history: tauri::State<'_, HistoryState>,
     filter: Option<QueryHistoryFilter>,
@@ -405,4 +434,51 @@ fn now_iso_like() -> String {
         .map(|duration| duration.as_millis())
         .unwrap_or_default();
     millis.to_string()
+}
+
+fn extract_server_time_value(result: &QueryResult) -> Result<String, String> {
+    let row = result
+        .rows
+        .first()
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Failed to decode server time: no row returned".to_string())?;
+
+    let value = row
+        .values()
+        .find_map(extract_time_fragment)
+        .ok_or_else(|| "Failed to decode server time: unsupported value".to_string())?;
+
+    Ok(value)
+}
+
+fn extract_time_fragment(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => extract_hms_fragment(text),
+        Value::Number(number) => extract_hms_fragment(&number.to_string()),
+        _ => None,
+    }
+}
+
+fn extract_hms_fragment(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    if bytes.len() < 8 {
+        return None;
+    }
+
+    for start in 0..=bytes.len() - 8 {
+        let candidate = &bytes[start..start + 8];
+        if candidate[2] == b':'
+            && candidate[5] == b':'
+            && candidate[0].is_ascii_digit()
+            && candidate[1].is_ascii_digit()
+            && candidate[3].is_ascii_digit()
+            && candidate[4].is_ascii_digit()
+            && candidate[6].is_ascii_digit()
+            && candidate[7].is_ascii_digit()
+        {
+            return Some(input[start..start + 8].to_string());
+        }
+    }
+
+    None
 }

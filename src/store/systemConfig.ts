@@ -3,6 +3,7 @@ export interface SystemConfig {
   ui: {
     locale: 'pt-BR' | 'en-US';
     semanticBackgroundEnabled: boolean;
+    showServerTimeInStatusBar: boolean;
     resultPageSize: number;
     themeId: string;
     density: 'compact' | 'comfortable';
@@ -63,10 +64,11 @@ export function updateSystemConfig(updater: (current: SystemConfig) => SystemCon
 
 export function defaultSystemConfig(): SystemConfig {
   return {
-    version: 3,
+    version: 4,
     ui: {
       locale: 'pt-BR',
       semanticBackgroundEnabled: true,
+      showServerTimeInStatusBar: false,
       resultPageSize: 100,
       themeId: 'pulsesql-dark',
       density: 'comfortable',
@@ -99,10 +101,11 @@ function normalizeSystemConfig(input: unknown): SystemConfig {
     raw.startup && typeof raw.startup === 'object' ? (raw.startup as Record<string, unknown>) : {};
 
   return {
-    version: typeof raw.version === 'number' ? raw.version : 3,
+    version: typeof raw.version === 'number' ? raw.version : 4,
     ui: {
       locale: normalizeLocale(ui.locale),
       semanticBackgroundEnabled: ui.semanticBackgroundEnabled !== false,
+      showServerTimeInStatusBar: ui.showServerTimeInStatusBar === true,
       resultPageSize: normalizePageSize(ui.resultPageSize),
       themeId: normalizeThemeId(ui.themeId),
       density: normalizeDensity(ui.density),
@@ -142,6 +145,7 @@ function readLegacyUiPreferences(defaults: SystemConfig['ui']): SystemConfig['ui
     return {
       locale: defaults.locale,
       semanticBackgroundEnabled: parsed.semanticBackgroundEnabled !== false,
+      showServerTimeInStatusBar: defaults.showServerTimeInStatusBar,
       resultPageSize: normalizePageSize(parsed.resultPageSize),
       themeId: defaults.themeId,
       density: defaults.density,
