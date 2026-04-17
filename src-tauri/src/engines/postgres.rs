@@ -2,8 +2,8 @@ use crate::connection::types::ConnectionConfig;
 use crate::db::{ColumnDef, QueryColumnMeta, QueryResult};
 use serde_json::{json, Value};
 use sqlx::{
-    pool::PoolConnection, postgres::PgConnection, postgres::PgPoolOptions, raw_sql, Column,
-    PgPool, Postgres, Row, TypeInfo,
+    pool::PoolConnection, postgres::PgConnection, postgres::PgPoolOptions, raw_sql, PgPool,
+    Postgres, Row,
 };
 use std::time::{Duration, Instant};
 
@@ -45,9 +45,11 @@ pub async fn test_connection(url: &str, timeout_seconds: u64) -> Result<(), Stri
 pub async fn open_connection(url: &str, timeout_seconds: u64) -> Result<PgPool, String> {
     PgPoolOptions::new()
         .max_connections(5)
+        .min_connections(2)
         .acquire_timeout(Duration::from_secs(timeout_seconds))
-        .idle_timeout(Duration::from_secs(60))
-        .test_before_acquire(true)
+        .idle_timeout(Duration::from_secs(300))
+        .max_lifetime(Duration::from_secs(3600))
+        .test_before_acquire(false)
         .connect(url)
         .await
         .map_err(|error| format!("Failed to open PostgreSQL connection: {error}"))
@@ -180,13 +182,10 @@ async fn execute_query_on_pool(
                  LIMIT {normalized_page_size} OFFSET {offset}"
             );
 
-            let meta_sql = format!(
-                "SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1"
-            );
-
-            // Run COUNT, metadata and data queries in parallel.
+            // Run COUNT and data queries in parallel.
             // When total rows is already known (page navigation), skip the COUNT query.
-            let (total_rows, meta_rows, rows) = tokio::try_join!(
+            let t_queries = Instant::now();
+            let (total_rows, rows_raw) = tokio::try_join!(
                 async {
                     match known_total_rows {
                         Some(known) => Ok::<i64, String>(known as i64),
@@ -194,15 +193,18 @@ async fn execute_query_on_pool(
                     }
                 },
                 async {
-                    raw_sql(&meta_sql)
+                    raw_sql(&data_sql)
                         .fetch_all(pool)
                         .await
                         .map_err(|error| error.to_string())
                 },
-                fetch_json_rows_on_pool(pool, &data_sql),
             )?;
+            eprintln!("[pg] parallel COUNT+data: {}ms", t_queries.elapsed().as_millis());
 
-            let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
+            let t_decode = Instant::now();
+            let (columns, column_meta) = extract_columns_and_meta_from_jsonb(&rows_raw);
+            let rows = decode_jsonb_rows(rows_raw)?;
+            eprintln!("[pg] decode+meta: {}ms | total: {}ms", t_decode.elapsed().as_millis(), started_at.elapsed().as_millis());
 
             Ok(QueryResult {
                 columns,
@@ -220,22 +222,15 @@ async fn execute_query_on_pool(
                  FROM ({trimmed}) AS blacktable_row"
             );
 
-            let meta_sql = format!(
-                "SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1"
-            );
+            let t_query = Instant::now();
+            let rows_raw = raw_sql(&data_sql)
+                .fetch_all(pool)
+                .await
+                .map_err(|error| error.to_string())?;
+            eprintln!("[pg] SHOW/EXPLAIN data: {}ms", t_query.elapsed().as_millis());
 
-            // Run metadata and data queries in parallel.
-            let (meta_rows, rows) = tokio::try_join!(
-                async {
-                    raw_sql(&meta_sql)
-                        .fetch_all(pool)
-                        .await
-                        .map_err(|error| error.to_string())
-                },
-                fetch_json_rows_on_pool(pool, &data_sql),
-            )?;
-
-            let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
+            let (columns, column_meta) = extract_columns_and_meta_from_jsonb(&rows_raw);
+            let rows = decode_jsonb_rows(rows_raw)?;
 
             Ok(QueryResult {
                 columns,
@@ -301,22 +296,19 @@ async fn execute_query_on_active_connection(
                  LIMIT {normalized_page_size} OFFSET {offset}"
             );
 
-            let meta_sql = format!("SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1");
-
             // Single connection — cannot parallelize; skip COUNT when already known.
             let total_rows = match known_total_rows {
                 Some(known) => known as i64,
                 None => fetch_total_rows_on_connection(connection, &count_sql).await?,
             };
 
-            let meta_rows = raw_sql(&meta_sql)
+            let rows_raw = raw_sql(&data_sql)
                 .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
 
-            let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
-
-            let rows = fetch_json_rows_on_connection(connection, &data_sql).await?;
+            let (columns, column_meta) = extract_columns_and_meta_from_jsonb(&rows_raw);
+            let rows = decode_jsonb_rows(rows_raw)?;
 
             Ok(QueryResult {
                 columns,
@@ -334,16 +326,13 @@ async fn execute_query_on_active_connection(
                  FROM ({trimmed}) AS blacktable_row"
             );
 
-            let meta_sql = format!("SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1");
-
-            let meta_rows = raw_sql(&meta_sql)
+            let rows_raw = raw_sql(&data_sql)
                 .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
 
-            let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
-
-            let rows = fetch_json_rows_on_connection(connection, &data_sql).await?;
+            let (columns, column_meta) = extract_columns_and_meta_from_jsonb(&rows_raw);
+            let rows = decode_jsonb_rows(rows_raw)?;
 
             Ok(QueryResult {
                 columns,
@@ -416,12 +405,7 @@ async fn fetch_total_rows_on_connection(
         .map_err(|error| format!("Failed to decode PostgreSQL total row count: {error}"))
 }
 
-async fn fetch_json_rows_on_pool(pool: &PgPool, sql: &str) -> Result<Vec<Value>, String> {
-    let rows = raw_sql(sql)
-        .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
-
+fn decode_jsonb_rows(rows: Vec<sqlx::postgres::PgRow>) -> Result<Vec<Value>, String> {
     rows.into_iter()
         .map(|row| match row.try_get::<Value, _>("__blacktable_json") {
             Ok(value) => Ok(value),
@@ -430,44 +414,39 @@ async fn fetch_json_rows_on_pool(pool: &PgPool, sql: &str) -> Result<Vec<Value>,
         .collect()
 }
 
-async fn fetch_json_rows_on_connection(
-    connection: &mut PgConnection,
-    sql: &str,
-) -> Result<Vec<Value>, String> {
-    let rows = raw_sql(sql)
-        .fetch_all(&mut *connection)
-        .await
-        .map_err(|error| error.to_string())?;
+/// Extracts column names and type metadata by inspecting the JSON keys of the first row.
+/// The `to_jsonb` wrapper preserves the original column names as JSON keys and PG knows
+/// the types from the inner query, but we only have the JSON value here — so we infer the
+/// data_type from the JSON value type. This is sufficient for the frontend display.
+fn extract_columns_and_meta_from_jsonb(
+    rows: &[sqlx::postgres::PgRow],
+) -> (Vec<String>, Vec<QueryColumnMeta>) {
+    let first = rows.first().and_then(|row| row.try_get::<Value, _>("__blacktable_json").ok());
 
-    rows.into_iter()
-        .map(|row| match row.try_get::<Value, _>("__blacktable_json") {
-            Ok(value) => Ok(value),
-            Err(error) => Err(format!("Failed to decode PostgreSQL row JSON: {error}")),
-        })
-        .collect()
-}
-
-fn extract_columns_and_meta(rows: &[sqlx::postgres::PgRow]) -> (Vec<String>, Vec<QueryColumnMeta>) {
-    rows.first()
-        .map(|row| {
-            let columns = row
-                .columns()
+    match first {
+        Some(Value::Object(map)) => {
+            let columns: Vec<String> = map.keys().cloned().collect();
+            let column_meta: Vec<QueryColumnMeta> = map
                 .iter()
-                .map(|column| column.name().to_string())
-                .collect::<Vec<_>>();
-
-            let column_meta = row
-                .columns()
-                .iter()
-                .map(|column| QueryColumnMeta {
-                    name: column.name().to_string(),
-                    data_type: column.type_info().name().to_string(),
+                .map(|(k, v)| QueryColumnMeta {
+                    name: k.clone(),
+                    data_type: json_value_type_name(v).to_string(),
                 })
-                .collect::<Vec<_>>();
-
+                .collect();
             (columns, column_meta)
-        })
-        .unwrap_or_else(|| (Vec::new(), Vec::new()))
+        }
+        _ => (Vec::new(), Vec::new()),
+    }
+}
+
+fn json_value_type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Number(n) if n.is_i64() || n.is_u64() => "BIGINT",
+        Value::Number(_) => "FLOAT8",
+        Value::Bool(_) => "BOOL",
+        Value::Null => "TEXT",
+        _ => "TEXT",
+    }
 }
 
 fn is_result_set_query(query: &str) -> bool {
