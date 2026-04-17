@@ -4,6 +4,7 @@ export interface SystemConfig {
     locale: 'pt-BR' | 'en-US';
     semanticBackgroundEnabled: boolean;
     showServerTimeInStatusBar: boolean;
+    showAutocommitInStatusBar: boolean;
     resultPageSize: number;
     themeId: string;
     density: 'compact' | 'comfortable';
@@ -69,6 +70,7 @@ export function defaultSystemConfig(): SystemConfig {
       locale: 'pt-BR',
       semanticBackgroundEnabled: true,
       showServerTimeInStatusBar: false,
+      showAutocommitInStatusBar: true,
       resultPageSize: 100,
       themeId: 'pulsesql-dark',
       density: 'comfortable',
@@ -106,6 +108,7 @@ function normalizeSystemConfig(input: unknown): SystemConfig {
       locale: normalizeLocale(ui.locale),
       semanticBackgroundEnabled: ui.semanticBackgroundEnabled !== false,
       showServerTimeInStatusBar: ui.showServerTimeInStatusBar === true,
+      showAutocommitInStatusBar: ui.showAutocommitInStatusBar !== false,
       resultPageSize: normalizePageSize(ui.resultPageSize),
       themeId: normalizeThemeId(ui.themeId),
       density: normalizeDensity(ui.density),
@@ -146,6 +149,7 @@ function readLegacyUiPreferences(defaults: SystemConfig['ui']): SystemConfig['ui
       locale: defaults.locale,
       semanticBackgroundEnabled: parsed.semanticBackgroundEnabled !== false,
       showServerTimeInStatusBar: defaults.showServerTimeInStatusBar,
+      showAutocommitInStatusBar: defaults.showAutocommitInStatusBar,
       resultPageSize: normalizePageSize(parsed.resultPageSize),
       themeId: defaults.themeId,
       density: defaults.density,

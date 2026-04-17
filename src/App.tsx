@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ChevronDown, CircleHelp, Command, Info, Settings2, SquareTerminal, Waypoints } from 'lucide-react';
 import brandMark from './assets/pulsesql-mark.svg';
+import tauriConfig from '../src-tauri/tauri.conf.json';
 import ConnectionManager from './features/connections/ConnectionManager';
 import ConfigurationDialog from './features/settings/ConfigurationDialog';
 import { useQueriesStore } from './store/queries';
@@ -512,6 +513,7 @@ function App() {
         subtitle={translate(locale, 'aboutSubtitle')}
         lines={[
           translate(locale, 'aboutLine1'),
+          `${translate(locale, 'aboutVersion')}: ${tauriConfig.version}`,
           translate(locale, 'aboutLine2'),
           translate(locale, 'aboutLine3'),
         ]}

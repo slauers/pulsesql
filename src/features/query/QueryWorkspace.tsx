@@ -74,12 +74,6 @@ interface ExecuteQueryPayload {
   transaction_open: boolean;
 }
 
-interface ConnectionTransactionStatePayload {
-  autocommit_enabled: boolean;
-  transaction_open: boolean;
-  supported: boolean;
-}
-
 const SEMANTIC_SUCCESS_DURATION_MS = 3600;
 const SEMANTIC_ERROR_DURATION_MS = 6200;
 const SEMANTIC_WARNING_DURATION_MS = 6200;
@@ -101,7 +95,6 @@ export default function QueryWorkspace() {
   } = useQueriesStore();
   const { activeConnectionId, connections, setActiveConnection } = useConnectionsStore();
   const runtimeStatusMap = useConnectionRuntimeStore((state) => state.runtimeStatus);
-  const autocommitByConnection = useConnectionRuntimeStore((state) => state.autocommitByConnection);
   const transactionOpenByConnection = useConnectionRuntimeStore((state) => state.transactionOpenByConnection);
   const setRuntimeStatus = useConnectionRuntimeStore((state) => state.setRuntimeStatus);
   const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
@@ -130,9 +123,7 @@ export default function QueryWorkspace() {
   const schemaLabel = resolvedConnectionId ? activeSchemaByConnection[resolvedConnectionId] ?? selectedConnection?.preferredSchema : undefined;
   const runtimeStatus = resolvedConnectionId ? runtimeStatusMap[resolvedConnectionId] : undefined;
   const isConnectionReady = runtimeStatus === 'connected';
-  const autocommitEnabled = resolvedConnectionId ? autocommitByConnection[resolvedConnectionId] ?? true : true;
   const transactionOpen = resolvedConnectionId ? transactionOpenByConnection[resolvedConnectionId] === true : false;
-  const autocommitSupported = engine !== 'oracle';
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<QueryErrorPresentation | null>(null);
@@ -260,7 +251,7 @@ export default function QueryWorkspace() {
     }, durationMs);
   }, [setSemanticBackgroundState]);
 
-  const syncTransactionState = useCallback((connectionId: string, payload: ExecuteQueryPayload | ConnectionTransactionStatePayload) => {
+  const syncTransactionState = useCallback((connectionId: string, payload: ExecuteQueryPayload) => {
     setAutocommitEnabled(connectionId, payload.autocommit_enabled);
     setTransactionOpen(connectionId, payload.transaction_open);
   }, [setAutocommitEnabled, setTransactionOpen]);
@@ -844,18 +835,6 @@ export default function QueryWorkspace() {
     selectedSourceRowIndex,
   ]);
 
-  const handleAutocommitToggle = useCallback(async () => {
-    if (!resolvedConnectionId || !autocommitSupported) {
-      return;
-    }
-
-    const payload = await invoke<ConnectionTransactionStatePayload>('set_connection_autocommit', {
-      connId: resolvedConnectionId,
-      enabled: !autocommitEnabled,
-    });
-    syncTransactionState(resolvedConnectionId, payload);
-  }, [autocommitEnabled, autocommitSupported, resolvedConnectionId, syncTransactionState]);
-
   const handleTransactionAction = useCallback(async (action: 'COMMIT' | 'ROLLBACK') => {
     if (!resolvedConnectionId) {
       return;
@@ -966,19 +945,6 @@ export default function QueryWorkspace() {
               {canPaginate ? <span>{t('pageOf', { page: currentPage, total: totalPages })}</span> : null}
               <span>{activeResult.execution_time}ms</span>
             </div>
-            {autocommitSupported ? (
-              <button
-                type="button"
-                onClick={() => void handleAutocommitToggle()}
-                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                  autocommitEnabled
-                    ? 'border-emerald-400/35 bg-emerald-400/12 text-emerald-200 hover:bg-emerald-400/18'
-                    : 'border-amber-400/35 bg-amber-400/12 text-amber-200 hover:bg-amber-400/18'
-                }`}
-              >
-                {autocommitEnabled ? t('autocommitOn') : t('autocommitOff')}
-              </button>
-            ) : null}
             {transactionOpen ? (
               <>
                 <span className="inline-flex items-center rounded-lg border border-sky-400/30 bg-sky-400/10 px-2.5 py-1.5 text-xs text-sky-200">
