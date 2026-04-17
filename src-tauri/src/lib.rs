@@ -279,6 +279,7 @@ pub fn run() {
             db::list_tables,
             db::list_columns,
             db::execute_query,
+            db::set_connection_autocommit,
             db::get_server_time,
             db::list_query_history,
             db::delete_query_history_item,
