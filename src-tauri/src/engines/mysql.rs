@@ -39,9 +39,11 @@ pub async fn test_connection(url: &str, timeout_seconds: u64) -> Result<(), Stri
 pub async fn open_connection(url: &str, timeout_seconds: u64) -> Result<MySqlPool, String> {
     MySqlPoolOptions::new()
         .max_connections(5)
+        .min_connections(2)
         .acquire_timeout(Duration::from_secs(timeout_seconds))
-        .idle_timeout(Duration::from_secs(60))
-        .test_before_acquire(true)
+        .idle_timeout(Duration::from_secs(300))
+        .max_lifetime(Duration::from_secs(3600))
+        .test_before_acquire(false)
         .connect(url)
         .await
         .map_err(|error| format!("Failed to open MySQL connection: {error}"))
