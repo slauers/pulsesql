@@ -6,6 +6,8 @@ import { ConnectionConfig, DatabaseEngine, OracleConnectionType, PostgresSslMode
 import AppSelect from '../../components/ui/AppSelect';
 import JdkSetupBanner from './JdkSetupBanner';
 
+type DefaultableField = 'name' | 'host' | 'port' | 'database' | 'user';
+
 const ORACLE_DRIVER_PROPERTIES_PLACEHOLDER = [
   'oracle.net.disableOob=true',
   'oracle.net.CONNECT_TIMEOUT=10000',
@@ -32,6 +34,23 @@ export default function ConnectionForm({
   const [showImportPanel, setShowImportPanel] = useState(false);
   const [connectionString, setConnectionString] = useState('');
   const [importMessage, setImportMessage] = useState('');
+  const [touchedDefaultFields, setTouchedDefaultFields] = useState<Record<DefaultableField, boolean>>(() =>
+    initialConnection
+      ? {
+          name: Boolean(initialConnection.name),
+          host: Boolean(initialConnection.host),
+          port: initialConnection.port !== undefined,
+          database: Boolean(initialConnection.database),
+          user: Boolean(initialConnection.user),
+        }
+      : {
+          name: false,
+          host: false,
+          port: false,
+          database: false,
+          user: false,
+        },
+  );
 
   const currentEngine = formData.engine ?? 'postgres';
   const engineDefinition = ENGINE_DEFINITIONS[currentEngine];
@@ -39,6 +58,9 @@ export default function ConnectionForm({
   const sshAuthMethod = formData.ssh?.authMethod ?? 'password';
 
   const updateField = <K extends keyof ConnectionConfig>(field: K, value: ConnectionConfig[K]) => {
+    if (field === 'name' || field === 'host' || field === 'port' || field === 'database' || field === 'user') {
+      setTouchedDefaultFields((current) => ({ ...current, [field]: true }));
+    }
     setFormData((current) => ({ ...current, [field]: value }));
   };
 
@@ -64,11 +86,12 @@ export default function ConnectionForm({
     const defaults = createDefaultConnectionForm(engine);
     setFormData((current) => ({
       ...current,
+      name: touchedDefaultFields.name ? current.name : defaults.name,
       engine,
-      port: defaults.port,
-      database: current.database && current.engine === engine ? current.database : defaults.database,
-      host: current.host || defaults.host,
-      user: defaults.user,
+      host: touchedDefaultFields.host ? current.host : defaults.host,
+      port: touchedDefaultFields.port ? current.port : defaults.port,
+      database: touchedDefaultFields.database ? current.database : defaults.database,
+      user: touchedDefaultFields.user ? current.user : defaults.user,
       connectTimeoutSeconds: current.connectTimeoutSeconds ?? defaults.connectTimeoutSeconds,
       autoReconnect: current.autoReconnect ?? defaults.autoReconnect,
       postgresSslMode: engine === 'postgres' ? current.postgresSslMode ?? defaults.postgresSslMode : undefined,
@@ -142,6 +165,13 @@ export default function ConnectionForm({
       name: current.name && current.name.trim().length > 0 ? current.name : imported.name,
       ssh: current.ssh ?? imported.ssh,
     }));
+    setTouchedDefaultFields({
+      name: Boolean(currentNameOrImportedName(formData.name, imported.name)),
+      host: Boolean(imported.host),
+      port: imported.port !== undefined,
+      database: Boolean(imported.database),
+      user: Boolean(imported.user),
+    });
     setImportMessage('Connection string importada com sucesso.');
     setTestState('idle');
     setTestMessage('');
@@ -556,6 +586,18 @@ export default function ConnectionForm({
     </div>
     </div>
   );
+}
+
+function currentNameOrImportedName(currentName: string | undefined, importedName: string | undefined): string | undefined {
+  if (currentName && currentName.trim().length > 0) {
+    return currentName;
+  }
+
+  if (importedName && importedName.trim().length > 0) {
+    return importedName;
+  }
+
+  return undefined;
 }
 
 function buildPayload(formData: Partial<ConnectionConfig>): ConnectionConfig | null {
