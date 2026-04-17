@@ -34,6 +34,14 @@ https://github.com/slauers/pulsesql/releases
 - Download the `.dmg` from GitHub Releases
 - Homebrew support is planned, but not published yet
 
+> **First launch:** macOS may show "PulseSQL is damaged and cannot be opened." This happens because the app is not yet signed with an Apple Developer certificate. To fix it, run the following command in Terminal after installing:
+>
+> ```bash
+> xattr -cr /Applications/PulseSQL.app
+> ```
+>
+> Then open the app normally.
+
 ---
 
 ### Windows
