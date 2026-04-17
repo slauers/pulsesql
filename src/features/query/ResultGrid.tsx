@@ -1,17 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, LoaderCircle } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface ResultGridProps {
   columns: Array<{
     name: string;
     subtitle?: string | null;
+    isPrimaryKey?: boolean;
+    isForeignKey?: boolean;
   }>;
   rows: any[];
   rowNumberOffset?: number;
   density?: 'compact' | 'comfortable';
+  onCellEdit?: (colName: string, rowIndex: number, newValue: string | null, row: Record<string, unknown>) => Promise<void>;
+  editingCell?: string | null;
+  editError?: string | null;
 }
 
-export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density = 'comfortable' }: ResultGridProps) {
+export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density = 'comfortable', onCellEdit, editingCell, editError }: ResultGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [activeResize, setActiveResize] = useState<{
@@ -19,6 +25,11 @@ export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density
     startX: number;
     startWidth: number;
   } | null>(null);
+  const [copiedCell, setCopiedCell] = useState<string | null>(null);
+  const copyTimeoutRef = useRef<number | null>(null);
+  const [activeEditCell, setActiveEditCell] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   const resolvedWidths = useMemo(
     () =>
@@ -67,6 +78,54 @@ export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density
     };
   }, [activeResize]);
 
+  useEffect(() => () => {
+    if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
+  }, []);
+
+  const anyEditActive = activeEditCell !== null || editingCell !== null;
+
+  const lockedRowIndex = (() => {
+    const key = activeEditCell ?? editingCell;
+    if (!key) return null;
+    const idx = parseInt(key, 10);
+    return Number.isNaN(idx) ? null : idx;
+  })();
+
+  const handleCellClick = (cellKey: string, value: unknown, rowIndex: number) => {
+    if (anyEditActive && lockedRowIndex === rowIndex) return;
+    if (activeEditCell) return;
+    const text = value === null ? '' : formatCellValue(value);
+    navigator.clipboard.writeText(text).catch(() => null);
+    if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
+    setCopiedCell(cellKey);
+    copyTimeoutRef.current = window.setTimeout(() => setCopiedCell(null), 1200);
+  };
+
+  const openEdit = (cellKey: string, value: unknown) => {
+    if (!onCellEdit || anyEditActive) return;
+    setActiveEditCell(cellKey);
+    setEditDraft(value === null ? '' : formatCellValue(value));
+    if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
+    setCopiedCell(null);
+  };
+
+  const commitEdit = async (colName: string, rowIndex: number, row: Record<string, unknown>) => {
+    if (!onCellEdit || !activeEditCell) return;
+    setActiveEditCell(null);
+    await onCellEdit(colName, rowIndex, editDraft === '' ? null : editDraft, row);
+  };
+
+  const cancelEdit = () => {
+    setActiveEditCell(null);
+  };
+
+  useEffect(() => {
+    if (activeEditCell && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [activeEditCell]);
+
   return (
     <div ref={parentRef} className="h-full w-full overflow-auto bg-transparent relative">
       {!rows.length ? (
@@ -92,8 +151,20 @@ export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density
               style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
             >
               <div className="px-3 py-1.5 leading-tight whitespace-nowrap overflow-hidden text-ellipsis">
-                <div className="overflow-hidden text-ellipsis text-sm font-medium normal-case tracking-normal text-text">
-                  {col.name}
+                <div className="flex items-center gap-1.5 overflow-hidden">
+                  <span className="overflow-hidden text-ellipsis text-sm font-medium normal-case tracking-normal text-text">
+                    {col.name}
+                  </span>
+                  {col.isPrimaryKey ? (
+                    <span className="shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide bg-amber-400/18 text-amber-300 border border-amber-400/30">
+                      PK
+                    </span>
+                  ) : null}
+                  {col.isForeignKey ? (
+                    <span className="shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide bg-sky-400/18 text-sky-300 border border-sky-400/30">
+                      FK
+                    </span>
+                  ) : null}
                 </div>
                 {col.subtitle ? (
                   <div className="overflow-hidden text-ellipsis text-[10px] font-normal normal-case tracking-normal text-muted/60">
@@ -125,29 +196,78 @@ export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const row = rows[virtualRow.index];
             const rowTone = virtualRow.index % 2 === 0 ? 'bg-[#0A1321]' : 'bg-[#0D1726]';
+            const isThisRowLocked = lockedRowIndex === virtualRow.index;
             return (
               <div
                 key={virtualRow.key}
-                className={`group absolute w-full flex text-sm transition-colors ${rowTone} hover:bg-primary/10`}
+                className={`group absolute w-full flex text-sm transition-colors ${rowTone} ${isThisRowLocked ? 'ring-1 ring-inset ring-primary/30' : 'hover:bg-primary/10'}`}
                 style={{
                   height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                <div className={`w-14 px-2 flex items-center justify-center border-r border-border/20 text-xs text-muted/50 font-mono sticky left-0 shrink-0 ${rowTone} group-hover:bg-primary/10`}>
+                <div className={`w-14 px-2 flex items-center justify-center border-r border-border/20 text-xs text-muted/50 font-mono sticky left-0 shrink-0 ${rowTone} ${isThisRowLocked ? '' : 'group-hover:bg-primary/10'}`}>
                   {rowNumberOffset + virtualRow.index + 1}
                 </div>
                 {columns.map((col, cIdx) => {
                   const val = row[col.name];
                   const displayValue = formatCellValue(val);
+                  const cellKey = `${virtualRow.index}-${col.name}`;
+                  const isCopied = copiedCell === cellKey;
+                  const isEditing = activeEditCell === cellKey;
+                  const isPendingEdit = editingCell === cellKey;
+                  const hasEditError = editError != null && editingCell === cellKey;
+                  const isInactiveCell = isThisRowLocked && !isEditing && !isPendingEdit && !hasEditError;
                   return (
-                    <div 
-                      key={cIdx} 
-                      className="px-3 flex items-center whitespace-nowrap overflow-hidden text-ellipsis border-r border-border/20 font-mono text-text"
+                    <div
+                      key={cIdx}
+                      onClick={() => handleCellClick(cellKey, val, virtualRow.index)}
+                      onDoubleClick={() => openEdit(cellKey, val)}
+                      className={`px-3 flex items-center gap-1.5 whitespace-nowrap overflow-hidden border-r border-border/20 font-mono transition-colors ${
+                        isEditing
+                          ? 'bg-primary/10 outline outline-1 outline-primary/60 p-0'
+                          : isPendingEdit
+                            ? 'bg-sky-400/10 text-sky-100'
+                            : hasEditError
+                              ? 'bg-red-400/12 text-red-100'
+                              : isInactiveCell
+                                ? 'opacity-35 pointer-events-none select-none text-text'
+                                : isCopied
+                                  ? 'bg-emerald-400/16 text-emerald-100'
+                                  : 'text-text cursor-pointer text-ellipsis'
+                      }`}
                       style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
-                      title={displayValue}
+                      title={hasEditError ? editError : displayValue}
                     >
-                      {val === null ? <span className="text-muted/50 italic">null</span> : displayValue}
+                      {isEditing ? (
+                        <input
+                          ref={editInputRef}
+                          value={editDraft}
+                          onChange={(e) => setEditDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              void commitEdit(col.name, virtualRow.index, row as Record<string, unknown>);
+                            } else if (e.key === 'Escape') {
+                              cancelEdit();
+                            }
+                          }}
+                          onBlur={() => void commitEdit(col.name, virtualRow.index, row as Record<string, unknown>)}
+                          className="w-full h-full px-3 bg-transparent text-text font-mono text-sm outline-none"
+                        />
+                      ) : isPendingEdit ? (
+                        <>
+                          <LoaderCircle size={11} className="shrink-0 text-sky-400 animate-spin" />
+                          <span className="overflow-hidden text-ellipsis opacity-50">{val === null ? <span className="italic">null</span> : displayValue}</span>
+                        </>
+                      ) : isCopied ? (
+                        <>
+                          <Check size={11} className="shrink-0 text-emerald-400" />
+                          <span className="overflow-hidden text-ellipsis">{val === null ? <span className="italic">null</span> : displayValue}</span>
+                        </>
+                      ) : (
+                        val === null ? <span className="text-muted/50 italic">null</span> : displayValue
+                      )}
                     </div>
                   );
                 })}

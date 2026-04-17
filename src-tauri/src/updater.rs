@@ -1,10 +1,18 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct UpdateInfo {
     pub version: String,
     pub body: Option<String>,
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProgress {
+    pub downloaded: u64,
+    pub total: Option<u64>,
+    pub percent: Option<u8>,
 }
 
 #[tauri::command]
@@ -48,8 +56,23 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "No update available".to_string())?;
 
+    let app_emit = app.clone();
+    let mut downloaded: u64 = 0;
+
     update
-        .download_and_install(|_chunk, _total| {}, || {})
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                let percent = total.map(|t| {
+                    if t == 0 { 0u8 } else { (downloaded * 100 / t).min(100) as u8 }
+                });
+                let _ = app_emit.emit(
+                    "update-progress",
+                    UpdateProgress { downloaded, total, percent },
+                );
+            },
+            || {},
+        )
         .await
         .map_err(|e| e.to_string())?;
 
