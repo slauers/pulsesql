@@ -44,6 +44,16 @@ type ConnectionContextMenuState = {
   connId: string;
 };
 
+type ServerTimePayload = {
+  value: string;
+};
+
+type ConnectionTransactionStatePayload = {
+  autocommit_enabled: boolean;
+  transaction_open: boolean;
+  supported: boolean;
+};
+
 export default function ConnectionManager() {
   const { connections, activeConnectionId, favoriteConnectionId, removeConnection, setActiveConnection, setFavoriteConnection } =
     useConnectionsStore();
@@ -61,13 +71,20 @@ export default function ConnectionManager() {
   const runtimeStatus = useConnectionRuntimeStore((state) => state.runtimeStatus);
   const connectionLogs = useConnectionRuntimeStore((state) => state.connectionLogs);
   const logsExpandedByConnection = useConnectionRuntimeStore((state) => state.logsExpandedByConnection);
+  const autocommitByConnection = useConnectionRuntimeStore((state) => state.autocommitByConnection);
+  const transactionOpenByConnection = useConnectionRuntimeStore((state) => state.transactionOpenByConnection);
   const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
   const setConnectionState = useConnectionRuntimeStore((state) => state.setRuntimeStatus);
   const setLogsExpanded = useConnectionRuntimeStore((state) => state.setLogsExpanded);
+  const initializeConnectionRuntime = useConnectionRuntimeStore((state) => state.initializeConnectionRuntime);
+  const setAutocommitEnabled = useConnectionRuntimeStore((state) => state.setAutocommitEnabled);
+  const setTransactionOpen = useConnectionRuntimeStore((state) => state.setTransactionOpen);
   const removeConnectionRuntime = useConnectionRuntimeStore((state) => state.removeConnectionRuntime);
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
+  const showServerTimeInStatusBar = useUiPreferencesStore((state) => state.showServerTimeInStatusBar);
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
   const locale = useUiPreferencesStore((state) => state.locale);
+  const showAutocommitInStatusBar = useUiPreferencesStore((state) => state.showAutocommitInStatusBar);
   const sidebarWidth = useUiPreferencesStore((state) => state.sidebarWidth);
   const setSidebarWidth = useUiPreferencesStore((state) => state.setSidebarWidth);
   const sidebarCollapsed = useUiPreferencesStore((state) => state.sidebarCollapsed);
@@ -79,10 +96,12 @@ export default function ConnectionManager() {
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [connectionContextMenu, setConnectionContextMenu] = useState<ConnectionContextMenuState | null>(null);
   const [expandedLogsConnectionId, setExpandedLogsConnectionId] = useState<string | null>(null);
+  const [serverTimeValue, setServerTimeValue] = useState<string | null>(null);
   const [compactViewport, setCompactViewport] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth < 980 || window.innerHeight < 700 : false,
   );
   const semanticToggleRef = useRef<HTMLButtonElement | null>(null);
+  const serverTimeRequestInFlightRef = useRef(false);
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
@@ -94,6 +113,7 @@ export default function ConnectionManager() {
   const statusBarState = statusBarConnection ? resolveRuntimeConnectionState(runtimeStatus, statusBarConnection.id) : 'disconnected';
   const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
     translate(locale, key, params);
+  const activeConnectionState = activeConnection ? resolveRuntimeConnectionState(runtimeStatus, activeConnection.id) : 'disconnected';
   const statusBarText =
     activeSchema && !activeSchemaMetadata?.tablesLoadedAt && !activeSchemaMetadata?.tablesError
       ? `${t('loadingTables')} • ${activeSchema}`
@@ -106,6 +126,26 @@ export default function ConnectionManager() {
               : activeConnectionId
                 ? t('ready')
                 : t('noActiveConnection');
+  const serverTimeIndicator =
+    showServerTimeInStatusBar && activeConnectionState === 'connected' && serverTimeValue
+      ? `${t('serverTimePrefix')} ${serverTimeValue}`
+      : null;
+  const activeAutocommitEnabled =
+    activeConnectionId ? (autocommitByConnection[activeConnectionId] ?? true) : true;
+  const activeTransactionOpen =
+    activeConnectionId ? transactionOpenByConnection[activeConnectionId] === true : false;
+  const showAutocommitIndicator =
+    showAutocommitInStatusBar &&
+    activeConnection != null &&
+    activeConnection.engine !== 'oracle' &&
+    activeConnectionState === 'connected';
+  const contextMenuConnection =
+    connectionContextMenu
+      ? connections.find((item) => item.id === connectionContextMenu.connId) ?? null
+      : null;
+  const contextMenuState = contextMenuConnection
+    ? resolveRuntimeConnectionState(runtimeStatus, contextMenuConnection.id)
+    : 'disconnected';
   const effectiveSidebarWidth = sidebarCollapsed ? 68 : compactViewport ? Math.min(sidebarWidth, 260) : sidebarWidth;
 
   useEffect(() => {
@@ -138,6 +178,52 @@ export default function ConnectionManager() {
       window.removeEventListener('resize', updateViewportMode);
     };
   }, []);
+
+  useEffect(() => {
+    if (!showServerTimeInStatusBar || !activeConnection || activeConnectionState !== 'connected') {
+      setServerTimeValue(null);
+      serverTimeRequestInFlightRef.current = false;
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollServerTime = async () => {
+      if (serverTimeRequestInFlightRef.current) {
+        return;
+      }
+
+      serverTimeRequestInFlightRef.current = true;
+
+      try {
+        const payload = await invoke<ServerTimePayload>('get_server_time', {
+          connId: activeConnection.id,
+        });
+
+        if (!cancelled) {
+          setServerTimeValue(payload.value);
+        }
+      } catch {
+        if (!cancelled) {
+          setServerTimeValue(null);
+        }
+      } finally {
+        serverTimeRequestInFlightRef.current = false;
+      }
+    };
+
+    void pollServerTime();
+    const intervalId = window.setInterval(() => {
+      void pollServerTime();
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      setServerTimeValue(null);
+      serverTimeRequestInFlightRef.current = false;
+    };
+  }, [activeConnection, activeConnectionState, showServerTimeInStatusBar]);
 
   useEffect(() => {
     const handleToggleSidebar = () => {
@@ -175,11 +261,35 @@ export default function ConnectionManager() {
     appendLog(connId, t('logsCopied'));
   };
 
+  const handleAutocommitStatusBarToggle = async () => {
+    if (!activeConnection || activeConnection.engine === 'oracle' || activeConnectionState !== 'connected') {
+      return;
+    }
+
+    try {
+      const payload = await invoke<ConnectionTransactionStatePayload>('set_connection_autocommit', {
+        connId: activeConnection.id,
+        enabled: !activeAutocommitEnabled,
+      });
+      setAutocommitEnabled(activeConnection.id, payload.autocommit_enabled);
+      setTransactionOpen(activeConnection.id, payload.transaction_open);
+      appendLog(
+        activeConnection.id,
+        payload.autocommit_enabled ? t('autocommitOn') : t('autocommitOff'),
+      );
+    } catch (error) {
+      appendLog(
+        activeConnection.id,
+        typeof error === 'string' ? error : error instanceof Error ? error.message : t('autocommitUnsupported'),
+      );
+    }
+  };
+
   const openConnection = async (conn: ConnectionConfig, forceReconnect = false) => {
     setSelectedConnectionId(conn.id);
 
     const currentState = resolveConnectionState(conn.id);
-    if (forceReconnect && currentState === 'connected') {
+    if (!forceReconnect && currentState === 'connected') {
       appendLog(conn.id, t('connectionAlreadyActive'));
       return;
     }
@@ -199,6 +309,9 @@ export default function ConnectionManager() {
       try {
         await invoke('open_connection', { config: conn });
         setConnectionState(conn.id, 'connected');
+        initializeConnectionRuntime(conn.id, true);
+        setAutocommitEnabled(conn.id, true);
+        setTransactionOpen(conn.id, false);
         invalidateMetadataCache(conn.id);
         setActiveConnection(conn.id);
         appendLog(
@@ -280,6 +393,8 @@ export default function ConnectionManager() {
     try {
       await invoke('close_connection', { id: conn.id });
       setConnectionState(conn.id, 'disconnected');
+      setAutocommitEnabled(conn.id, true);
+      setTransactionOpen(conn.id, false);
       invalidateMetadataCache(conn.id);
       if (activeConnectionId === conn.id) {
         setActiveConnection(null);
@@ -417,7 +532,10 @@ export default function ConnectionManager() {
                         {connectionShortLabel(conn.name)}
                       </span>
                     )}
-                    <span className={`absolute right-2 top-2 h-2.5 w-2.5 rounded-full ${connectionStateDot(state)}`} />
+                    <span
+                      className={`absolute left-2 top-2 h-2.5 w-2.5 rounded-full ${connectionStateDot(state)}`}
+                      title={translate(locale, connectionStatusLabelKey(state))}
+                    />
                   </button>
                 );
               })}
@@ -449,8 +567,13 @@ export default function ConnectionManager() {
                           }`}
                         >
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2 min-w-0">
+                            <div className="min-w-0 flex items-start gap-2">
+                              <span
+                                className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${connectionStateDot(connectionState)}`}
+                                title={translate(locale, connectionStatusLabelKey(connectionState))}
+                              />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 min-w-0">
                                 {collapsedConnectionMark(conn.engine) ? (
                                   <img
                                     src={collapsedConnectionMark(conn.engine) as string}
@@ -461,17 +584,12 @@ export default function ConnectionManager() {
                                 <div className="truncate text-sm font-medium text-text">{conn.name}</div>
                                 {isFavorite ? <Star size={13} className="shrink-0 fill-amber-300 text-amber-300" /> : null}
                               </div>
-                            <div className="mt-1 truncate text-[11px] text-muted">
-                              {conn.engine.toUpperCase()} • {conn.user}@{conn.host}
-                              {conn.database ? `/${conn.database}` : ''}
+                              <div className="mt-1 truncate text-[11px] text-muted">
+                                {conn.engine.toUpperCase()} • {conn.user}@{conn.host}
+                                {conn.database ? `/${conn.database}` : ''}
+                              </div>
                             </div>
-                          </div>
-                          <div className="flex items-center shrink-0">
-                            <span
-                              className={`h-2.5 w-2.5 rounded-full ${connectionStateDot(connectionState)}`}
-                              title={translate(locale, connectionStatusLabelKey(connectionState))}
-                            />
-                          </div>
+                            </div>
                           </div>
                         </button>
 
@@ -573,6 +691,26 @@ export default function ConnectionManager() {
           <button
             type="button"
             onClick={() => {
+              setConnectionContextMenu(null);
+              if (contextMenuConnection) {
+                void openConnection(contextMenuConnection, contextMenuState === 'connected');
+              }
+            }}
+            disabled={contextMenuState === 'connecting' || contextMenuState === 'reconnecting'}
+            className="mb-1 flex w-full items-center gap-2 rounded-lg border border-emerald-400/35 bg-emerald-400/14 px-3 py-2 text-sm font-medium text-emerald-200 transition-colors hover:bg-emerald-400/22 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <Plug size={14} className="text-emerald-300" />
+            <span>
+              {contextMenuState === 'connected'
+                ? t('reconnectAction')
+                : contextMenuState === 'reconnecting'
+                  ? t('reconnectingAction')
+                  : t('openConnectionAction')}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               const connId = connectionContextMenu.connId;
               const isFavorite = favoriteConnectionId === connId;
               setConnectionContextMenu(null);
@@ -655,6 +793,30 @@ export default function ConnectionManager() {
                 {semanticBackgroundEnabled ? 'ON' : 'OFF'}
               </button>
             </span>
+            {serverTimeIndicator ? (
+              <>
+                <span className="hidden md:inline text-muted/70">•</span>
+                <span className="hidden md:inline text-slate-200/90">{serverTimeIndicator}</span>
+              </>
+            ) : null}
+            {showAutocommitIndicator ? (
+              <>
+                <span className="hidden md:inline text-muted/70">•</span>
+                <button
+                  type="button"
+                  onClick={() => void handleAutocommitStatusBarToggle()}
+                  className={`hidden md:inline text-[10px] uppercase tracking-[0.14em] transition-colors ${
+                    activeAutocommitEnabled ? 'text-emerald-300' : 'text-amber-300'
+                  }`}
+                  title={activeAutocommitEnabled ? t('autocommitOn') : t('autocommitOff')}
+                >
+                  {activeAutocommitEnabled ? t('autocommitOn') : t('autocommitOff')}
+                </button>
+                {activeTransactionOpen ? (
+                  <span className="hidden md:inline text-sky-300/90">{t('transactionOpen')}</span>
+                ) : null}
+              </>
+            ) : null}
           </div>
           {statusBarConnection ? (
             <div className="flex items-center gap-2 shrink-0">

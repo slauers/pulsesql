@@ -15,9 +15,21 @@ interface ResultGridProps {
   onCellEdit?: (colName: string, rowIndex: number, newValue: string | null, row: Record<string, unknown>) => Promise<void>;
   editingCell?: string | null;
   editError?: string | null;
+  selectedRowIndex?: number | null;
+  onRowSelect?: (rowIndex: number, row: Record<string, unknown>) => void;
 }
 
-export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density = 'comfortable', onCellEdit, editingCell, editError }: ResultGridProps) {
+export default function ResultGrid({
+  columns,
+  rows,
+  rowNumberOffset = 0,
+  density = 'comfortable',
+  onCellEdit,
+  editingCell,
+  editError,
+  selectedRowIndex = null,
+  onRowSelect,
+}: ResultGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [activeResize, setActiveResize] = useState<{
@@ -28,6 +40,7 @@ export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
   const copyTimeoutRef = useRef<number | null>(null);
   const [activeEditCell, setActiveEditCell] = useState<string | null>(null);
+  const [pendingEditCell, setPendingEditCell] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
 
@@ -82,10 +95,10 @@ export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density
     if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
   }, []);
 
-  const anyEditActive = activeEditCell !== null || editingCell !== null;
+  const anyEditActive = activeEditCell !== null || editingCell !== null || pendingEditCell !== null;
 
   const lockedRowIndex = (() => {
-    const key = activeEditCell ?? editingCell;
+    const key = activeEditCell ?? editingCell ?? pendingEditCell;
     if (!key) return null;
     const idx = parseInt(key, 10);
     return Number.isNaN(idx) ? null : idx;
@@ -111,8 +124,14 @@ export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density
 
   const commitEdit = async (colName: string, rowIndex: number, row: Record<string, unknown>) => {
     if (!onCellEdit || !activeEditCell) return;
+    const cellKey = activeEditCell;
+    setPendingEditCell(cellKey);
     setActiveEditCell(null);
-    await onCellEdit(colName, rowIndex, editDraft === '' ? null : editDraft, row);
+    try {
+      await onCellEdit(colName, rowIndex, editDraft === '' ? null : editDraft, row);
+    } finally {
+      setPendingEditCell((current) => (current === cellKey ? null : current));
+    }
   };
 
   const cancelEdit = () => {
@@ -197,25 +216,37 @@ export default function ResultGrid({ columns, rows, rowNumberOffset = 0, density
             const row = rows[virtualRow.index];
             const rowTone = virtualRow.index % 2 === 0 ? 'bg-[#0A1321]' : 'bg-[#0D1726]';
             const isThisRowLocked = lockedRowIndex === virtualRow.index;
+            const isSelectedRow = selectedRowIndex === virtualRow.index;
             return (
               <div
                 key={virtualRow.key}
-                className={`group absolute w-full flex text-sm transition-colors ${rowTone} ${isThisRowLocked ? 'ring-1 ring-inset ring-primary/30' : 'hover:bg-primary/10'}`}
+                className={`group absolute w-full flex text-sm transition-colors ${rowTone} ${
+                  isSelectedRow ? 'ring-1 ring-inset ring-sky-400/45 bg-sky-400/8' : isThisRowLocked ? 'ring-1 ring-inset ring-primary/30' : 'hover:bg-primary/10'
+                }`}
                 style={{
                   height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                <div className={`w-14 px-2 flex items-center justify-center border-r border-border/20 text-xs text-muted/50 font-mono sticky left-0 shrink-0 ${rowTone} ${isThisRowLocked ? '' : 'group-hover:bg-primary/10'}`}>
+                <button
+                  type="button"
+                  onClick={() => onRowSelect?.(virtualRow.index, row as Record<string, unknown>)}
+                  className={`w-14 px-2 flex items-center justify-center border-r border-border/20 text-xs font-mono sticky left-0 shrink-0 transition-colors ${
+                    isSelectedRow
+                      ? 'text-sky-200 bg-sky-400/10'
+                      : `${rowTone} text-muted/50 ${isThisRowLocked ? '' : 'group-hover:bg-primary/10'}`
+                  }`}
+                  title="Selecionar linha"
+                >
                   {rowNumberOffset + virtualRow.index + 1}
-                </div>
+                </button>
                 {columns.map((col, cIdx) => {
                   const val = row[col.name];
                   const displayValue = formatCellValue(val);
                   const cellKey = `${virtualRow.index}-${col.name}`;
                   const isCopied = copiedCell === cellKey;
                   const isEditing = activeEditCell === cellKey;
-                  const isPendingEdit = editingCell === cellKey;
+                  const isPendingEdit = editingCell === cellKey || pendingEditCell === cellKey;
                   const hasEditError = editError != null && editingCell === cellKey;
                   const isInactiveCell = isThisRowLocked && !isEditing && !isPendingEdit && !hasEditError;
                   return (
