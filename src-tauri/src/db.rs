@@ -308,37 +308,48 @@ pub fn execute_query(
     query: String,
     page: Option<u32>,
     page_size: Option<u32>,
+    known_total_rows: Option<u64>,
 ) -> Result<ExecuteQueryPayload, String> {
     tauri::async_runtime::block_on(async {
-        let execution =
-            execute_query_on_managed_connection(&state, &conn_id, &query, page, page_size).await;
+        // Resolve connection metadata before executing — avoids a second mutex lock after the
+        // query completes just to look up the connection name.
+        let connection_details = resolve_connection_history_details(&state, &conn_id).await?;
+
+        let execution = execute_query_on_managed_connection(
+            &state,
+            &conn_id,
+            &query,
+            page,
+            page_size,
+            known_total_rows,
+        )
+        .await;
 
         let now = now_iso_like();
         let history_item_id = new_history_id();
-        let connection_details = resolve_connection_history_details(&state, &conn_id).await?;
 
         match execution {
             Ok(result) => {
                 let row_count =
                     i64::try_from(result.result.total_rows.unwrap_or(result.result.rows.len() as u64))
                         .unwrap_or(i64::MAX);
-                history
-                    .record(NewQueryHistoryItem {
-                        id: history_item_id.clone(),
-                        connection_id: conn_id,
-                        connection_name: connection_details.0,
-                        database_name: connection_details.1,
-                        schema_name: None,
-                        query_text: query.trim().to_string(),
-                        executed_at: now,
-                        duration_ms: Some(
-                            i64::try_from(result.result.execution_time).unwrap_or(i64::MAX),
-                        ),
-                        status: "success".into(),
-                        error_message: None,
-                        row_count: Some(row_count),
-                    })
-                    .await?;
+
+                // Fire-and-forget: history write does not block the response to the frontend.
+                history.record_spawned(NewQueryHistoryItem {
+                    id: history_item_id.clone(),
+                    connection_id: conn_id,
+                    connection_name: connection_details.0,
+                    database_name: connection_details.1,
+                    schema_name: None,
+                    query_text: query.trim().to_string(),
+                    executed_at: now,
+                    duration_ms: Some(
+                        i64::try_from(result.result.execution_time).unwrap_or(i64::MAX),
+                    ),
+                    status: "success".into(),
+                    error_message: None,
+                    row_count: Some(row_count),
+                });
 
                 Ok(ExecuteQueryPayload {
                     result: result.result,
@@ -348,21 +359,20 @@ pub fn execute_query(
                 })
             }
             Err(error) => {
-                history
-                    .record(NewQueryHistoryItem {
-                        id: history_item_id.clone(),
-                        connection_id: conn_id,
-                        connection_name: connection_details.0,
-                        database_name: connection_details.1,
-                        schema_name: None,
-                        query_text: query.trim().to_string(),
-                        executed_at: now,
-                        duration_ms: None,
-                        status: "error".into(),
-                        error_message: Some(error.clone()),
-                        row_count: None,
-                    })
-                    .await?;
+                // Fire-and-forget for error history too.
+                history.record_spawned(NewQueryHistoryItem {
+                    id: history_item_id.clone(),
+                    connection_id: conn_id,
+                    connection_name: connection_details.0,
+                    database_name: connection_details.1,
+                    schema_name: None,
+                    query_text: query.trim().to_string(),
+                    executed_at: now,
+                    duration_ms: None,
+                    status: "error".into(),
+                    error_message: Some(error.clone()),
+                    row_count: None,
+                });
 
                 Err(error)
             }
@@ -436,6 +446,7 @@ async fn execute_query_on_managed_connection(
     query: &str,
     page: Option<u32>,
     page_size: Option<u32>,
+    known_total_rows: Option<u64>,
 ) -> Result<ExecutionWithState, String> {
     let pooled_execution = {
         let mut connections = state.connections.lock().await;
@@ -457,9 +468,11 @@ async fn execute_query_on_managed_connection(
     if let Some((pool, autocommit_enabled)) = pooled_execution {
         let result = match pool {
             ConnectionPool::Postgres(pool) => {
-                postgres::execute_query(&pool, query, page, page_size).await
+                postgres::execute_query(&pool, query, page, page_size, known_total_rows).await
             }
-            ConnectionPool::Mysql(pool) => mysql::execute_query(&pool, query, page, page_size).await,
+            ConnectionPool::Mysql(pool) => {
+                mysql::execute_query(&pool, query, page, page_size, known_total_rows).await
+            }
             ConnectionPool::Oracle(handle) => {
                 oracle::execute_query(&handle, query, page, page_size).await
             }
@@ -477,7 +490,9 @@ async fn execute_query_on_managed_connection(
         .get_mut(conn_id)
         .ok_or_else(|| "Connection not found".to_string())?;
 
-    let result = execute_manual_transaction_query(connection, query, page, page_size).await?;
+    let result =
+        execute_manual_transaction_query(connection, query, page, page_size, known_total_rows)
+            .await?;
 
     Ok(ExecutionWithState {
         result,
@@ -491,6 +506,7 @@ async fn execute_manual_transaction_query(
     query: &str,
     page: Option<u32>,
     page_size: Option<u32>,
+    known_total_rows: Option<u64>,
 ) -> Result<QueryResult, String> {
     match classify_transaction_statement(query) {
         TransactionStatementKind::Commit => {
@@ -505,25 +521,31 @@ async fn execute_manual_transaction_query(
             ensure_manual_transaction_started(connection).await?;
             match connection.transaction.as_mut() {
                 Some(ActiveTransactionConnection::Postgres(active)) => {
-                    postgres::execute_query_on_connection(active, query, page, page_size).await
+                    postgres::execute_query_on_connection(active, query, page, page_size, known_total_rows).await
                 }
                 Some(ActiveTransactionConnection::Mysql(active)) => {
-                    mysql::execute_query_on_connection(active, query, page, page_size).await
+                    mysql::execute_query_on_connection(active, query, page, page_size, known_total_rows).await
                 }
                 _ => Err("Autocommit OFF nao suportado para esta engine.".to_string()),
             }
         }
         TransactionStatementKind::Other => match connection.transaction.as_mut() {
             Some(ActiveTransactionConnection::Postgres(active)) => {
-                postgres::execute_query_on_connection(active, query, page, page_size).await
+                postgres::execute_query_on_connection(active, query, page, page_size, known_total_rows).await
             }
             Some(ActiveTransactionConnection::Mysql(active)) => {
-                mysql::execute_query_on_connection(active, query, page, page_size).await
+                mysql::execute_query_on_connection(active, query, page, page_size, known_total_rows).await
             }
             _ => match &connection.pool {
-                ConnectionPool::Postgres(pool) => postgres::execute_query(pool, query, page, page_size).await,
-                ConnectionPool::Mysql(pool) => mysql::execute_query(pool, query, page, page_size).await,
-                ConnectionPool::Oracle(handle) => oracle::execute_query(handle, query, page, page_size).await,
+                ConnectionPool::Postgres(pool) => {
+                    postgres::execute_query(pool, query, page, page_size, known_total_rows).await
+                }
+                ConnectionPool::Mysql(pool) => {
+                    mysql::execute_query(pool, query, page, page_size, known_total_rows).await
+                }
+                ConnectionPool::Oracle(handle) => {
+                    oracle::execute_query(handle, query, page, page_size).await
+                }
             },
         },
     }
