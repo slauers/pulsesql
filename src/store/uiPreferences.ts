@@ -18,6 +18,7 @@ interface UiPreferencesState {
   logsExpandedByDefault: boolean;
   commandPaletteShortcut: string;
   newQueryTabShortcut: string;
+  closeQueryTabShortcut: string;
   setSemanticBackgroundEnabled: (enabled: boolean) => void;
   setLocale: (locale: AppLocale) => void;
   setSemanticBackgroundState: (state: SemanticBackgroundState) => void;
@@ -30,6 +31,7 @@ interface UiPreferencesState {
   setLogsExpandedByDefault: (expanded: boolean) => void;
   setCommandPaletteShortcut: (shortcut: string) => void;
   setNewQueryTabShortcut: (shortcut: string) => void;
+  setCloseQueryTabShortcut: (shortcut: string) => void;
 }
 
 const systemConfig = readSystemConfig();
@@ -46,6 +48,7 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
   logsExpandedByDefault: systemConfig.workbench.logsExpandedByDefault,
   commandPaletteShortcut: systemConfig.shortcuts.commandPalette,
   newQueryTabShortcut: systemConfig.shortcuts.newQueryTab,
+  closeQueryTabShortcut: systemConfig.shortcuts.closeQueryTab,
   semanticBackgroundState: 'idle',
   semanticBackgroundVersion: 0,
   setLocale: (locale) =>
@@ -178,6 +181,18 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
         },
       }));
       return { newQueryTabShortcut: normalized };
+    }),
+  setCloseQueryTabShortcut: (shortcut) =>
+    set(() => {
+      const normalized = normalizeShortcut(shortcut, 'CmdOrCtrl+W');
+      updateSystemConfig((current) => ({
+        ...current,
+        shortcuts: {
+          ...current.shortcuts,
+          closeQueryTab: normalized,
+        },
+      }));
+      return { closeQueryTabShortcut: normalized };
     }),
 }));
 
