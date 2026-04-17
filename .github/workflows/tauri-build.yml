@@ -73,7 +73,6 @@ jobs:
           releaseBody: "Desktop builds for macOS (Apple Silicon + Intel), Windows, and Linux."
           releaseDraft: true
           prerelease: false
-          uploadUpdaterJson: true
-          uploadUpdaterSignatures: true
+          includeUpdaterJson: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
