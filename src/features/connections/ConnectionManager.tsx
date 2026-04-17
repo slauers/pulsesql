@@ -68,6 +68,9 @@ export default function ConnectionManager() {
   const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
   const setConnectionState = useConnectionRuntimeStore((state) => state.setRuntimeStatus);
   const setLogsExpanded = useConnectionRuntimeStore((state) => state.setLogsExpanded);
+  const initializeConnectionRuntime = useConnectionRuntimeStore((state) => state.initializeConnectionRuntime);
+  const setAutocommitEnabled = useConnectionRuntimeStore((state) => state.setAutocommitEnabled);
+  const setTransactionOpen = useConnectionRuntimeStore((state) => state.setTransactionOpen);
   const removeConnectionRuntime = useConnectionRuntimeStore((state) => state.removeConnectionRuntime);
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
   const showServerTimeInStatusBar = useUiPreferencesStore((state) => state.showServerTimeInStatusBar);
@@ -118,6 +121,13 @@ export default function ConnectionManager() {
     showServerTimeInStatusBar && activeConnectionState === 'connected' && serverTimeValue
       ? `${t('serverTimePrefix')} ${serverTimeValue}`
       : null;
+  const contextMenuConnection =
+    connectionContextMenu
+      ? connections.find((item) => item.id === connectionContextMenu.connId) ?? null
+      : null;
+  const contextMenuState = contextMenuConnection
+    ? resolveRuntimeConnectionState(runtimeStatus, contextMenuConnection.id)
+    : 'disconnected';
   const effectiveSidebarWidth = sidebarCollapsed ? 68 : compactViewport ? Math.min(sidebarWidth, 260) : sidebarWidth;
 
   useEffect(() => {
@@ -237,7 +247,7 @@ export default function ConnectionManager() {
     setSelectedConnectionId(conn.id);
 
     const currentState = resolveConnectionState(conn.id);
-    if (forceReconnect && currentState === 'connected') {
+    if (!forceReconnect && currentState === 'connected') {
       appendLog(conn.id, t('connectionAlreadyActive'));
       return;
     }
@@ -257,6 +267,9 @@ export default function ConnectionManager() {
       try {
         await invoke('open_connection', { config: conn });
         setConnectionState(conn.id, 'connected');
+        initializeConnectionRuntime(conn.id, true);
+        setAutocommitEnabled(conn.id, true);
+        setTransactionOpen(conn.id, false);
         invalidateMetadataCache(conn.id);
         setActiveConnection(conn.id);
         appendLog(
@@ -338,6 +351,8 @@ export default function ConnectionManager() {
     try {
       await invoke('close_connection', { id: conn.id });
       setConnectionState(conn.id, 'disconnected');
+      setAutocommitEnabled(conn.id, true);
+      setTransactionOpen(conn.id, false);
       invalidateMetadataCache(conn.id);
       if (activeConnectionId === conn.id) {
         setActiveConnection(null);
@@ -631,16 +646,22 @@ export default function ConnectionManager() {
           <button
             type="button"
             onClick={() => {
-              const conn = connections.find((item) => item.id === connectionContextMenu.connId);
               setConnectionContextMenu(null);
-              if (conn) {
-                void openConnection(conn);
+              if (contextMenuConnection) {
+                void openConnection(contextMenuConnection, contextMenuState === 'connected');
               }
             }}
-            className="mb-1 flex w-full items-center gap-2 rounded-lg border border-emerald-400/35 bg-emerald-400/14 px-3 py-2 text-sm font-medium text-emerald-200 transition-colors hover:bg-emerald-400/22"
+            disabled={contextMenuState === 'connecting' || contextMenuState === 'reconnecting'}
+            className="mb-1 flex w-full items-center gap-2 rounded-lg border border-emerald-400/35 bg-emerald-400/14 px-3 py-2 text-sm font-medium text-emerald-200 transition-colors hover:bg-emerald-400/22 disabled:cursor-not-allowed disabled:opacity-45"
           >
             <Plug size={14} className="text-emerald-300" />
-            <span>{t('openConnectionAction')}</span>
+            <span>
+              {contextMenuState === 'connected'
+                ? t('reconnectAction')
+                : contextMenuState === 'reconnecting'
+                  ? t('reconnectingAction')
+                  : t('openConnectionAction')}
+            </span>
           </button>
           <button
             type="button"

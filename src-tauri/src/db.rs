@@ -5,7 +5,7 @@ use crate::history::service::HistoryState;
 use crate::ssh::tunnel::{start_ssh_tunnel, SshTunnelHandle};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{MySqlPool, PgPool};
+use sqlx::{pool::PoolConnection, MySql, MySqlPool, PgPool, Postgres};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
@@ -46,14 +46,23 @@ pub enum ConnectionPool {
     Oracle(oracle::OracleConnectionHandle),
 }
 
+pub enum ActiveTransactionConnection {
+    Postgres(PoolConnection<Postgres>),
+    Mysql(PoolConnection<MySql>),
+}
+
 pub struct ManagedConnection {
     config: ConnectionConfig,
     pool: ConnectionPool,
     tunnel: Option<SshTunnelHandle>,
+    autocommit_enabled: bool,
+    transaction: Option<ActiveTransactionConnection>,
 }
 
 impl ManagedConnection {
     async fn close(self) {
+        drop(self.transaction);
+
         match self.pool {
             ConnectionPool::Postgres(pool) => pool.close().await,
             ConnectionPool::Mysql(pool) => pool.close().await,
@@ -82,11 +91,20 @@ impl DbState {
 pub struct ExecuteQueryPayload {
     pub result: QueryResult,
     pub history_item_id: String,
+    pub autocommit_enabled: bool,
+    pub transaction_open: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ServerTimePayload {
     pub value: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionTransactionStatePayload {
+    pub autocommit_enabled: bool,
+    pub transaction_open: bool,
+    pub supported: bool,
 }
 
 fn resolve_runtime_target(
@@ -194,6 +212,8 @@ pub async fn open_connection(
         config: config.clone(),
         pool,
         tunnel,
+        autocommit_enabled: true,
+        transaction: None,
     };
 
     let existing = {
@@ -281,7 +301,7 @@ pub async fn list_columns(
 }
 
 #[tauri::command]
-pub async fn execute_query(
+pub fn execute_query(
     state: tauri::State<'_, DbState>,
     history: tauri::State<'_, HistoryState>,
     conn_id: String,
@@ -289,66 +309,95 @@ pub async fn execute_query(
     page: Option<u32>,
     page_size: Option<u32>,
 ) -> Result<ExecuteQueryPayload, String> {
-    let pool = get_connection_pool(&state, &conn_id).await?;
-    let execution = match pool {
-        ConnectionPool::Postgres(pool) => {
-            postgres::execute_query(&pool, &query, page, page_size).await
-        }
-        ConnectionPool::Mysql(pool) => mysql::execute_query(&pool, &query, page, page_size).await,
-        ConnectionPool::Oracle(connection) => {
-            oracle::execute_query(&connection, &query, page, page_size).await
-        }
-    };
+    tauri::async_runtime::block_on(async {
+        let execution =
+            execute_query_on_managed_connection(&state, &conn_id, &query, page, page_size).await;
 
-    let now = now_iso_like();
-    let history_item_id = new_history_id();
-    let connection_details = resolve_connection_history_details(&state, &conn_id).await?;
+        let now = now_iso_like();
+        let history_item_id = new_history_id();
+        let connection_details = resolve_connection_history_details(&state, &conn_id).await?;
 
-    match execution {
-        Ok(result) => {
-            let row_count = i64::try_from(result.total_rows.unwrap_or(result.rows.len() as u64))
-                .unwrap_or(i64::MAX);
-            history
-                .record(NewQueryHistoryItem {
-                    id: history_item_id.clone(),
-                    connection_id: conn_id,
-                    connection_name: connection_details.0,
-                    database_name: connection_details.1,
-                    schema_name: None,
-                    query_text: query.trim().to_string(),
-                    executed_at: now,
-                    duration_ms: Some(i64::try_from(result.execution_time).unwrap_or(i64::MAX)),
-                    status: "success".into(),
-                    error_message: None,
-                    row_count: Some(row_count),
+        match execution {
+            Ok(result) => {
+                let row_count =
+                    i64::try_from(result.result.total_rows.unwrap_or(result.result.rows.len() as u64))
+                        .unwrap_or(i64::MAX);
+                history
+                    .record(NewQueryHistoryItem {
+                        id: history_item_id.clone(),
+                        connection_id: conn_id,
+                        connection_name: connection_details.0,
+                        database_name: connection_details.1,
+                        schema_name: None,
+                        query_text: query.trim().to_string(),
+                        executed_at: now,
+                        duration_ms: Some(
+                            i64::try_from(result.result.execution_time).unwrap_or(i64::MAX),
+                        ),
+                        status: "success".into(),
+                        error_message: None,
+                        row_count: Some(row_count),
+                    })
+                    .await?;
+
+                Ok(ExecuteQueryPayload {
+                    result: result.result,
+                    history_item_id,
+                    autocommit_enabled: result.autocommit_enabled,
+                    transaction_open: result.transaction_open,
                 })
-                .await?;
+            }
+            Err(error) => {
+                history
+                    .record(NewQueryHistoryItem {
+                        id: history_item_id.clone(),
+                        connection_id: conn_id,
+                        connection_name: connection_details.0,
+                        database_name: connection_details.1,
+                        schema_name: None,
+                        query_text: query.trim().to_string(),
+                        executed_at: now,
+                        duration_ms: None,
+                        status: "error".into(),
+                        error_message: Some(error.clone()),
+                        row_count: None,
+                    })
+                    .await?;
 
-            Ok(ExecuteQueryPayload {
-                result,
-                history_item_id,
-            })
+                Err(error)
+            }
         }
-        Err(error) => {
-            history
-                .record(NewQueryHistoryItem {
-                    id: history_item_id.clone(),
-                    connection_id: conn_id,
-                    connection_name: connection_details.0,
-                    database_name: connection_details.1,
-                    schema_name: None,
-                    query_text: query.trim().to_string(),
-                    executed_at: now,
-                    duration_ms: None,
-                    status: "error".into(),
-                    error_message: Some(error.clone()),
-                    row_count: None,
-                })
-                .await?;
+    })
+}
 
-            Err(error)
+#[tauri::command]
+pub fn set_connection_autocommit(
+    state: tauri::State<'_, DbState>,
+    conn_id: String,
+    enabled: bool,
+) -> Result<ConnectionTransactionStatePayload, String> {
+    tauri::async_runtime::block_on(async {
+        let mut connections = state.connections.lock().await;
+        let connection = connections
+            .get_mut(&conn_id)
+            .ok_or_else(|| "Connection not found".to_string())?;
+
+        if matches!(connection.pool, ConnectionPool::Oracle(_)) {
+            return Err("Autocommit ON/OFF ainda nao esta disponivel para Oracle.".to_string());
         }
-    }
+
+        if enabled {
+            commit_active_transaction_if_needed(connection).await?;
+        }
+
+        connection.autocommit_enabled = enabled;
+
+        Ok(ConnectionTransactionStatePayload {
+            autocommit_enabled: connection.autocommit_enabled,
+            transaction_open: connection.transaction.is_some(),
+            supported: true,
+        })
+    })
 }
 
 #[tauri::command]
@@ -373,6 +422,157 @@ pub async fn get_server_time(
     Ok(ServerTimePayload {
         value: extract_server_time_value(&result)?,
     })
+}
+
+struct ExecutionWithState {
+    result: QueryResult,
+    autocommit_enabled: bool,
+    transaction_open: bool,
+}
+
+async fn execute_query_on_managed_connection(
+    state: &tauri::State<'_, DbState>,
+    conn_id: &str,
+    query: &str,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<ExecutionWithState, String> {
+    let mut connections = state.connections.lock().await;
+    let connection = connections
+        .get_mut(conn_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+
+    let result = if connection.autocommit_enabled || matches!(connection.pool, ConnectionPool::Oracle(_)) {
+        connection.transaction = None;
+        match &connection.pool {
+            ConnectionPool::Postgres(pool) => postgres::execute_query(pool, query, page, page_size).await,
+            ConnectionPool::Mysql(pool) => mysql::execute_query(pool, query, page, page_size).await,
+            ConnectionPool::Oracle(handle) => oracle::execute_query(handle, query, page, page_size).await,
+        }
+    } else {
+        execute_manual_transaction_query(connection, query, page, page_size).await
+    }?;
+
+    Ok(ExecutionWithState {
+        result,
+        autocommit_enabled: connection.autocommit_enabled,
+        transaction_open: connection.transaction.is_some(),
+    })
+}
+
+async fn execute_manual_transaction_query(
+    connection: &mut ManagedConnection,
+    query: &str,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<QueryResult, String> {
+    match classify_transaction_statement(query) {
+        TransactionStatementKind::Commit => {
+            commit_active_transaction_if_needed(connection).await?;
+            Ok(build_transaction_summary_result("Transaction committed."))
+        }
+        TransactionStatementKind::Rollback => {
+            rollback_active_transaction_if_needed(connection).await?;
+            Ok(build_transaction_summary_result("Transaction rolled back."))
+        }
+        TransactionStatementKind::Dml => {
+            ensure_manual_transaction_started(connection).await?;
+            match connection.transaction.as_mut() {
+                Some(ActiveTransactionConnection::Postgres(active)) => {
+                    postgres::execute_query_on_connection(active, query, page, page_size).await
+                }
+                Some(ActiveTransactionConnection::Mysql(active)) => {
+                    mysql::execute_query_on_connection(active, query, page, page_size).await
+                }
+                _ => Err("Autocommit OFF nao suportado para esta engine.".to_string()),
+            }
+        }
+        TransactionStatementKind::Other => match connection.transaction.as_mut() {
+            Some(ActiveTransactionConnection::Postgres(active)) => {
+                postgres::execute_query_on_connection(active, query, page, page_size).await
+            }
+            Some(ActiveTransactionConnection::Mysql(active)) => {
+                mysql::execute_query_on_connection(active, query, page, page_size).await
+            }
+            _ => match &connection.pool {
+                ConnectionPool::Postgres(pool) => postgres::execute_query(pool, query, page, page_size).await,
+                ConnectionPool::Mysql(pool) => mysql::execute_query(pool, query, page, page_size).await,
+                ConnectionPool::Oracle(handle) => oracle::execute_query(handle, query, page, page_size).await,
+            },
+        },
+    }
+}
+
+async fn ensure_manual_transaction_started(connection: &mut ManagedConnection) -> Result<(), String> {
+    if connection.transaction.is_some() {
+        return Ok(());
+    }
+
+    match &connection.pool {
+        ConnectionPool::Postgres(pool) => {
+            let mut pooled = pool.acquire().await.map_err(|error| error.to_string())?;
+            postgres::begin_transaction(&mut pooled).await?;
+            connection.transaction = Some(ActiveTransactionConnection::Postgres(pooled));
+            Ok(())
+        }
+        ConnectionPool::Mysql(pool) => {
+            let mut pooled = pool.acquire().await.map_err(|error| error.to_string())?;
+            mysql::begin_transaction(&mut pooled).await?;
+            connection.transaction = Some(ActiveTransactionConnection::Mysql(pooled));
+            Ok(())
+        }
+        ConnectionPool::Oracle(_) => Err("Autocommit OFF nao suportado para esta engine.".to_string()),
+    }
+}
+
+async fn commit_active_transaction_if_needed(connection: &mut ManagedConnection) -> Result<(), String> {
+    if let Some(mut transaction) = connection.transaction.take() {
+        match &mut transaction {
+            ActiveTransactionConnection::Postgres(active) => postgres::commit_transaction(active).await?,
+            ActiveTransactionConnection::Mysql(active) => mysql::commit_transaction(active).await?,
+        }
+    }
+
+    Ok(())
+}
+
+async fn rollback_active_transaction_if_needed(connection: &mut ManagedConnection) -> Result<(), String> {
+    if let Some(mut transaction) = connection.transaction.take() {
+        match &mut transaction {
+            ActiveTransactionConnection::Postgres(active) => postgres::rollback_transaction(active).await?,
+            ActiveTransactionConnection::Mysql(active) => mysql::rollback_transaction(active).await?,
+        }
+    }
+
+    Ok(())
+}
+
+enum TransactionStatementKind {
+    Commit,
+    Rollback,
+    Dml,
+    Other,
+}
+
+fn classify_transaction_statement(query: &str) -> TransactionStatementKind {
+    let normalized = query.trim_start().to_uppercase();
+
+    if normalized.starts_with("COMMIT") {
+        return TransactionStatementKind::Commit;
+    }
+
+    if normalized.starts_with("ROLLBACK") {
+        return TransactionStatementKind::Rollback;
+    }
+
+    if normalized.starts_with("INSERT")
+        || normalized.starts_with("UPDATE")
+        || normalized.starts_with("DELETE")
+    {
+        return TransactionStatementKind::Dml;
+    }
+
+    TransactionStatementKind::Other
 }
 
 #[tauri::command]
@@ -481,4 +681,17 @@ fn extract_hms_fragment(input: &str) -> Option<String> {
     }
 
     None
+}
+
+fn build_transaction_summary_result(summary: &str) -> QueryResult {
+    QueryResult {
+        columns: vec![],
+        column_meta: vec![],
+        rows: vec![],
+        execution_time: 0,
+        summary: Some(summary.to_string()),
+        total_rows: None,
+        page: None,
+        page_size: None,
+    }
 }
