@@ -437,21 +437,47 @@ async fn execute_query_on_managed_connection(
     page: Option<u32>,
     page_size: Option<u32>,
 ) -> Result<ExecutionWithState, String> {
+    let pooled_execution = {
+        let mut connections = state.connections.lock().await;
+        let connection = connections
+            .get_mut(conn_id)
+            .ok_or_else(|| "Connection not found".to_string())?;
+
+        if connection.autocommit_enabled || matches!(connection.pool, ConnectionPool::Oracle(_)) {
+            connection.transaction = None;
+            Some((
+                connection_pool_from_managed(connection),
+                connection.autocommit_enabled,
+            ))
+        } else {
+            None
+        }
+    };
+
+    if let Some((pool, autocommit_enabled)) = pooled_execution {
+        let result = match pool {
+            ConnectionPool::Postgres(pool) => {
+                postgres::execute_query(&pool, query, page, page_size).await
+            }
+            ConnectionPool::Mysql(pool) => mysql::execute_query(&pool, query, page, page_size).await,
+            ConnectionPool::Oracle(handle) => {
+                oracle::execute_query(&handle, query, page, page_size).await
+            }
+        }?;
+
+        return Ok(ExecutionWithState {
+            result,
+            autocommit_enabled,
+            transaction_open: false,
+        });
+    }
+
     let mut connections = state.connections.lock().await;
     let connection = connections
         .get_mut(conn_id)
         .ok_or_else(|| "Connection not found".to_string())?;
 
-    let result = if connection.autocommit_enabled || matches!(connection.pool, ConnectionPool::Oracle(_)) {
-        connection.transaction = None;
-        match &connection.pool {
-            ConnectionPool::Postgres(pool) => postgres::execute_query(pool, query, page, page_size).await,
-            ConnectionPool::Mysql(pool) => mysql::execute_query(pool, query, page, page_size).await,
-            ConnectionPool::Oracle(handle) => oracle::execute_query(handle, query, page, page_size).await,
-        }
-    } else {
-        execute_manual_transaction_query(connection, query, page, page_size).await
-    }?;
+    let result = execute_manual_transaction_query(connection, query, page, page_size).await?;
 
     Ok(ExecutionWithState {
         result,

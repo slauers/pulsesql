@@ -40,6 +40,7 @@ export default function ResultGrid({
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
   const copyTimeoutRef = useRef<number | null>(null);
   const [activeEditCell, setActiveEditCell] = useState<string | null>(null);
+  const [pendingEditCell, setPendingEditCell] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
 
@@ -94,10 +95,10 @@ export default function ResultGrid({
     if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
   }, []);
 
-  const anyEditActive = activeEditCell !== null || editingCell !== null;
+  const anyEditActive = activeEditCell !== null || editingCell !== null || pendingEditCell !== null;
 
   const lockedRowIndex = (() => {
-    const key = activeEditCell ?? editingCell;
+    const key = activeEditCell ?? editingCell ?? pendingEditCell;
     if (!key) return null;
     const idx = parseInt(key, 10);
     return Number.isNaN(idx) ? null : idx;
@@ -123,8 +124,14 @@ export default function ResultGrid({
 
   const commitEdit = async (colName: string, rowIndex: number, row: Record<string, unknown>) => {
     if (!onCellEdit || !activeEditCell) return;
+    const cellKey = activeEditCell;
+    setPendingEditCell(cellKey);
     setActiveEditCell(null);
-    await onCellEdit(colName, rowIndex, editDraft === '' ? null : editDraft, row);
+    try {
+      await onCellEdit(colName, rowIndex, editDraft === '' ? null : editDraft, row);
+    } finally {
+      setPendingEditCell((current) => (current === cellKey ? null : current));
+    }
   };
 
   const cancelEdit = () => {
@@ -239,7 +246,7 @@ export default function ResultGrid({
                   const cellKey = `${virtualRow.index}-${col.name}`;
                   const isCopied = copiedCell === cellKey;
                   const isEditing = activeEditCell === cellKey;
-                  const isPendingEdit = editingCell === cellKey;
+                  const isPendingEdit = editingCell === cellKey || pendingEditCell === cellKey;
                   const hasEditError = editError != null && editingCell === cellKey;
                   const isInactiveCell = isThisRowLocked && !isEditing && !isPendingEdit && !hasEditError;
                   return (
