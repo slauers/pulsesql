@@ -103,12 +103,14 @@ pub async fn execute_query(
     query: &str,
     page: Option<u32>,
     page_size: Option<u32>,
+    known_total_rows: Option<u64>,
 ) -> Result<QueryResult, String> {
     execute_query_on_pool(
         pool,
         query,
         page.unwrap_or(1),
         page_size.unwrap_or(DEFAULT_PAGE_SIZE),
+        known_total_rows,
     )
     .await
 }
@@ -118,12 +120,14 @@ pub async fn execute_query_on_connection(
     query: &str,
     page: Option<u32>,
     page_size: Option<u32>,
+    known_total_rows: Option<u64>,
 ) -> Result<QueryResult, String> {
     execute_query_on_active_connection(
         connection.as_mut(),
         query,
         page.unwrap_or(1),
         page_size.unwrap_or(DEFAULT_PAGE_SIZE),
+        known_total_rows,
     )
     .await
 }
@@ -157,6 +161,7 @@ async fn execute_query_on_pool(
     query: &str,
     page: u32,
     page_size: u32,
+    known_total_rows: Option<u64>,
 ) -> Result<QueryResult, String> {
     let trimmed = query.trim();
     let started_at = Instant::now();
@@ -179,16 +184,25 @@ async fn execute_query_on_pool(
                 "SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1"
             );
 
-            let total_rows = fetch_total_rows_on_pool(pool, &count_sql).await?;
-
-            let meta_rows = raw_sql(&meta_sql)
-                .fetch_all(pool)
-                .await
-                .map_err(|error| error.to_string())?;
+            // Run COUNT, metadata and data queries in parallel.
+            // When total rows is already known (page navigation), skip the COUNT query.
+            let (total_rows, meta_rows, rows) = tokio::try_join!(
+                async {
+                    match known_total_rows {
+                        Some(known) => Ok::<i64, String>(known as i64),
+                        None => fetch_total_rows_on_pool(pool, &count_sql).await,
+                    }
+                },
+                async {
+                    raw_sql(&meta_sql)
+                        .fetch_all(pool)
+                        .await
+                        .map_err(|error| error.to_string())
+                },
+                fetch_json_rows_on_pool(pool, &data_sql),
+            )?;
 
             let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
-
-            let rows = fetch_json_rows_on_pool(pool, &data_sql).await?;
 
             Ok(QueryResult {
                 columns,
@@ -210,14 +224,18 @@ async fn execute_query_on_pool(
                 "SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1"
             );
 
-            let meta_rows = raw_sql(&meta_sql)
-                .fetch_all(pool)
-                .await
-                .map_err(|error| error.to_string())?;
+            // Run metadata and data queries in parallel.
+            let (meta_rows, rows) = tokio::try_join!(
+                async {
+                    raw_sql(&meta_sql)
+                        .fetch_all(pool)
+                        .await
+                        .map_err(|error| error.to_string())
+                },
+                fetch_json_rows_on_pool(pool, &data_sql),
+            )?;
 
             let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
-
-            let rows = fetch_json_rows_on_pool(pool, &data_sql).await?;
 
             Ok(QueryResult {
                 columns,
@@ -264,6 +282,7 @@ async fn execute_query_on_active_connection(
     query: &str,
     page: u32,
     page_size: u32,
+    known_total_rows: Option<u64>,
 ) -> Result<QueryResult, String> {
     let trimmed = query.trim();
     let started_at = Instant::now();
@@ -284,7 +303,11 @@ async fn execute_query_on_active_connection(
 
             let meta_sql = format!("SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1");
 
-            let total_rows = fetch_total_rows_on_connection(connection, &count_sql).await?;
+            // Single connection — cannot parallelize; skip COUNT when already known.
+            let total_rows = match known_total_rows {
+                Some(known) => known as i64,
+                None => fetch_total_rows_on_connection(connection, &count_sql).await?,
+            };
 
             let meta_rows = raw_sql(&meta_sql)
                 .fetch_all(&mut *connection)

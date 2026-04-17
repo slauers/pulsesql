@@ -4,10 +4,12 @@ use crate::db::{ColumnDef, QueryColumnMeta, QueryResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::ffi::OsString;
-use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Instant, SystemTime};
+use std::{fs, io};
 use tauri::{AppHandle, Manager};
 
 const ORACLE_JDBC_VERSION: &str = "23.4.0.24.05";
@@ -17,6 +19,20 @@ const ORACLE_JAVA_CLASS: &str = "OracleJdbcRunner";
 const ORACLE_JAVA_SOURCE: &str = include_str!("../../oracle-jdbc-sidecar/OracleJdbcRunner.java");
 
 static ORACLE_SIDECAR_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// Long-lived Java sidecar process. Shared across all Oracle connections for a session.
+/// Access is serialised through the Mutex so requests are never interleaved.
+static SIDECAR_PROCESS: OnceLock<Mutex<Option<SidecarProcess>>> = OnceLock::new();
+
+struct SidecarProcess {
+    child: Child,
+    stdin: io::BufWriter<ChildStdin>,
+    stdout: BufReader<ChildStdout>,
+}
+
+fn sidecar_mutex() -> &'static Mutex<Option<SidecarProcess>> {
+    SIDECAR_PROCESS.get_or_init(|| Mutex::new(None))
+}
 
 #[derive(Debug, Clone)]
 pub struct OracleConnectionHandle {
@@ -44,8 +60,10 @@ struct OracleSuccessResponse {
     column_defs: Option<Vec<ColumnDef>>,
 }
 
+/// Request sent to the persistent sidecar over stdin (one JSON line per call).
 #[derive(Debug, Serialize)]
 struct OracleRequest<'a> {
+    command: &'a str,
     host: &'a str,
     port: u16,
     database: &'a str,
@@ -175,6 +193,10 @@ pub fn init_sidecar_root(app: &AppHandle) -> Result<(), String> {
         .map_err(|_| "Oracle sidecar root was already initialized".to_string())
 }
 
+// ---------------------------------------------------------------------------
+// Core invocation — persistent stdin/stdout process
+// ---------------------------------------------------------------------------
+
 fn invoke_sidecar(
     command: &str,
     handle: &OracleConnectionHandle,
@@ -186,9 +208,6 @@ fn invoke_sidecar(
 ) -> Result<OracleSuccessResponse, String> {
     let sidecar_root = oracle_sidecar_root()?;
     let classes_dir = sidecar_root.join("classes");
-    let request_file = sidecar_root.join("request.json");
-    let response_file = sidecar_root.join("response.json");
-    let stderr_file = sidecar_root.join("stderr.log");
 
     fs::create_dir_all(&sidecar_root)
         .map_err(|error| format!("Failed to prepare Oracle sidecar directory: {error}"))?;
@@ -197,6 +216,7 @@ fn invoke_sidecar(
     ensure_oracle_sidecar_compiled(&sidecar_root, &classes_dir)?;
 
     let request = OracleRequest {
+        command,
         host: &handle.host,
         port: handle.port,
         database: &handle.database,
@@ -214,64 +234,66 @@ fn invoke_sidecar(
         table,
     };
 
-    fs::write(
-        &request_file,
-        serde_json::to_vec(&request)
-            .map_err(|error| format!("Failed to encode Oracle request: {error}"))?,
-    )
-    .map_err(|error| format!("Failed to write Oracle sidecar request: {error}"))?;
+    let request_json = serde_json::to_string(&request)
+        .map_err(|error| format!("Failed to encode Oracle request: {error}"))?;
 
-    if response_file.exists() {
-        let _ = fs::remove_file(&response_file);
-    }
+    // First attempt — use or start the persistent JVM process.
+    let result = call_persistent_sidecar(&sidecar_root, &classes_dir, &request_json);
 
-    if stderr_file.exists() {
-        let _ = fs::remove_file(&stderr_file);
-    }
+    match result {
+        Ok(response) => Ok(response),
+        Err(io_error) => {
+            // The process may have crashed. Kill it, clear the slot and retry once.
+            let mutex = sidecar_mutex();
+            if let Ok(mut guard) = mutex.lock() {
+                if let Some(ref mut proc) = *guard {
+                    let _ = proc.child.kill();
+                    let _ = proc.child.wait();
+                }
+                *guard = None;
+            }
 
-    let classpath = build_classpath(
-        &classes_dir,
-        &sidecar_root.join(format!("ojdbc11-{ORACLE_JDBC_VERSION}.jar")),
-    );
-
-    let java_exe = crate::jdk::get_java_exe(&sidecar_root);
-    let output = background(java_exe)
-        .arg("-cp")
-        .arg(classpath)
-        .arg(ORACLE_JAVA_CLASS)
-        .arg(command)
-        .arg(&request_file)
-        .arg(&response_file)
-        .output()
-        .map_err(|error| format_oracle_java_launch_error("executar", &error.to_string()))?;
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-
-    if !output.status.success() {
-        let response_error = read_error_response(&response_file);
-        let mut parts = vec![];
-
-        if let Some(response_error) = response_error {
-            parts.push(response_error);
+            call_persistent_sidecar(&sidecar_root, &classes_dir, &request_json)
+                .map_err(|_| humanize_oracle_sidecar_error(&io_error))
         }
+    }
+}
 
-        if !stderr.is_empty() {
-            parts.push(stderr);
-        }
+/// Writes one JSON request line to the sidecar's stdin and reads one response line from stdout.
+fn call_persistent_sidecar(
+    sidecar_root: &Path,
+    classes_dir: &Path,
+    request_json: &str,
+) -> Result<OracleSuccessResponse, String> {
+    let mutex = sidecar_mutex();
+    let mut guard = mutex
+        .lock()
+        .map_err(|_| "Oracle sidecar mutex poisoned".to_string())?;
 
-        let message = if parts.is_empty() {
-            format!("Oracle JDBC sidecar failed with status {}", output.status)
-        } else {
-            parts.join(" | ")
-        };
-
-        return Err(humanize_oracle_sidecar_error(&message));
+    if guard.is_none() {
+        *guard = Some(start_sidecar_server(sidecar_root, classes_dir)?);
     }
 
-    let response_bytes = fs::read(&response_file)
-        .map_err(|error| format!("Failed to read Oracle sidecar response: {error}"))?;
+    let proc = guard.as_mut().unwrap();
 
-    let response_json: Value = serde_json::from_slice(&response_bytes)
+    // Send request line.
+    proc.stdin
+        .write_all(request_json.as_bytes())
+        .and_then(|_| proc.stdin.write_all(b"\n"))
+        .and_then(|_| proc.stdin.flush())
+        .map_err(|error| format!("Failed to write to Oracle sidecar: {error}"))?;
+
+    // Read response line.
+    let mut response_line = String::new();
+    proc.stdout
+        .read_line(&mut response_line)
+        .map_err(|error| format!("Failed to read from Oracle sidecar: {error}"))?;
+
+    if response_line.is_empty() {
+        return Err("Oracle sidecar closed its stdout unexpectedly".to_string());
+    }
+
+    let response_json: Value = serde_json::from_str(response_line.trim())
         .map_err(|error| format!("Failed to decode Oracle sidecar response: {error}"))?;
 
     if let Some(error) = response_json.get("error").and_then(Value::as_str) {
@@ -282,14 +304,44 @@ fn invoke_sidecar(
         .map_err(|error| format!("Failed to parse Oracle sidecar payload: {error}"))
 }
 
-fn read_error_response(response_file: &Path) -> Option<String> {
-    let bytes = fs::read(response_file).ok()?;
-    let value = serde_json::from_slice::<Value>(&bytes).ok()?;
-    value
-        .get("error")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
+/// Spawns a new long-lived Java sidecar process in `--server` mode.
+fn start_sidecar_server(sidecar_root: &Path, classes_dir: &Path) -> Result<SidecarProcess, String> {
+    let classpath = build_classpath(
+        classes_dir,
+        &sidecar_root.join(format!("ojdbc11-{ORACLE_JDBC_VERSION}.jar")),
+    );
+
+    let java_exe = crate::jdk::get_java_exe(sidecar_root);
+    let mut child = background(java_exe)
+        .arg("-cp")
+        .arg(classpath)
+        .arg(ORACLE_JAVA_CLASS)
+        .arg("--server")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| format_oracle_java_launch_error("iniciar", &error.to_string()))?;
+
+    let stdin = io::BufWriter::new(
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| "Failed to capture Oracle sidecar stdin".to_string())?,
+    );
+    let stdout = BufReader::new(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| "Failed to capture Oracle sidecar stdout".to_string())?,
+    );
+
+    Ok(SidecarProcess { child, stdin, stdout })
 }
+
+// ---------------------------------------------------------------------------
+// Setup helpers
+// ---------------------------------------------------------------------------
 
 fn ensure_oracle_sidecar_compiled(sidecar_root: &Path, classes_dir: &Path) -> Result<(), String> {
     let source_path = ensure_oracle_java_source(sidecar_root)?;
@@ -322,6 +374,17 @@ fn ensure_oracle_sidecar_compiled(sidecar_root: &Path, classes_dir: &Path) -> Re
             "Failed to compile Oracle JDBC sidecar: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         )));
+    }
+
+    // If the source was recompiled while the old server process is running, kill it so the
+    // next invocation picks up the freshly compiled class.
+    let mutex = sidecar_mutex();
+    if let Ok(mut guard) = mutex.lock() {
+        if let Some(ref mut proc) = *guard {
+            let _ = proc.child.kill();
+            let _ = proc.child.wait();
+        }
+        *guard = None;
     }
 
     Ok(())
