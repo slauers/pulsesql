@@ -89,9 +89,24 @@ public class OracleJdbcRunner {
   }
 
   private static String listColumns(Request request) throws Exception {
+    String schemaEsc = escapeSql(request.schema);
+    String tableEsc = escapeSql(request.table);
     String sql =
-        "SELECT column_name, data_type, nullable, data_default, identity_column FROM all_tab_columns WHERE owner = '" + escapeSql(request.schema) +
-        "' AND table_name = '" + escapeSql(request.table) + "' ORDER BY column_id";
+        "SELECT c.column_name, c.data_type, c.nullable, c.data_default, c.identity_column," +
+        " CASE WHEN pk.column_name IS NOT NULL THEN 'Y' ELSE 'N' END AS is_primary_key," +
+        " CASE WHEN fk.column_name IS NOT NULL THEN 'Y' ELSE 'N' END AS is_foreign_key" +
+        " FROM all_tab_columns c" +
+        " LEFT JOIN (" +
+        "   SELECT cc.column_name FROM all_cons_columns cc" +
+        "   JOIN all_constraints con ON con.constraint_name = cc.constraint_name AND con.owner = cc.owner" +
+        "   WHERE con.constraint_type = 'P' AND cc.owner = '" + schemaEsc + "' AND cc.table_name = '" + tableEsc + "'" +
+        " ) pk ON pk.column_name = c.column_name" +
+        " LEFT JOIN (" +
+        "   SELECT cc.column_name FROM all_cons_columns cc" +
+        "   JOIN all_constraints con ON con.constraint_name = cc.constraint_name AND con.owner = cc.owner" +
+        "   WHERE con.constraint_type = 'R' AND cc.owner = '" + schemaEsc + "' AND cc.table_name = '" + tableEsc + "'" +
+        " ) fk ON fk.column_name = c.column_name" +
+        " WHERE c.owner = '" + schemaEsc + "' AND c.table_name = '" + tableEsc + "' ORDER BY c.column_id";
 
     try (Connection connection = DriverManager.getConnection(request.jdbcUrl(), request.properties());
          Statement statement = connection.createStatement();
@@ -115,6 +130,10 @@ public class OracleJdbcRunner {
             .append(quote(trimToNull(resultSet.getString(4))))
             .append(",\"is_auto_increment\":")
             .append(String.valueOf("YES".equalsIgnoreCase(resultSet.getString(5))))
+            .append(",\"is_primary_key\":")
+            .append(String.valueOf("Y".equalsIgnoreCase(resultSet.getString(6))))
+            .append(",\"is_foreign_key\":")
+            .append(String.valueOf("Y".equalsIgnoreCase(resultSet.getString(7))))
             .append('}');
       }
 

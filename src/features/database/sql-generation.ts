@@ -105,6 +105,8 @@ function createFallbackColumn(columnName: string): MetadataColumn {
     nullable: null,
     defaultValue: null,
     isAutoIncrement: null,
+    isPrimaryKey: null,
+    isForeignKey: null,
   };
 }
 

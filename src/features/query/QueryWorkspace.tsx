@@ -20,6 +20,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  Check,
 } from 'lucide-react';
 import ResultGrid from './ResultGrid';
 import QueryHistoryDrawer from '../history/components/QueryHistoryDrawer';
@@ -54,6 +55,8 @@ interface QueryColumnMeta {
 interface ResultGridColumn {
   name: string;
   subtitle?: string | null;
+  isPrimaryKey?: boolean;
+  isForeignKey?: boolean;
 }
 
 interface QueryExecutionResult extends QueryResult {
@@ -130,6 +133,11 @@ export default function QueryWorkspace() {
   const [pageSizeDraft, setPageSizeDraft] = useState(String(resultPageSize));
   const [connectionMenuOpen, setConnectionMenuOpen] = useState(false);
   const [connectionMenuPosition, setConnectionMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [exportedFormat, setExportedFormat] = useState<'csv' | 'json' | null>(null);
+  const exportFeedbackRef = useRef<number | null>(null);
+  const [editingCell, setEditingCell] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const editErrorTimeoutRef = useRef<number | null>(null);
   const executeQueryRef = useRef<() => void>(() => {});
   const editorRef = useRef<any>(null);
   const connectionMenuButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -230,8 +238,6 @@ export default function QueryWorkspace() {
     setSemanticBackgroundState('running');
     setLoading(true);
     setError(null);
-    setResults([]);
-    setActiveResultIndex(0);
 
     try {
       const nextResults: QueryExecutionResult[] = [];
@@ -255,6 +261,14 @@ export default function QueryWorkspace() {
           connectionId,
           `Query executada com sucesso (${payload.result.execution_time}ms): ${summarizeStatementForLog(statement)}`,
         );
+
+        const sourceTable = resolveSimpleSourceTable(statement, targetSchema ?? null);
+        if (sourceTable?.tableName && targetEngine) {
+          const schemaForFetch = sourceTable.schemaName ?? targetSchema ?? null;
+          if (schemaForFetch) {
+            void ensureColumnsCached(connectionId, targetEngine, schemaForFetch, sourceTable.tableName).catch(() => null);
+          }
+        }
       }
 
       setResults(nextResults);
@@ -495,6 +509,12 @@ export default function QueryWorkspace() {
     if (semanticResetTimeoutRef.current) {
       window.clearTimeout(semanticResetTimeoutRef.current);
     }
+    if (exportFeedbackRef.current) {
+      window.clearTimeout(exportFeedbackRef.current);
+    }
+    if (editErrorTimeoutRef.current) {
+      window.clearTimeout(editErrorTimeoutRef.current);
+    }
     setSemanticBackgroundState('idle');
   }, [setSemanticBackgroundState]);
 
@@ -604,6 +624,73 @@ export default function QueryWorkspace() {
       setLoading(false);
     }
   }, [activeResult, activeResultIndex, ensureExecutionConnectionReady, engine, metadataByConnection, pageSizeDraft, resolvedConnectionId, resultPageSize, schemaLabel, setResultPageSize]);
+
+  const handleCellEdit = useCallback(async (
+    colName: string,
+    rowIndex: number,
+    newValue: string | null,
+    row: Record<string, unknown>,
+  ) => {
+    if (!resolvedConnectionId || !activeSourceTable?.tableName) return;
+
+    const pkCols = cachedSourceColumns?.filter((c) => c.isPrimaryKey) ?? [];
+    if (!pkCols.length) {
+      setEditError('No primary key detected — cannot safely update this row.');
+      setEditingCell(`${rowIndex}-${colName}`);
+      if (editErrorTimeoutRef.current) window.clearTimeout(editErrorTimeoutRef.current);
+      editErrorTimeoutRef.current = window.setTimeout(() => {
+        setEditError(null);
+        setEditingCell(null);
+      }, 3500);
+      return;
+    }
+
+    const cellKey = `${rowIndex}-${colName}`;
+    setEditingCell(cellKey);
+    setEditError(null);
+
+    try {
+      await ensureExecutionConnectionReady(resolvedConnectionId);
+      const sql = buildUpdateSql(
+        activeSourceTable.schemaName,
+        activeSourceTable.tableName,
+        colName,
+        newValue,
+        row,
+        pkCols,
+        engine ?? 'postgres',
+      );
+      await invoke('execute_query', {
+        connId: resolvedConnectionId,
+        query: sql,
+        page: 1,
+        pageSize: 1,
+      });
+      setResults((current) =>
+        current.map((item, idx) =>
+          idx === activeResultIndex
+            ? {
+                ...item,
+                rows: item.rows.map((r, rIdx) =>
+                  rIdx === rowIndex ? { ...r, [colName]: newValue } : r,
+                ),
+              }
+            : item,
+        ),
+      );
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setEditError(msg);
+      if (editErrorTimeoutRef.current) window.clearTimeout(editErrorTimeoutRef.current);
+      editErrorTimeoutRef.current = window.setTimeout(() => {
+        setEditError(null);
+        setEditingCell(null);
+      }, 3500);
+      return;
+    }
+
+    setEditingCell(null);
+  }, [activeResultIndex, activeSourceTable, cachedSourceColumns, engine, ensureExecutionConnectionReady, resolvedConnectionId]);
 
   const handleConnectionChange = useCallback((nextConnectionId: string) => {
     if (!activeTab) {
@@ -952,17 +1039,35 @@ export default function QueryWorkspace() {
                         />
                       </label>
                       <button
-                        onClick={() => exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel))}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+                        onClick={() => {
+                          exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel));
+                          if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
+                          setExportedFormat('csv');
+                          exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
+                        }}
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                          exportedFormat === 'csv'
+                            ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
+                            : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                        }`}
                       >
-                        <Download size={13} />
+                        {exportedFormat === 'csv' ? <Check size={13} /> : <Download size={13} />}
                         CSV
                       </button>
                       <button
-                        onClick={() => exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel))}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+                        onClick={() => {
+                          exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel));
+                          if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
+                          setExportedFormat('json');
+                          exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
+                        }}
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                          exportedFormat === 'json'
+                            ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
+                            : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                        }`}
                       >
-                        <FileJson size={13} />
+                        {exportedFormat === 'json' ? <Check size={13} /> : <FileJson size={13} />}
                         JSON
                       </button>
                     </>
@@ -971,9 +1076,9 @@ export default function QueryWorkspace() {
               ) : null}
             </div>
 
-            <div className="flex-1 overflow-auto bg-background/10">
+            <div className="flex-1 overflow-auto bg-background/10 relative">
               {loading ? (
-                <div className="h-full flex items-center justify-center text-muted">
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/55 backdrop-blur-[1px]">
                   <div className="flex items-center gap-3">
                     <LoaderCircle size={16} className="animate-spin text-primary" />
                     <span className="text-[10px] uppercase tracking-[0.14em] text-primary/70">
@@ -981,7 +1086,8 @@ export default function QueryWorkspace() {
                     </span>
                   </div>
                 </div>
-              ) : error ? (
+              ) : null}
+              {error && !loading ? (
                 <QueryErrorPanel error={error} activeSchema={schemaLabel} />
               ) : activeResult ? (
                 <div className="flex h-full min-h-0 flex-col">
@@ -1002,6 +1108,9 @@ export default function QueryWorkspace() {
                         rows={filteredRows}
                         rowNumberOffset={quickFilter ? 0 : rowNumberOffset}
                         density={density}
+                        onCellEdit={activeSourceTable ? handleCellEdit : undefined}
+                        editingCell={editingCell}
+                        editError={editError}
                       />
                     ) : (
                       <div className="h-full flex items-center justify-center text-muted/50 text-sm">
@@ -1444,6 +1553,8 @@ function buildGridColumns(
     return {
       name,
       subtitle,
+      isPrimaryKey: metadataMatch?.isPrimaryKey === true,
+      isForeignKey: metadataMatch?.isForeignKey === true,
     };
   });
 }
@@ -1546,4 +1657,56 @@ function summarizeStatementForLog(statement: string) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 140);
+}
+
+function quoteIdentifier(name: string, engine: DatabaseEngine): string {
+  if (engine === 'mysql') return `\`${name.replace(/`/g, '``')}\``;
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+function quoteValue(value: string | null, dataType: string, engine: DatabaseEngine): string {
+  if (value === null) return 'NULL';
+  const type = dataType.toLowerCase();
+  const isNumeric = /^(int|integer|bigint|smallint|tinyint|mediumint|numeric|decimal|float|double|real|number)/.test(type);
+  const isBool = /^(bool|boolean)/.test(type);
+  if (isNumeric && /^-?\d+(\.\d+)?$/.test(value.trim())) return value.trim();
+  if (isBool && /^(true|false)$/i.test(value.trim())) return value.trim().toLowerCase();
+  const escaped = engine === 'mysql'
+    ? value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+    : value.replace(/'/g, "''");
+  return `'${escaped}'`;
+}
+
+function buildUpdateSql(
+  schemaName: string | null,
+  tableName: string,
+  colName: string,
+  newValue: string | null,
+  row: Record<string, unknown>,
+  pkCols: import('./../../features/database/types').MetadataColumn[],
+  engine: DatabaseEngine,
+): string {
+  const qi = (n: string) => quoteIdentifier(n, engine);
+  const tableRef = schemaName ? `${qi(schemaName)}.${qi(tableName)}` : qi(tableName);
+
+  const setCols = pkCols.some((pk) => pk.columnName === colName)
+    ? [colName]
+    : [colName];
+
+  const setClause = setCols
+    .map((c) => {
+      const pkCol = pkCols.find((p) => p.columnName === c);
+      return `${qi(c)} = ${quoteValue(newValue, pkCol?.dataType ?? '', engine)}`;
+    })
+    .join(', ');
+
+  const whereClause = pkCols
+    .map((pk) => {
+      const pkVal = row[pk.columnName];
+      const rawPkStr = pkVal === null || pkVal === undefined ? null : String(pkVal);
+      return `${qi(pk.columnName)} = ${quoteValue(rawPkStr, pk.dataType, engine)}`;
+    })
+    .join(' AND ');
+
+  return `UPDATE ${tableRef} SET ${setClause} WHERE ${whereClause}`;
 }

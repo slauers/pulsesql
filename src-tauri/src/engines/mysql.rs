@@ -76,8 +76,10 @@ pub async fn list_columns(
     table: &str,
 ) -> Result<Vec<ColumnDef>, String> {
     sqlx::query_as::<_, ColumnDef>(
-        "SELECT column_name, data_type, (is_nullable = 'YES') AS nullable, column_default AS default_value, (extra LIKE '%auto_increment%') AS is_auto_increment FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position",
+        "SELECT c.column_name, c.data_type, (c.is_nullable = 'YES') AS nullable, c.column_default AS default_value, (c.extra LIKE '%auto_increment%') AS is_auto_increment, (c.column_key = 'PRI') AS is_primary_key, (fk.column_name IS NOT NULL) AS is_foreign_key FROM information_schema.columns c LEFT JOIN (SELECT DISTINCT kcu.column_name FROM information_schema.key_column_usage kcu WHERE kcu.table_schema = ? AND kcu.table_name = ? AND kcu.referenced_table_name IS NOT NULL) fk ON fk.column_name = c.column_name WHERE c.table_schema = ? AND c.table_name = ? ORDER BY c.ordinal_position",
     )
+    .bind(schema)
+    .bind(table)
     .bind(schema)
     .bind(table)
     .fetch_all(pool)
