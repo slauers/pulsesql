@@ -16,6 +16,7 @@ export interface SystemConfig {
   shortcuts: {
     commandPalette: string;
     newQueryTab: string;
+    closeQueryTab: string;
   };
   startup: {
     favoriteConnectionId: string | null;
@@ -79,6 +80,7 @@ export function defaultSystemConfig(): SystemConfig {
     shortcuts: {
       commandPalette: 'CmdOrCtrl+Shift+P',
       newQueryTab: 'CmdOrCtrl+Alt+N',
+      closeQueryTab: 'CmdOrCtrl+W',
     },
     startup: {
       favoriteConnectionId: null,
@@ -114,6 +116,7 @@ function normalizeSystemConfig(input: unknown): SystemConfig {
     shortcuts: {
       commandPalette: normalizeShortcut(shortcuts.commandPalette, 'CmdOrCtrl+Shift+P'),
       newQueryTab: normalizeShortcut(shortcuts.newQueryTab, 'CmdOrCtrl+Alt+N'),
+      closeQueryTab: normalizeShortcut(shortcuts.closeQueryTab, 'CmdOrCtrl+W'),
     },
     startup: {
       favoriteConnectionId:
