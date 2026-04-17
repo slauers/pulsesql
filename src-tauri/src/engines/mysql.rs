@@ -1,7 +1,10 @@
 use crate::connection::types::ConnectionConfig;
 use crate::db::{ColumnDef, QueryColumnMeta, QueryResult};
 use serde_json::{json, Map, Value};
-use sqlx::{mysql::MySqlPoolOptions, Column, Executor, MySqlPool, Row, TypeInfo};
+use sqlx::{
+    mysql::MySqlConnection, mysql::MySqlPoolOptions, pool::PoolConnection, Column, MySql,
+    MySqlPool, Row, TypeInfo,
+};
 use std::time::{Duration, Instant};
 
 const DEFAULT_PAGE_SIZE: u32 = 100;
@@ -93,7 +96,7 @@ pub async fn execute_query(
     page: Option<u32>,
     page_size: Option<u32>,
 ) -> Result<QueryResult, String> {
-    execute_query_inner(
+    execute_query_on_pool(
         pool,
         query,
         page.unwrap_or(1),
@@ -102,15 +105,51 @@ pub async fn execute_query(
     .await
 }
 
-async fn execute_query_inner<'e, E>(
-    executor: E,
+pub async fn execute_query_on_connection(
+    connection: &mut PoolConnection<MySql>,
+    query: &str,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<QueryResult, String> {
+    execute_query_on_active_connection(
+        connection.as_mut(),
+        query,
+        page.unwrap_or(1),
+        page_size.unwrap_or(DEFAULT_PAGE_SIZE),
+    )
+    .await
+}
+
+pub async fn begin_transaction(connection: &mut PoolConnection<MySql>) -> Result<(), String> {
+    sqlx::query("START TRANSACTION")
+        .execute(connection.as_mut())
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+pub async fn commit_transaction(connection: &mut PoolConnection<MySql>) -> Result<(), String> {
+    sqlx::query("COMMIT")
+        .execute(connection.as_mut())
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+pub async fn rollback_transaction(connection: &mut PoolConnection<MySql>) -> Result<(), String> {
+    sqlx::query("ROLLBACK")
+        .execute(connection.as_mut())
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+async fn execute_query_on_pool(
+    pool: &MySqlPool,
     query: &str,
     page: u32,
     page_size: u32,
-) -> Result<QueryResult, String>
-where
-    E: Executor<'e, Database = sqlx::MySql> + Copy,
-{
+) -> Result<QueryResult, String> {
     let trimmed = query.trim();
     let started_at = Instant::now();
     let normalized_page = page.max(1);
@@ -126,11 +165,11 @@ where
                 format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
 
             let rows = sqlx::query(&paged_sql)
-                .fetch_all(executor)
+                .fetch_all(pool)
                 .await
                 .map_err(|error| error.to_string())?;
             let total_rows = sqlx::query_scalar::<_, i64>(&count_sql)
-                .fetch_one(executor)
+                .fetch_one(pool)
                 .await
                 .map_err(|error| error.to_string())?;
 
@@ -179,7 +218,7 @@ where
             })
         } else if is_result_set_query(trimmed) {
             let rows = sqlx::query(trimmed)
-                .fetch_all(executor)
+                .fetch_all(pool)
                 .await
                 .map_err(|error| error.to_string())?;
 
@@ -228,7 +267,156 @@ where
             })
         } else {
             let result = sqlx::query(trimmed)
-                .execute(executor)
+                .execute(pool)
+                .await
+                .map_err(|error| error.to_string())?;
+
+            Ok(QueryResult {
+                columns: vec!["Rows Affected".into()],
+                column_meta: vec![QueryColumnMeta {
+                    name: "Rows Affected".into(),
+                    data_type: "BIGINT".into(),
+                }],
+                rows: vec![json!({ "Rows Affected": result.rows_affected() })],
+                execution_time: started_at.elapsed().as_millis() as u64,
+                summary: None,
+                total_rows: None,
+                page: None,
+                page_size: None,
+            })
+        }
+    };
+
+    match tokio::time::timeout(Duration::from_secs(30), execution).await {
+        Ok(result) => result,
+        Err(_) => Err("Query timed out after 30 seconds.".into()),
+    }
+}
+
+async fn execute_query_on_active_connection(
+    connection: &mut MySqlConnection,
+    query: &str,
+    page: u32,
+    page_size: u32,
+) -> Result<QueryResult, String> {
+    let trimmed = query.trim();
+    let started_at = Instant::now();
+    let normalized_page = page.max(1);
+    let normalized_page_size = page_size.clamp(1, 1_000);
+    let offset = u64::from(normalized_page - 1) * u64::from(normalized_page_size);
+
+    let execution = async {
+        if is_paginable_result_query(trimmed) {
+            let paged_sql = format!(
+                "SELECT * FROM ({trimmed}) AS blacktable_page LIMIT {normalized_page_size} OFFSET {offset}"
+            );
+            let count_sql =
+                format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
+
+            let rows = sqlx::query(&paged_sql)
+                .fetch_all(&mut *connection)
+                .await
+                .map_err(|error| error.to_string())?;
+            let total_rows = sqlx::query_scalar::<_, i64>(&count_sql)
+                .fetch_one(&mut *connection)
+                .await
+                .map_err(|error| error.to_string())?;
+
+            let columns = rows
+                .first()
+                .map(|row| {
+                    row.columns()
+                        .iter()
+                        .map(|column| column.name().to_string())
+                        .collect()
+                })
+                .unwrap_or_else(Vec::new);
+            let column_meta = rows
+                .first()
+                .map(|row| {
+                    row.columns()
+                        .iter()
+                        .map(|column| QueryColumnMeta {
+                            name: column.name().to_string(),
+                            data_type: column.type_info().name().to_string(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(Vec::new);
+
+            let rows = rows
+                .iter()
+                .map(|row| {
+                    let mut object = Map::new();
+                    for (index, column) in row.columns().iter().enumerate() {
+                        object.insert(column.name().to_string(), mysql_value_to_json(row, index));
+                    }
+                    Value::Object(object)
+                })
+                .collect();
+
+            Ok(QueryResult {
+                columns,
+                column_meta,
+                rows,
+                execution_time: started_at.elapsed().as_millis() as u64,
+                summary: None,
+                total_rows: Some(total_rows.max(0) as u64),
+                page: Some(normalized_page),
+                page_size: Some(normalized_page_size),
+            })
+        } else if is_result_set_query(trimmed) {
+            let rows = sqlx::query(trimmed)
+                .fetch_all(&mut *connection)
+                .await
+                .map_err(|error| error.to_string())?;
+
+            let columns = rows
+                .first()
+                .map(|row| {
+                    row.columns()
+                        .iter()
+                        .map(|column| column.name().to_string())
+                        .collect()
+                })
+                .unwrap_or_else(Vec::new);
+            let column_meta = rows
+                .first()
+                .map(|row| {
+                    row.columns()
+                        .iter()
+                        .map(|column| QueryColumnMeta {
+                            name: column.name().to_string(),
+                            data_type: column.type_info().name().to_string(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(Vec::new);
+
+            let rows = rows
+                .iter()
+                .map(|row| {
+                    let mut object = Map::new();
+                    for (index, column) in row.columns().iter().enumerate() {
+                        object.insert(column.name().to_string(), mysql_value_to_json(row, index));
+                    }
+                    Value::Object(object)
+                })
+                .collect();
+
+            Ok(QueryResult {
+                columns,
+                column_meta,
+                rows,
+                execution_time: started_at.elapsed().as_millis() as u64,
+                summary: None,
+                total_rows: None,
+                page: None,
+                page_size: None,
+            })
+        } else {
+            let result = sqlx::query(trimmed)
+                .execute(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
 
