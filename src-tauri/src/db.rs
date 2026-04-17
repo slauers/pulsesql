@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{pool::PoolConnection, MySql, MySqlPool, PgPool, Postgres};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -311,10 +311,15 @@ pub fn execute_query(
     known_total_rows: Option<u64>,
 ) -> Result<ExecuteQueryPayload, String> {
     tauri::async_runtime::block_on(async {
+        let t_total = Instant::now();
+
         // Resolve connection metadata before executing — avoids a second mutex lock after the
         // query completes just to look up the connection name.
+        let t_meta = Instant::now();
         let connection_details = resolve_connection_history_details(&state, &conn_id).await?;
+        eprintln!("[db] resolve_connection_details: {}ms", t_meta.elapsed().as_millis());
 
+        let t_exec = Instant::now();
         let execution = execute_query_on_managed_connection(
             &state,
             &conn_id,
@@ -324,6 +329,7 @@ pub fn execute_query(
             known_total_rows,
         )
         .await;
+        eprintln!("[db] execute_query_on_managed_connection: {}ms", t_exec.elapsed().as_millis());
 
         let now = now_iso_like();
         let history_item_id = new_history_id();
@@ -351,12 +357,14 @@ pub fn execute_query(
                     row_count: Some(row_count),
                 });
 
-                Ok(ExecuteQueryPayload {
+                let payload = ExecuteQueryPayload {
                     result: result.result,
                     history_item_id,
                     autocommit_enabled: result.autocommit_enabled,
                     transaction_open: result.transaction_open,
-                })
+                };
+                eprintln!("[db] total execute_query command: {}ms", t_total.elapsed().as_millis());
+                Ok(payload)
             }
             Err(error) => {
                 // Fire-and-forget for error history too.
