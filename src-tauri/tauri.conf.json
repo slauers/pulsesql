@@ -29,7 +29,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVFMzU4Njg1MzkxRUM0MDIKUldRQ3hCNDVoWVkxWGl3UDVXR1JhQVNIbW0zbS9wUGNKN0NjUGZoNS9WbWlUcXFkYllGbWg1UWwK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFGQzkwM0Y4RjhERjc5QwpSV1NjOTQyUFA1RDhBZmlUOTQyYWo0SWpDWWtZR08zTnEwUHMwSmVhQzllZHU3TUZTRUhxc240cgo=",
       "endpoints": [
         "https://github.com/slauers/pulsesql/releases/latest/download/latest.json"
       ]
