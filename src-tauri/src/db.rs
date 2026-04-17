@@ -422,8 +422,8 @@ pub async fn get_server_time(
     };
 
     let result = match pool {
-        ConnectionPool::Postgres(pool) => postgres::execute_query(&pool, query, None, None).await,
-        ConnectionPool::Mysql(pool) => mysql::execute_query(&pool, query, None, None).await,
+        ConnectionPool::Postgres(pool) => postgres::execute_query(&pool, query, None, None, None).await,
+        ConnectionPool::Mysql(pool) => mysql::execute_query(&pool, query, None, None, None).await,
         ConnectionPool::Oracle(connection) => {
             oracle::execute_query(&connection, query, None, None).await
         }
