@@ -1,7 +1,10 @@
 use crate::connection::types::ConnectionConfig;
 use crate::db::{ColumnDef, QueryColumnMeta, QueryResult};
 use serde_json::{json, Value};
-use sqlx::{postgres::PgPoolOptions, raw_sql, Column, PgPool, Row, TypeInfo};
+use sqlx::{
+    pool::PoolConnection, postgres::PgConnection, postgres::PgPoolOptions, raw_sql, Column,
+    PgPool, Postgres, Row, TypeInfo,
+};
 use std::time::{Duration, Instant};
 
 const DEFAULT_PAGE_SIZE: u32 = 100;
@@ -101,7 +104,7 @@ pub async fn execute_query(
     page: Option<u32>,
     page_size: Option<u32>,
 ) -> Result<QueryResult, String> {
-    execute_query_inner(
+    execute_query_on_pool(
         pool,
         query,
         page.unwrap_or(1),
@@ -110,7 +113,46 @@ pub async fn execute_query(
     .await
 }
 
-async fn execute_query_inner(
+pub async fn execute_query_on_connection(
+    connection: &mut PoolConnection<Postgres>,
+    query: &str,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<QueryResult, String> {
+    execute_query_on_active_connection(
+        connection.as_mut(),
+        query,
+        page.unwrap_or(1),
+        page_size.unwrap_or(DEFAULT_PAGE_SIZE),
+    )
+    .await
+}
+
+pub async fn begin_transaction(connection: &mut PoolConnection<Postgres>) -> Result<(), String> {
+    raw_sql("BEGIN")
+        .execute(connection.as_mut())
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+pub async fn commit_transaction(connection: &mut PoolConnection<Postgres>) -> Result<(), String> {
+    raw_sql("COMMIT")
+        .execute(connection.as_mut())
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+pub async fn rollback_transaction(connection: &mut PoolConnection<Postgres>) -> Result<(), String> {
+    raw_sql("ROLLBACK")
+        .execute(connection.as_mut())
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+async fn execute_query_on_pool(
     pool: &PgPool,
     query: &str,
     page: u32,
@@ -137,7 +179,7 @@ async fn execute_query_inner(
                 "SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1"
             );
 
-            let total_rows = fetch_total_rows(pool, &count_sql).await?;
+            let total_rows = fetch_total_rows_on_pool(pool, &count_sql).await?;
 
             let meta_rows = raw_sql(&meta_sql)
                 .fetch_all(pool)
@@ -146,7 +188,7 @@ async fn execute_query_inner(
 
             let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
 
-            let rows = fetch_json_rows(pool, &data_sql).await?;
+            let rows = fetch_json_rows_on_pool(pool, &data_sql).await?;
 
             Ok(QueryResult {
                 columns,
@@ -175,7 +217,7 @@ async fn execute_query_inner(
 
             let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
 
-            let rows = fetch_json_rows(pool, &data_sql).await?;
+            let rows = fetch_json_rows_on_pool(pool, &data_sql).await?;
 
             Ok(QueryResult {
                 columns,
@@ -217,7 +259,110 @@ async fn execute_query_inner(
     }
 }
 
-async fn fetch_total_rows(pool: &PgPool, sql: &str) -> Result<i64, String> {
+async fn execute_query_on_active_connection(
+    connection: &mut PgConnection,
+    query: &str,
+    page: u32,
+    page_size: u32,
+) -> Result<QueryResult, String> {
+    let trimmed = query.trim();
+    let started_at = Instant::now();
+    let normalized_page = page.max(1);
+    let normalized_page_size = page_size.clamp(1, 1_000);
+    let offset = u64::from(normalized_page - 1) * u64::from(normalized_page_size);
+
+    let execution = async {
+        if is_paginable_result_query(trimmed) {
+            let count_sql =
+                format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
+
+            let data_sql = format!(
+                "SELECT to_jsonb(blacktable_page) AS __blacktable_json
+                 FROM ({trimmed}) AS blacktable_page
+                 LIMIT {normalized_page_size} OFFSET {offset}"
+            );
+
+            let meta_sql = format!("SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1");
+
+            let total_rows = fetch_total_rows_on_connection(connection, &count_sql).await?;
+
+            let meta_rows = raw_sql(&meta_sql)
+                .fetch_all(&mut *connection)
+                .await
+                .map_err(|error| error.to_string())?;
+
+            let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
+
+            let rows = fetch_json_rows_on_connection(connection, &data_sql).await?;
+
+            Ok(QueryResult {
+                columns,
+                column_meta,
+                rows,
+                execution_time: started_at.elapsed().as_millis() as u64,
+                summary: None,
+                total_rows: Some(total_rows.max(0) as u64),
+                page: Some(normalized_page),
+                page_size: Some(normalized_page_size),
+            })
+        } else if is_result_set_query(trimmed) {
+            let data_sql = format!(
+                "SELECT to_jsonb(blacktable_row) AS __blacktable_json
+                 FROM ({trimmed}) AS blacktable_row"
+            );
+
+            let meta_sql = format!("SELECT * FROM ({trimmed}) AS blacktable_meta LIMIT 1");
+
+            let meta_rows = raw_sql(&meta_sql)
+                .fetch_all(&mut *connection)
+                .await
+                .map_err(|error| error.to_string())?;
+
+            let (columns, column_meta) = extract_columns_and_meta(&meta_rows);
+
+            let rows = fetch_json_rows_on_connection(connection, &data_sql).await?;
+
+            Ok(QueryResult {
+                columns,
+                column_meta,
+                rows,
+                execution_time: started_at.elapsed().as_millis() as u64,
+                summary: None,
+                total_rows: None,
+                page: None,
+                page_size: None,
+            })
+        } else {
+            let result = raw_sql(trimmed)
+                .execute(&mut *connection)
+                .await
+                .map_err(|error| error.to_string())?;
+
+            Ok(QueryResult {
+                columns: vec!["Rows Affected".into()],
+                column_meta: vec![QueryColumnMeta {
+                    name: "Rows Affected".into(),
+                    data_type: "BIGINT".into(),
+                }],
+                rows: vec![json!({ "Rows Affected": result.rows_affected() })],
+                execution_time: started_at.elapsed().as_millis() as u64,
+                summary: None,
+                total_rows: None,
+                page: None,
+                page_size: None,
+            })
+        }
+    };
+
+    match tokio::time::timeout(Duration::from_secs(QUERY_TIMEOUT_SECONDS), execution).await {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "Query timed out after {QUERY_TIMEOUT_SECONDS} seconds."
+        )),
+    }
+}
+
+async fn fetch_total_rows_on_pool(pool: &PgPool, sql: &str) -> Result<i64, String> {
     let rows = raw_sql(sql)
         .fetch_all(pool)
         .await
@@ -231,9 +376,43 @@ async fn fetch_total_rows(pool: &PgPool, sql: &str) -> Result<i64, String> {
         .map_err(|error| format!("Failed to decode PostgreSQL total row count: {error}"))
 }
 
-async fn fetch_json_rows(pool: &PgPool, sql: &str) -> Result<Vec<Value>, String> {
+async fn fetch_total_rows_on_connection(
+    connection: &mut PgConnection,
+    sql: &str,
+) -> Result<i64, String> {
+    let rows = raw_sql(sql)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let row = rows
+        .first()
+        .ok_or_else(|| "Failed to decode PostgreSQL total row count: no rows returned".to_string())?;
+
+    row.try_get::<i64, _>("blacktable_total")
+        .map_err(|error| format!("Failed to decode PostgreSQL total row count: {error}"))
+}
+
+async fn fetch_json_rows_on_pool(pool: &PgPool, sql: &str) -> Result<Vec<Value>, String> {
     let rows = raw_sql(sql)
         .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.into_iter()
+        .map(|row| match row.try_get::<Value, _>("__blacktable_json") {
+            Ok(value) => Ok(value),
+            Err(error) => Err(format!("Failed to decode PostgreSQL row JSON: {error}")),
+        })
+        .collect()
+}
+
+async fn fetch_json_rows_on_connection(
+    connection: &mut PgConnection,
+    sql: &str,
+) -> Result<Vec<Value>, String> {
+    let rows = raw_sql(sql)
+        .fetch_all(&mut *connection)
         .await
         .map_err(|error| error.to_string())?;
 

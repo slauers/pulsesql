@@ -70,6 +70,14 @@ interface QueryExecutionResult extends QueryResult {
 interface ExecuteQueryPayload {
   result: QueryResult;
   history_item_id: string;
+  autocommit_enabled: boolean;
+  transaction_open: boolean;
+}
+
+interface ConnectionTransactionStatePayload {
+  autocommit_enabled: boolean;
+  transaction_open: boolean;
+  supported: boolean;
 }
 
 const SEMANTIC_SUCCESS_DURATION_MS = 3600;
@@ -93,8 +101,12 @@ export default function QueryWorkspace() {
   } = useQueriesStore();
   const { activeConnectionId, connections, setActiveConnection } = useConnectionsStore();
   const runtimeStatusMap = useConnectionRuntimeStore((state) => state.runtimeStatus);
+  const autocommitByConnection = useConnectionRuntimeStore((state) => state.autocommitByConnection);
+  const transactionOpenByConnection = useConnectionRuntimeStore((state) => state.transactionOpenByConnection);
   const setRuntimeStatus = useConnectionRuntimeStore((state) => state.setRuntimeStatus);
   const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
+  const setAutocommitEnabled = useConnectionRuntimeStore((state) => state.setAutocommitEnabled);
+  const setTransactionOpen = useConnectionRuntimeStore((state) => state.setTransactionOpen);
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
   const locale = useUiPreferencesStore((state) => state.locale);
   const semanticBackgroundState = useUiPreferencesStore((state) => state.semanticBackgroundState);
@@ -118,6 +130,9 @@ export default function QueryWorkspace() {
   const schemaLabel = resolvedConnectionId ? activeSchemaByConnection[resolvedConnectionId] ?? selectedConnection?.preferredSchema : undefined;
   const runtimeStatus = resolvedConnectionId ? runtimeStatusMap[resolvedConnectionId] : undefined;
   const isConnectionReady = runtimeStatus === 'connected';
+  const autocommitEnabled = resolvedConnectionId ? autocommitByConnection[resolvedConnectionId] ?? true : true;
+  const transactionOpen = resolvedConnectionId ? transactionOpenByConnection[resolvedConnectionId] === true : false;
+  const autocommitSupported = engine !== 'oracle';
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<QueryErrorPresentation | null>(null);
@@ -245,6 +260,11 @@ export default function QueryWorkspace() {
     }, durationMs);
   }, [setSemanticBackgroundState]);
 
+  const syncTransactionState = useCallback((connectionId: string, payload: ExecuteQueryPayload | ConnectionTransactionStatePayload) => {
+    setAutocommitEnabled(connectionId, payload.autocommit_enabled);
+    setTransactionOpen(connectionId, payload.transaction_open);
+  }, [setAutocommitEnabled, setTransactionOpen]);
+
   const runQueryBatch = useCallback(async (queries: string[], connectionId: string) => {
     const statements = queries.map((item) => item.trim()).filter(Boolean);
     if (!statements.length || !connectionId) {
@@ -274,6 +294,7 @@ export default function QueryWorkspace() {
           page: 1,
           pageSize: resultPageSize,
         });
+        syncTransactionState(connectionId, payload);
 
         nextResults.push({
           ...payload.result,
@@ -469,6 +490,7 @@ export default function QueryWorkspace() {
         page: nextPage,
         pageSize: targetResult.page_size ?? resultPageSize,
       });
+      syncTransactionState(resolvedConnectionId, payload);
 
       setResults((current) =>
         current.map((item, index) =>
@@ -630,6 +652,7 @@ export default function QueryWorkspace() {
         page: 1,
         pageSize: normalized,
       });
+      syncTransactionState(resolvedConnectionId, payload);
 
       setResults((current) =>
         current.map((item, index) =>
@@ -693,12 +716,13 @@ export default function QueryWorkspace() {
         pkCols,
         engine ?? 'postgres',
       );
-      await invoke('execute_query', {
+      const payload = await invoke<ExecuteQueryPayload>('execute_query', {
         connId: resolvedConnectionId,
         query: sql,
         page: 1,
         pageSize: 1,
       });
+      syncTransactionState(resolvedConnectionId, payload);
       setHistoryRefreshToken((current) => current + 1);
       setResults((current) =>
         current.map((item, idx) =>
@@ -774,12 +798,13 @@ export default function QueryWorkspace() {
         engine ?? 'postgres',
       );
 
-      await invoke('execute_query', {
+      const payload = await invoke<ExecuteQueryPayload>('execute_query', {
         connId: resolvedConnectionId,
         query: sql,
         page: 1,
         pageSize: 1,
       });
+      syncTransactionState(resolvedConnectionId, payload);
 
       setHistoryRefreshToken((current) => current + 1);
       setResults((current) =>
@@ -818,6 +843,42 @@ export default function QueryWorkspace() {
     resolvedConnectionId,
     selectedSourceRowIndex,
   ]);
+
+  const handleAutocommitToggle = useCallback(async () => {
+    if (!resolvedConnectionId || !autocommitSupported) {
+      return;
+    }
+
+    const payload = await invoke<ConnectionTransactionStatePayload>('set_connection_autocommit', {
+      connId: resolvedConnectionId,
+      enabled: !autocommitEnabled,
+    });
+    syncTransactionState(resolvedConnectionId, payload);
+  }, [autocommitEnabled, autocommitSupported, resolvedConnectionId, syncTransactionState]);
+
+  const handleTransactionAction = useCallback(async (action: 'COMMIT' | 'ROLLBACK') => {
+    if (!resolvedConnectionId) {
+      return;
+    }
+
+    await ensureExecutionConnectionReady(resolvedConnectionId);
+    const payload = await invoke<ExecuteQueryPayload>('execute_query', {
+      connId: resolvedConnectionId,
+      query: action,
+      page: 1,
+      pageSize: 1,
+    });
+    syncTransactionState(resolvedConnectionId, payload);
+    setResults([
+      {
+        ...payload.result,
+        statement: action,
+        title: t('result'),
+      },
+    ]);
+    setActiveResultIndex(0);
+    setHistoryRefreshToken((current) => current + 1);
+  }, [ensureExecutionConnectionReady, resolvedConnectionId, syncTransactionState, t]);
 
   const handleConnectionChange = useCallback((nextConnectionId: string) => {
     if (!activeTab) {
@@ -905,6 +966,40 @@ export default function QueryWorkspace() {
               {canPaginate ? <span>{t('pageOf', { page: currentPage, total: totalPages })}</span> : null}
               <span>{activeResult.execution_time}ms</span>
             </div>
+            {autocommitSupported ? (
+              <button
+                type="button"
+                onClick={() => void handleAutocommitToggle()}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                  autocommitEnabled
+                    ? 'border-emerald-400/35 bg-emerald-400/12 text-emerald-200 hover:bg-emerald-400/18'
+                    : 'border-amber-400/35 bg-amber-400/12 text-amber-200 hover:bg-amber-400/18'
+                }`}
+              >
+                {autocommitEnabled ? t('autocommitOn') : t('autocommitOff')}
+              </button>
+            ) : null}
+            {transactionOpen ? (
+              <>
+                <span className="inline-flex items-center rounded-lg border border-sky-400/30 bg-sky-400/10 px-2.5 py-1.5 text-xs text-sky-200">
+                  {t('transactionOpen')}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleTransactionAction('COMMIT')}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/35 bg-emerald-400/12 px-2.5 py-1.5 text-xs text-emerald-200 transition-colors hover:bg-emerald-400/18"
+                >
+                  {t('commitAction')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleTransactionAction('ROLLBACK')}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/25 bg-red-400/10 px-2.5 py-1.5 text-xs text-red-300 transition-colors hover:bg-red-400/16"
+                >
+                  {t('rollbackAction')}
+                </button>
+              </>
+            ) : null}
             {hasGridResult ? (
               <>
                 {canPaginate ? (
