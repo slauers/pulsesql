@@ -30,6 +30,7 @@ export default function ConfigurationDialog({
   const logsExpandedByDefault = useUiPreferencesStore((state) => state.logsExpandedByDefault);
   const commandPaletteShortcut = useUiPreferencesStore((state) => state.commandPaletteShortcut);
   const newQueryTabShortcut = useUiPreferencesStore((state) => state.newQueryTabShortcut);
+  const closeQueryTabShortcut = useUiPreferencesStore((state) => state.closeQueryTabShortcut);
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
   const setLocale = useUiPreferencesStore((state) => state.setLocale);
   const setResultPageSize = useUiPreferencesStore((state) => state.setResultPageSize);
@@ -41,6 +42,7 @@ export default function ConfigurationDialog({
   const setLogsExpandedByDefault = useUiPreferencesStore((state) => state.setLogsExpandedByDefault);
   const setCommandPaletteShortcut = useUiPreferencesStore((state) => state.setCommandPaletteShortcut);
   const setNewQueryTabShortcut = useUiPreferencesStore((state) => state.setNewQueryTabShortcut);
+  const setCloseQueryTabShortcut = useUiPreferencesStore((state) => state.setCloseQueryTabShortcut);
   const connections = useConnectionsStore((state) => state.connections);
   const favoriteConnectionId = useConnectionsStore((state) => state.favoriteConnectionId);
   const setFavoriteConnection = useConnectionsStore((state) => state.setFavoriteConnection);
@@ -64,12 +66,14 @@ export default function ConfigurationDialog({
       shortcuts: {
         commandPalette: commandPaletteShortcut,
         newQueryTab: newQueryTabShortcut,
+        closeQueryTab: closeQueryTabShortcut,
       },
       startup: {
         favoriteConnectionId,
       },
     }),
     [
+      closeQueryTabShortcut,
       commandPaletteShortcut,
       density,
       editorFontSize,
@@ -125,6 +129,7 @@ export default function ConfigurationDialog({
     setLogsExpandedByDefault(nextConfig.workbench.logsExpandedByDefault);
     setCommandPaletteShortcut(nextConfig.shortcuts.commandPalette);
     setNewQueryTabShortcut(nextConfig.shortcuts.newQueryTab);
+    setCloseQueryTabShortcut(nextConfig.shortcuts.closeQueryTab);
     setFavoriteConnection(nextConfig.startup.favoriteConnectionId);
   };
 
@@ -496,6 +501,24 @@ export default function ConfigurationDialog({
                         className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
                       />
                     </label>
+
+                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
+                      <div className="text-sm text-text">{translate(locale, 'closeQueryTabLabel')}</div>
+                      <div className="mb-2 text-xs text-muted">{translate(locale, 'shortcutExampleCloseQueryTab')}</div>
+                      <input
+                        value={draft.shortcuts.closeQueryTab}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            shortcuts: {
+                              ...current.shortcuts,
+                              closeQueryTab: event.target.value,
+                            },
+                          }))
+                        }
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
+                      />
+                    </label>
                   </div>
                 </section>
 
@@ -612,6 +635,7 @@ function normalizeJsonConfig(input: unknown): SystemConfig {
     shortcuts: {
       commandPalette: normalizeShortcut(shortcuts.commandPalette, 'CmdOrCtrl+Shift+P'),
       newQueryTab: normalizeShortcut(shortcuts.newQueryTab, 'CmdOrCtrl+Alt+N'),
+      closeQueryTab: normalizeShortcut(shortcuts.closeQueryTab, 'CmdOrCtrl+W'),
     },
     startup: {
       favoriteConnectionId:

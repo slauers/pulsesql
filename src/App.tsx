@@ -37,6 +37,7 @@ function App() {
   const density = useUiPreferencesStore((state) => state.density);
   const commandPaletteShortcut = useUiPreferencesStore((state) => state.commandPaletteShortcut);
   const newQueryTabShortcut = useUiPreferencesStore((state) => state.newQueryTabShortcut);
+  const closeQueryTabShortcut = useUiPreferencesStore((state) => state.closeQueryTabShortcut);
   const runtimeStatus = useConnectionRuntimeStore((state) => state.runtimeStatus);
   const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
   const setRuntimeStatus = useConnectionRuntimeStore((state) => state.setRuntimeStatus);
@@ -193,12 +194,20 @@ function App() {
       if (matchesShortcut(event, newQueryTabShortcut)) {
         event.preventDefault();
         addTab();
+        return;
+      }
+
+      if (matchesShortcut(event, closeQueryTabShortcut)) {
+        event.preventDefault();
+        if (activeTabId) {
+          closeTab(activeTabId);
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [addTab, commandPaletteShortcut, newQueryTabShortcut]);
+  }, [activeTabId, addTab, closeQueryTabShortcut, closeTab, commandPaletteShortcut, newQueryTabShortcut]);
 
   useEffect(() => {
     if (!activeMenu) {
@@ -490,6 +499,7 @@ function App() {
         lines={[
           `${commandPaletteShortcut}: ${translate(locale, 'opensCommandPalette')}`,
           `${newQueryTabShortcut}: ${translate(locale, 'createsNewQueryTab')}`,
+          `${closeQueryTabShortcut}: ${translate(locale, 'closesCurrentQueryTab')}`,
           `Cmd/Ctrl + Enter: ${translate(locale, 'runsCurrentQuery')}`,
           `${translate(locale, 'file')} > ${translate(locale, 'configuration')}: ${translate(locale, 'opensSystemConfiguration')}`,
         ]}
