@@ -61,6 +61,24 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Extract changelog for this release
+        id: changelog
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          # Extract the block between the first ## [X.Y.Z] heading and the next one
+          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES="Desktop builds for macOS (Apple Silicon), Windows, and Linux."
+          fi
+          # Store multi-line output
+          {
+            echo "notes<<EOF"
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and upload release artifacts
         uses: tauri-apps/tauri-action@v0.6.2
         env:
@@ -70,7 +88,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "PulseSQL ${{ github.ref_name }}"
-          releaseBody: "Desktop builds for macOS (Apple Silicon), Windows, and Linux."
+          releaseBody: ${{ steps.changelog.outputs.notes }}
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
