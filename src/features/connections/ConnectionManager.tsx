@@ -109,6 +109,7 @@ export default function ConnectionManager() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(new Set());
   const [exportSavedPath, setExportSavedPath] = useState<string | null>(null);
+  const [removeConfirmConn, setRemoveConfirmConn] = useState<ConnectionConfig | null>(null);
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
@@ -430,15 +431,7 @@ export default function ConnectionManager() {
   };
 
   const confirmRemoveConnection = (conn: ConnectionConfig) => {
-    const confirmed = window.confirm(
-      t('removeConnectionConfirm', { name: conn.name }),
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    handleRemoveConnection(conn.id);
+    setRemoveConfirmConn(conn);
   };
 
   const disconnectConnection = async (conn: ConnectionConfig) => {
@@ -947,6 +940,42 @@ export default function ConnectionManager() {
                 </button>
               </div>
             )}
+          </div>
+        </div>,
+        document.body
+      ) : null}
+
+      {removeConfirmConn ? createPortal(
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setRemoveConfirmConn(null); }}
+        >
+          <div className="w-[380px] rounded-xl border border-border/80 bg-surface shadow-2xl flex flex-col">
+            <div className="px-5 py-4 border-b border-border/50">
+              <h2 className="text-sm font-semibold text-text">{t('remove')} connection</h2>
+            </div>
+            <div className="px-5 py-4 text-sm text-muted/80 whitespace-pre-line">
+              {t('removeConnectionConfirm', { name: removeConfirmConn.name })}
+            </div>
+            <div className="px-5 py-4 border-t border-border/50 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setRemoveConfirmConn(null)}
+                className="px-4 py-1.5 text-sm text-muted hover:text-text rounded-lg hover:bg-background/40 transition-colors"
+              >
+                {t('cancelExecution')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleRemoveConnection(removeConfirmConn.id);
+                  setRemoveConfirmConn(null);
+                }}
+                className="px-4 py-1.5 text-sm font-medium rounded-lg bg-red-500/80 text-white hover:bg-red-500 transition-colors"
+              >
+                {t('remove')}
+              </button>
+            </div>
           </div>
         </div>,
         document.body
