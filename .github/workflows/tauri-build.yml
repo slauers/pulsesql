@@ -84,6 +84,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Publish release
-        run: gh release edit "${{ github.ref_name }}" --draft=false
+        run: |
+          if [[ "${{ github.ref_name }}" == *"-rc"* ]] || [[ "${{ github.ref_name }}" == *"-beta"* ]]; then
+            gh release edit "${{ github.ref_name }}" --draft=false --prerelease
+          else
+            gh release edit "${{ github.ref_name }}" --draft=false
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
