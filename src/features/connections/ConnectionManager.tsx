@@ -544,17 +544,6 @@ export default function ConnectionManager() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setEditingConnectionId(null);
-                      setShowForm(true);
-                    }}
-                    className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
-                    title={t('newConnection')}
-                  >
-                    <Plus size={16} />
-                  </button>
-                  <button
-                    type="button"
                     onClick={toggleSidebarCollapsed}
                     className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
                     title={t('hideSidebar')}
@@ -720,6 +709,32 @@ export default function ConnectionManager() {
               sidebarCollapsed ? 'px-1.5 py-2' : 'px-3 py-3'
             }`}
           >
+            {!sidebarCollapsed ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingConnectionId(null);
+                  setShowForm(true);
+                }}
+                className="w-full flex items-center justify-center gap-2 mb-2.5 py-2 rounded-lg border border-dashed border-border/60 text-xs font-medium text-muted hover:text-text hover:border-primary/50 hover:bg-primary/6 transition-colors"
+                title={t('newConnection')}
+              >
+                <Plus size={13} />
+                {t('newConnection')}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingConnectionId(null);
+                  setShowForm(true);
+                }}
+                className="w-full flex items-center justify-center mb-2 py-1.5 rounded-lg border border-dashed border-border/60 text-muted hover:text-text hover:border-primary/50 hover:bg-primary/6 transition-colors"
+                title={t('newConnection')}
+              >
+                <Plus size={14} />
+              </button>
+            )}
             <div
               className={`rounded-xl border-border/60 bg-background/36 ${
                 sidebarCollapsed
