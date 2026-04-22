@@ -101,6 +101,7 @@ const messages = {
     expandSidebar: 'Expandir lateral',
     hideSidebar: 'Ocultar lateral',
     noSavedConnections: 'Nenhuma conexao salva.',
+    addFirstConnection: 'Adicione uma conexao para comecar.',
     mainActions: 'Acoes principais',
     openConnectionAction: 'Conectar',
     reconnectAction: 'Reconectar',
@@ -237,7 +238,11 @@ const messages = {
     statusConnected: 'CONECTADA',
     statusReconnecting: 'RECONECTANDO',
     statusFailed: 'FALHA',
-    sameInstant: 'mesmo instante'
+    sameInstant: 'mesmo instante',
+    importConnections: 'Importar conexoes',
+    exportConnections: 'Exportar conexoes',
+    importConnectionsError: 'Falha ao importar: {message}',
+    importConnectionsSuccess: '{count} conexao(oes) importada(s).'
   },
   'en-US': {
     language: 'Language',
@@ -329,6 +334,7 @@ const messages = {
     expandSidebar: 'Expand sidebar',
     hideSidebar: 'Hide sidebar',
     noSavedConnections: 'No saved connections.',
+    addFirstConnection: 'Add a connection to get started.',
     mainActions: 'Main actions',
     openConnectionAction: 'Connect',
     reconnectAction: 'Reconnect',
@@ -465,7 +471,11 @@ const messages = {
     statusConnected: 'CONNECTED',
     statusReconnecting: 'RECONNECTING',
     statusFailed: 'FAILED',
-    sameInstant: 'same moment'
+    sameInstant: 'same moment',
+    importConnections: 'Import connections',
+    exportConnections: 'Export connections',
+    importConnectionsError: 'Import failed: {message}',
+    importConnectionsSuccess: '{count} connection(s) imported.'
   }
 } as const;
 

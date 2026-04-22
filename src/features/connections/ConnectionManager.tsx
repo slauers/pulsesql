@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import {
   ChevronsLeft,
   ChevronsRight,
+  Check,
   Copy,
   CircleAlert,
+  Download,
   Eye,
   EyeOff,
   Expand,
@@ -18,6 +20,7 @@ import {
   PlugZap,
   Server,
   Star,
+  Upload,
   XCircle,
   Dot,
 } from 'lucide-react';
@@ -55,7 +58,7 @@ type ConnectionTransactionStatePayload = {
 };
 
 export default function ConnectionManager() {
-  const { connections, activeConnectionId, favoriteConnectionId, removeConnection, setActiveConnection, setFavoriteConnection } =
+  const { connections, activeConnectionId, favoriteConnectionId, addConnection, removeConnection, setActiveConnection, setFavoriteConnection } =
     useConnectionsStore();
   const activeSchema = useDatabaseSessionStore(
     (state) => (activeConnectionId ? state.activeSchemaByConnection[activeConnectionId] ?? null : null),
@@ -102,6 +105,11 @@ export default function ConnectionManager() {
   );
   const semanticToggleRef = useRef<HTMLButtonElement | null>(null);
   const serverTimeRequestInFlightRef = useRef(false);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(new Set());
+  const [exportSavedPath, setExportSavedPath] = useState<string | null>(null);
+  const [removeConfirmConn, setRemoveConfirmConn] = useState<ConnectionConfig | null>(null);
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
@@ -113,6 +121,8 @@ export default function ConnectionManager() {
   const statusBarState = statusBarConnection ? resolveRuntimeConnectionState(runtimeStatus, statusBarConnection.id) : 'disconnected';
   const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
     translate(locale, key, params);
+  const tLog = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
+    translate('en-US', key, params);
   const activeConnectionState = activeConnection ? resolveRuntimeConnectionState(runtimeStatus, activeConnection.id) : 'disconnected';
   const statusBarText =
     activeSchema && !activeSchemaMetadata?.tablesLoadedAt && !activeSchemaMetadata?.tablesError
@@ -261,6 +271,51 @@ export default function ConnectionManager() {
     appendLog(connId, t('logsCopied'));
   };
 
+  const openExportModal = () => {
+    setExportSelectedIds(new Set(connections.map((c) => c.id)));
+    setExportSavedPath(null);
+    setExportModalOpen(true);
+  };
+
+  const confirmExport = async () => {
+    const selected = connections.filter((c) => exportSelectedIds.has(c.id));
+    if (!selected.length) return;
+    const content = JSON.stringify(selected, null, 2);
+    try {
+      const path = await invoke<string>('save_connections_export', {
+        content,
+        filename: 'pulsesql-connections.json',
+      });
+      setExportSavedPath(path);
+    } catch (err) {
+      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const importConnections = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = '';
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(e.target?.result as string);
+        if (!Array.isArray(parsed)) throw new Error('Expected an array of connections.');
+        let imported = 0;
+        for (const raw of parsed) {
+          if (!raw.name || !raw.engine || !raw.host) continue;
+          addConnection({ ...raw, id: crypto.randomUUID() });
+          imported++;
+        }
+        if (imported === 0) throw new Error('No valid connections found in file.');
+      } catch (err) {
+        alert(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const handleAutocommitStatusBarToggle = async () => {
     if (!activeConnection || activeConnection.engine === 'oracle' || activeConnectionState !== 'connected') {
       return;
@@ -275,12 +330,12 @@ export default function ConnectionManager() {
       setTransactionOpen(activeConnection.id, payload.transaction_open);
       appendLog(
         activeConnection.id,
-        payload.autocommit_enabled ? t('autocommitOn') : t('autocommitOff'),
+        payload.autocommit_enabled ? tLog('autocommitOn') : tLog('autocommitOff'),
       );
     } catch (error) {
       appendLog(
         activeConnection.id,
-        typeof error === 'string' ? error : error instanceof Error ? error.message : t('autocommitUnsupported'),
+        typeof error === 'string' ? error : error instanceof Error ? error.message : tLog('autocommitUnsupported'),
       );
     }
   };
@@ -290,7 +345,7 @@ export default function ConnectionManager() {
 
     const currentState = resolveConnectionState(conn.id);
     if (!forceReconnect && currentState === 'connected') {
-      appendLog(conn.id, t('connectionAlreadyActive'));
+      appendLog(conn.id, tLog('connectionAlreadyActive'));
       return;
     }
 
@@ -298,8 +353,8 @@ export default function ConnectionManager() {
     appendLog(
       conn.id,
       forceReconnect
-        ? t('reconnectingConnection', { name: conn.name })
-        : t('openingConnectionWithTimeout', { name: conn.name, seconds: conn.connectTimeoutSeconds ?? 10 }),
+        ? tLog('reconnectingConnection', { name: conn.name })
+        : tLog('openingConnectionWithTimeout', { name: conn.name, seconds: conn.connectTimeoutSeconds ?? 10 }),
     );
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -317,19 +372,19 @@ export default function ConnectionManager() {
         appendLog(
           conn.id,
           isRetry
-            ? t('connectionRestoredOnAttempt', { attempt })
-            : t('connectionOpenedSuccessfully'),
+            ? tLog('connectionRestoredOnAttempt', { attempt })
+            : tLog('connectionOpenedSuccessfully'),
         );
         return;
       } catch (error) {
-        const message = formatConnectionError(error, locale);
+        const message = formatConnectionError(error, 'en-US');
 
         if (attempt < maxAttempts) {
           const delayMs = RECONNECT_DELAYS_MS[attempt - 1];
           setConnectionState(conn.id, 'reconnecting');
           appendLog(
             conn.id,
-            `${message} Nova tentativa em ${(delayMs / 1000).toFixed(1)}s.`,
+            `${message} Retrying in ${(delayMs / 1000).toFixed(1)}s.`,
           );
           await wait(delayMs);
           continue;
@@ -376,19 +431,11 @@ export default function ConnectionManager() {
   };
 
   const confirmRemoveConnection = (conn: ConnectionConfig) => {
-    const confirmed = window.confirm(
-      t('removeConnectionConfirm', { name: conn.name }),
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    handleRemoveConnection(conn.id);
+    setRemoveConfirmConn(conn);
   };
 
   const disconnectConnection = async (conn: ConnectionConfig) => {
-    appendLog(conn.id, t('closingConnection', { name: conn.name }));
+    appendLog(conn.id, tLog('closingConnection', { name: conn.name }));
 
     try {
       await invoke('close_connection', { id: conn.id });
@@ -399,9 +446,9 @@ export default function ConnectionManager() {
       if (activeConnectionId === conn.id) {
         setActiveConnection(null);
       }
-      appendLog(conn.id, t('connectionClosed'));
+      appendLog(conn.id, tLog('connectionClosed'));
     } catch (error) {
-      appendLog(conn.id, formatConnectionError(error, locale));
+      appendLog(conn.id, formatConnectionError(error, 'en-US'));
     }
   };
 
@@ -476,17 +523,24 @@ export default function ConnectionManager() {
                 <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-text flex items-center gap-2">
                   <Server size={14} /> Explorer
                 </h2>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => {
-                      setEditingConnectionId(null);
-                      setShowForm(true);
-                    }}
-                    className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
-                    title={t('newConnection')}
+                    onClick={() => importFileRef.current?.click()}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-sky-300 hover:bg-sky-400/12 hover:text-sky-200 transition-colors"
+                    title={t('importConnections')}
                   >
-                    <Plus size={16} />
+                    <Download size={12} />
+                    <span>Import</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openExportModal}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-emerald-300 hover:bg-emerald-400/12 hover:text-emerald-200 transition-colors"
+                    title={t('exportConnections')}
+                  >
+                    <Upload size={12} />
+                    <span>Export</span>
                   </button>
                   <button
                     type="button"
@@ -544,9 +598,23 @@ export default function ConnectionManager() {
             <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-0">
               <div className="space-y-1">
                 {connections.length === 0 ? (
-                  <p className="border border-border/70 bg-background/24 px-3 py-4 text-center text-sm text-muted">
-                    {t('noSavedConnections')}
-                  </p>
+                  <div className="flex flex-col items-center gap-4 rounded-lg border border-border/50 bg-background/24 px-4 py-8 text-center">
+                    <div className="rounded-full border border-border/60 bg-surface/60 p-3 text-muted">
+                      <Plug size={22} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-text">{t('noSavedConnections')}</p>
+                      <p className="mt-1 text-xs text-muted/70">{t('addFirstConnection')}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowForm(true)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/12 px-4 py-2 text-sm font-medium text-primary hover:bg-primary/18 transition-colors"
+                    >
+                      <Plus size={15} />
+                      {t('newConnection')}
+                    </button>
+                  </div>
                 ) : (
                   connections.map((conn) => {
                     const isSelected = selectedConnectionId === conn.id;
@@ -641,6 +709,32 @@ export default function ConnectionManager() {
               sidebarCollapsed ? 'px-1.5 py-2' : 'px-3 py-3'
             }`}
           >
+            {connections.length > 0 && (!sidebarCollapsed ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingConnectionId(null);
+                  setShowForm(true);
+                }}
+                className="w-full flex items-center justify-center gap-2 mb-2.5 py-2 rounded-lg border border-dashed border-border/60 text-xs font-medium text-muted hover:text-text hover:border-primary/50 hover:bg-primary/6 transition-colors"
+                title={t('newConnection')}
+              >
+                <Plus size={13} />
+                {t('newConnection')}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingConnectionId(null);
+                  setShowForm(true);
+                }}
+                className="w-full flex items-center justify-center mb-2 py-1.5 rounded-lg border border-dashed border-border/60 text-muted hover:text-text hover:border-primary/50 hover:bg-primary/6 transition-colors"
+                title={t('newConnection')}
+              >
+                <Plus size={14} />
+              </button>
+            ))}
             <div
               className={`rounded-xl border-border/60 bg-background/36 ${
                 sidebarCollapsed
@@ -773,6 +867,135 @@ export default function ConnectionManager() {
           onCopy={() => void copyLogs(expandedLogsConnectionId)}
           onClose={() => setExpandedLogsConnectionId(null)}
         />
+      ) : null}
+
+      <input
+        ref={importFileRef}
+        type="file"
+        accept=".json"
+        className="hidden"
+        onChange={importConnections}
+      />
+
+      {exportModalOpen ? createPortal(
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) { setExportModalOpen(false); setExportSavedPath(null); } }}
+        >
+          <div className="w-[400px] max-h-[80vh] flex flex-col rounded-xl border border-border/80 bg-surface shadow-2xl">
+            <div className="px-5 py-4 border-b border-border/50">
+              <h2 className="text-sm font-semibold text-text">{t('exportConnections')}</h2>
+              <p className="text-xs text-muted/70 mt-0.5">Select which connections to include in the export file.</p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-1">
+              <button
+                type="button"
+                className="text-xs text-primary hover:underline self-start px-2 mb-1"
+                onClick={() => setExportSelectedIds(
+                  exportSelectedIds.size === connections.length
+                    ? new Set()
+                    : new Set(connections.map((c) => c.id))
+                )}
+              >
+                {exportSelectedIds.size === connections.length ? 'Deselect all' : 'Select all'}
+              </button>
+              {connections.map((conn) => (
+                <label
+                  key={conn.id}
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer hover:bg-background/40 transition-colors"
+                >
+                  <input
+                    type="checkbox"
+                    checked={exportSelectedIds.has(conn.id)}
+                    onChange={(e) => {
+                      setExportSelectedIds((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(conn.id);
+                        else next.delete(conn.id);
+                        return next;
+                      });
+                    }}
+                    className="accent-primary w-3.5 h-3.5"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-text truncate">{conn.name}</div>
+                    <div className="text-xs text-muted/60 truncate">{conn.engine} • {conn.host}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {exportSavedPath ? (
+              <div className="px-5 py-3 border-t border-border/50 flex flex-col gap-3">
+                <div className="flex items-start gap-2 text-xs text-emerald-300 bg-emerald-400/10 rounded-lg px-3 py-2.5">
+                  <Check size={13} className="shrink-0 mt-0.5" />
+                  <span className="break-all">Saved to {exportSavedPath}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setExportModalOpen(false); setExportSavedPath(null); }}
+                  className="w-full rounded-lg bg-primary/20 text-primary text-sm font-medium py-2 hover:bg-primary/30 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <div className="px-5 py-4 border-t border-border/50 flex gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => { setExportModalOpen(false); setExportSavedPath(null); }}
+                  className="px-4 py-1.5 text-sm text-muted hover:text-text rounded-lg hover:bg-background/40 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={exportSelectedIds.size === 0}
+                  onClick={() => void confirmExport()}
+                  className="px-4 py-1.5 text-sm font-medium rounded-lg bg-primary text-surface hover:bg-primary/85 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Export {exportSelectedIds.size > 0 ? `(${exportSelectedIds.size})` : ''}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body
+      ) : null}
+
+      {removeConfirmConn ? createPortal(
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setRemoveConfirmConn(null); }}
+        >
+          <div className="w-[380px] rounded-xl border border-border/80 bg-surface shadow-2xl flex flex-col">
+            <div className="px-5 py-4 border-b border-border/50">
+              <h2 className="text-sm font-semibold text-text">{t('remove')} connection</h2>
+            </div>
+            <div className="px-5 py-4 text-sm text-muted/80 whitespace-pre-line">
+              {t('removeConnectionConfirm', { name: removeConfirmConn.name })}
+            </div>
+            <div className="px-5 py-4 border-t border-border/50 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setRemoveConfirmConn(null)}
+                className="px-4 py-1.5 text-sm text-muted hover:text-text rounded-lg hover:bg-background/40 transition-colors"
+              >
+                {t('cancelExecution')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleRemoveConnection(removeConfirmConn.id);
+                  setRemoveConfirmConn(null);
+                }}
+                className="px-4 py-1.5 text-sm font-medium rounded-lg bg-red-500/80 text-white hover:bg-red-500 transition-colors"
+              >
+                {t('remove')}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       ) : null}
 
       <div className="shrink-0 rounded-lg border border-border/80 glass-panel px-4 py-1 text-[10px] shadow-[0_18px_42px_rgba(0,0,0,0.2)]">
@@ -1177,10 +1400,19 @@ function ConnectionLogEntry({
   const { timestamp, message } = extractLogParts(entry);
   const tone = resolveLogTone(message);
   const Icon = tone.icon;
+  const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<number | null>(null);
+
+  const handleCopyLine = () => {
+    navigator.clipboard.writeText(message).catch(() => null);
+    if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
+    setCopied(true);
+    copyTimeoutRef.current = window.setTimeout(() => setCopied(false), 1200);
+  };
 
   return (
     <div
-      className={`rounded-lg px-2.5 py-2 whitespace-pre-wrap break-words ${
+      className={`group rounded-lg px-2.5 py-2 whitespace-pre-wrap break-words ${
         highlighted
           ? `${tone.highlight} shadow-[inset_2px_0_0_rgba(34,199,255,0.55)]`
           : tone.base
@@ -1202,6 +1434,16 @@ function ConnectionLogEntry({
           ) : null}
           <div className={tone.text}>{message}</div>
         </div>
+        <button
+          type="button"
+          onClick={handleCopyLine}
+          className={`shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 transition-opacity ${
+            copied ? 'text-emerald-300' : 'text-muted hover:text-text'
+          }`}
+          title={translate(locale, 'copyLogs')}
+        >
+          {copied ? <Check size={11} /> : <Copy size={11} />}
+        </button>
       </div>
     </div>
   );
