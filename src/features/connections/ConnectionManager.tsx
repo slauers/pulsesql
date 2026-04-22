@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent as React
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import {
-  ChevronsLeft,
   ChevronsRight,
   PanelLeft,
   Check,
@@ -530,7 +529,15 @@ export default function ConnectionManager() {
             ) : (
               <>
                 <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-text flex items-center gap-2">
-                  <PanelLeft size={14} /> Explorer
+                  <button
+                    type="button"
+                    onClick={toggleSidebarCollapsed}
+                    className="p-0.5 rounded text-muted hover:bg-background/45 hover:text-text transition-colors"
+                    title={t('hideSidebar')}
+                  >
+                    <PanelLeft size={14} />
+                  </button>
+                  Explorer
                 </h2>
                 <div className="flex items-center gap-1">
                   <button
@@ -550,14 +557,6 @@ export default function ConnectionManager() {
                   >
                     <Upload size={12} />
                     <span>Export</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={toggleSidebarCollapsed}
-                    className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
-                    title={t('hideSidebar')}
-                  >
-                    <ChevronsLeft size={16} />
                   </button>
                 </div>
               </>
