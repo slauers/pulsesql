@@ -2,7 +2,26 @@
 
 All notable changes to PulseSQL are documented here.
 
-## [0.1.15] - Unreleased
+## [0.1.15] - 2026-04-22
+
+### Added
+- Native OS menu bar (File, Edit, View, Help) replacing the custom in-app menu bar
+- Version number centered in the status bar — click to open release notes
+- Release notes modal showing the full changelog
+- Import/Export connections: backup and restore connections as JSON with per-connection selection
+- Bottom-of-sidebar "New connection" button (hidden when no connections exist)
+- Per-line copy button on connection log entries
+- Empty-state CTA when no connections are saved
+
+### Changed
+- All connection log messages are now always in English regardless of app locale
+- New Query Tab button style matches the New Connection button (dashed border hover)
+- Explorer header icon updated to PanelLeft
+- Sidebar minimum width increased to 300px to prevent header overflow
+
+### Fixed
+- Connection removal broken due to `window.confirm()` returning false in Tauri's WebView
+- Export connections file download not working in WebView — now saves to Downloads folder via Rust command
 
 ## [0.1.14] - 2025-03-xx
 

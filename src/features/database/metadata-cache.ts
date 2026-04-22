@@ -42,14 +42,14 @@ export async function ensureSchemasCached(
 
       useConnectionRuntimeStore
         .getState()
-        .appendLog(connectionId, `Metadata schemas carregados em ${Math.round(performance.now() - startedAt)}ms.`);
+        .appendLog(connectionId, `Schema metadata loaded in ${Math.round(performance.now() - startedAt)}ms.`);
       useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
         phase: 'idle',
       });
 
       return schemas;
     } catch (error) {
-      const message = formatMetadataError(error, 'Falha ao carregar schemas.');
+      const message = formatMetadataError(error, 'Failed to load schemas.');
       useDatabaseSessionStore.getState().setSchemasError(connectionId, engine, message);
       useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
         phase: 'idle',
@@ -107,13 +107,13 @@ export async function ensureTablesCached(
       useDatabaseSessionStore.getState().cacheTables(connectionId, engine, schemaName, tables);
       useConnectionRuntimeStore
         .getState()
-        .appendLog(connectionId, `Metadata de tabelas para ${schemaName} carregados em ${Math.round(performance.now() - startedAt)}ms.`);
+        .appendLog(connectionId, `Table metadata for ${schemaName} loaded in ${Math.round(performance.now() - startedAt)}ms.`);
       useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
         phase: 'idle',
       });
       return tables;
     } catch (error) {
-      const message = formatMetadataError(error, `Falha ao carregar tabelas de ${schemaName}.`);
+      const message = formatMetadataError(error, `Failed to load tables for ${schemaName}.`);
       useDatabaseSessionStore.getState().setTablesError(connectionId, engine, schemaName, message);
       useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
         phase: 'idle',
@@ -159,13 +159,13 @@ export async function ensureColumnsCached(
       useDatabaseSessionStore.getState().cacheColumns(connectionId, engine, schemaName, tableName, normalized);
       useConnectionRuntimeStore
         .getState()
-        .appendLog(connectionId, `Metadata de colunas para ${schemaName}.${tableName} carregados em ${Math.round(performance.now() - startedAt)}ms.`);
+        .appendLog(connectionId, `Column metadata for ${schemaName}.${tableName} loaded in ${Math.round(performance.now() - startedAt)}ms.`);
       useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
         phase: 'idle',
       });
       return normalized;
     } catch (error) {
-      const message = formatMetadataError(error, `Falha ao carregar colunas de ${schemaName}.${tableName}.`);
+      const message = formatMetadataError(error, `Failed to load columns for ${schemaName}.${tableName}.`);
       useDatabaseSessionStore.getState().setColumnsError(connectionId, engine, schemaName, tableName, message);
       useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
         phase: 'idle',
@@ -181,7 +181,7 @@ export async function ensureColumnsCached(
 
 export function invalidateMetadataCache(connectionId: string) {
   useDatabaseSessionStore.getState().invalidateConnection(connectionId);
-  useConnectionRuntimeStore.getState().appendLog(connectionId, 'Cache de metadata invalidado.');
+  useConnectionRuntimeStore.getState().appendLog(connectionId, 'Metadata cache invalidated.');
 }
 
 export function getCachedTableNames(connectionId: string, activeSchema?: string | null): string[] {

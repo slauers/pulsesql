@@ -242,7 +242,7 @@ function normalizeEditorFontSize(value: unknown) {
 
 function normalizeSidebarWidth(value: unknown) {
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return Math.min(520, Math.max(220, Math.round(value)));
+    return Math.min(520, Math.max(300, Math.round(value)));
   }
 
   return 290;
