@@ -1169,7 +1169,7 @@ export default function QueryWorkspace() {
               <div className="ml-auto mr-2 flex shrink-0 items-center gap-2">
                 <button
                   onClick={() => addTab(resolvedConnectionId)}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-background/28 px-3 py-2 text-xs text-muted hover:bg-border/30 hover:text-text"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-border/60 px-3 py-2 text-xs font-medium text-muted hover:text-text hover:border-primary/50 hover:bg-primary/6 transition-colors"
                 >
                   <Plus size={15} />
                   <span className="hidden sm:inline">{t('newQueryTab')}</span>
