@@ -527,18 +527,20 @@ export default function ConnectionManager() {
                   <button
                     type="button"
                     onClick={() => importFileRef.current?.click()}
-                    className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-sky-300 hover:bg-sky-400/12 hover:text-sky-200 transition-colors"
                     title={t('importConnections')}
                   >
-                    <Upload size={15} />
+                    <Upload size={12} />
+                    <span>Import</span>
                   </button>
                   <button
                     type="button"
                     onClick={openExportModal}
-                    className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-emerald-300 hover:bg-emerald-400/12 hover:text-emerald-200 transition-colors"
                     title={t('exportConnections')}
                   >
-                    <Download size={15} />
+                    <Download size={12} />
+                    <span>Export</span>
                   </button>
                   <button
                     type="button"
