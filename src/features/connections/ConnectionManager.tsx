@@ -24,6 +24,9 @@ import {
   XCircle,
   Dot,
 } from 'lucide-react';
+import { marked } from 'marked';
+import tauriConfig from '../../../src-tauri/tauri.conf.json';
+import changelog from '../../../CHANGELOG.md?raw';
 import oracleMark from '../../assets/oracle-mark.svg';
 import postgresMark from '../../assets/postgres-mark.svg';
 import pulsesqlFooter from '../../assets/pulsesql-footer.svg';
@@ -106,6 +109,7 @@ export default function ConnectionManager() {
   const semanticToggleRef = useRef<HTMLButtonElement | null>(null);
   const serverTimeRequestInFlightRef = useRef(false);
   const importFileRef = useRef<HTMLInputElement | null>(null);
+  const [changelogOpen, setChangelogOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(new Set());
   const [exportSavedPath, setExportSavedPath] = useState<string | null>(null);
@@ -999,7 +1003,7 @@ export default function ConnectionManager() {
       ) : null}
 
       <div className="shrink-0 rounded-lg border border-border/80 glass-panel px-4 py-1 text-[10px] shadow-[0_18px_42px_rgba(0,0,0,0.2)]">
-        <div className="flex items-center justify-between gap-3">
+        <div className="relative flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3 truncate text-text/90">
             <span className="truncate">{statusBarText}</span>
             <span className="hidden sm:inline text-muted/70">•</span>
@@ -1041,6 +1045,13 @@ export default function ConnectionManager() {
               </>
             ) : null}
           </div>
+          <button
+            type="button"
+            onClick={() => setChangelogOpen(true)}
+            className="absolute left-1/2 -translate-x-1/2 text-primary/80 hover:text-primary font-mono tracking-wide transition-colors"
+          >
+            v{tauriConfig.version}
+          </button>
           {statusBarConnection ? (
             <div className="flex items-center gap-2 shrink-0">
               <span className="max-w-[220px] truncate text-[10px] uppercase tracking-[0.14em] text-slate-200/90">
@@ -1051,6 +1062,34 @@ export default function ConnectionManager() {
           ) : null}
         </div>
       </div>
+
+      {changelogOpen ? createPortal(
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setChangelogOpen(false); }}
+        >
+          <div className="w-[520px] max-h-[75vh] flex flex-col rounded-xl border border-border/80 bg-surface shadow-2xl">
+            <div className="px-5 py-4 border-b border-border/50 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-text">Release Notes</h2>
+                <p className="text-xs text-primary/80 font-mono mt-0.5">v{tauriConfig.version}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setChangelogOpen(false)}
+                className="text-muted hover:text-text transition-colors text-xs px-2 py-1 rounded hover:bg-background/40"
+              >
+                {t('close')}
+              </button>
+            </div>
+            <div
+              className="flex-1 overflow-y-auto px-5 py-4 text-[12px] leading-relaxed text-muted/90 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-text [&_h2]:mt-4 [&_h2]:mb-2 [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-text/80 [&_h3]:mt-3 [&_h3]:mb-1 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:space-y-0.5 [&_p]:text-muted/70 first:[&_h2]:mt-0"
+              dangerouslySetInnerHTML={{ __html: marked.parse(changelog) as string }}
+            />
+          </div>
+        </div>,
+        document.body
+      ) : null}
     </div>
   );
 }
