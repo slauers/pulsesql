@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -7,6 +7,7 @@ import {
   Check,
   Copy,
   CircleAlert,
+  Download,
   Eye,
   EyeOff,
   Expand,
@@ -19,6 +20,7 @@ import {
   PlugZap,
   Server,
   Star,
+  Upload,
   XCircle,
   Dot,
 } from 'lucide-react';
@@ -56,7 +58,7 @@ type ConnectionTransactionStatePayload = {
 };
 
 export default function ConnectionManager() {
-  const { connections, activeConnectionId, favoriteConnectionId, removeConnection, setActiveConnection, setFavoriteConnection } =
+  const { connections, activeConnectionId, favoriteConnectionId, addConnection, removeConnection, setActiveConnection, setFavoriteConnection } =
     useConnectionsStore();
   const activeSchema = useDatabaseSessionStore(
     (state) => (activeConnectionId ? state.activeSchemaByConnection[activeConnectionId] ?? null : null),
@@ -103,6 +105,7 @@ export default function ConnectionManager() {
   );
   const semanticToggleRef = useRef<HTMLButtonElement | null>(null);
   const serverTimeRequestInFlightRef = useRef(false);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
@@ -114,6 +117,8 @@ export default function ConnectionManager() {
   const statusBarState = statusBarConnection ? resolveRuntimeConnectionState(runtimeStatus, statusBarConnection.id) : 'disconnected';
   const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
     translate(locale, key, params);
+  const tLog = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
+    translate('en-US', key, params);
   const activeConnectionState = activeConnection ? resolveRuntimeConnectionState(runtimeStatus, activeConnection.id) : 'disconnected';
   const statusBarText =
     activeSchema && !activeSchemaMetadata?.tablesLoadedAt && !activeSchemaMetadata?.tablesError
@@ -262,6 +267,41 @@ export default function ConnectionManager() {
     appendLog(connId, t('logsCopied'));
   };
 
+  const exportConnections = () => {
+    const data = JSON.stringify(connections, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'pulsesql-connections.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importConnections = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = '';
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(e.target?.result as string);
+        if (!Array.isArray(parsed)) throw new Error('Expected an array of connections.');
+        let imported = 0;
+        for (const raw of parsed) {
+          if (!raw.name || !raw.engine || !raw.host) continue;
+          addConnection({ ...raw, id: crypto.randomUUID() });
+          imported++;
+        }
+        if (imported === 0) throw new Error('No valid connections found in file.');
+      } catch (err) {
+        alert(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const handleAutocommitStatusBarToggle = async () => {
     if (!activeConnection || activeConnection.engine === 'oracle' || activeConnectionState !== 'connected') {
       return;
@@ -276,12 +316,12 @@ export default function ConnectionManager() {
       setTransactionOpen(activeConnection.id, payload.transaction_open);
       appendLog(
         activeConnection.id,
-        payload.autocommit_enabled ? t('autocommitOn') : t('autocommitOff'),
+        payload.autocommit_enabled ? tLog('autocommitOn') : tLog('autocommitOff'),
       );
     } catch (error) {
       appendLog(
         activeConnection.id,
-        typeof error === 'string' ? error : error instanceof Error ? error.message : t('autocommitUnsupported'),
+        typeof error === 'string' ? error : error instanceof Error ? error.message : tLog('autocommitUnsupported'),
       );
     }
   };
@@ -291,7 +331,7 @@ export default function ConnectionManager() {
 
     const currentState = resolveConnectionState(conn.id);
     if (!forceReconnect && currentState === 'connected') {
-      appendLog(conn.id, t('connectionAlreadyActive'));
+      appendLog(conn.id, tLog('connectionAlreadyActive'));
       return;
     }
 
@@ -299,8 +339,8 @@ export default function ConnectionManager() {
     appendLog(
       conn.id,
       forceReconnect
-        ? t('reconnectingConnection', { name: conn.name })
-        : t('openingConnectionWithTimeout', { name: conn.name, seconds: conn.connectTimeoutSeconds ?? 10 }),
+        ? tLog('reconnectingConnection', { name: conn.name })
+        : tLog('openingConnectionWithTimeout', { name: conn.name, seconds: conn.connectTimeoutSeconds ?? 10 }),
     );
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -318,19 +358,19 @@ export default function ConnectionManager() {
         appendLog(
           conn.id,
           isRetry
-            ? t('connectionRestoredOnAttempt', { attempt })
-            : t('connectionOpenedSuccessfully'),
+            ? tLog('connectionRestoredOnAttempt', { attempt })
+            : tLog('connectionOpenedSuccessfully'),
         );
         return;
       } catch (error) {
-        const message = formatConnectionError(error, locale);
+        const message = formatConnectionError(error, 'en-US');
 
         if (attempt < maxAttempts) {
           const delayMs = RECONNECT_DELAYS_MS[attempt - 1];
           setConnectionState(conn.id, 'reconnecting');
           appendLog(
             conn.id,
-            `${message} Nova tentativa em ${(delayMs / 1000).toFixed(1)}s.`,
+            `${message} Retrying in ${(delayMs / 1000).toFixed(1)}s.`,
           );
           await wait(delayMs);
           continue;
@@ -389,7 +429,7 @@ export default function ConnectionManager() {
   };
 
   const disconnectConnection = async (conn: ConnectionConfig) => {
-    appendLog(conn.id, t('closingConnection', { name: conn.name }));
+    appendLog(conn.id, tLog('closingConnection', { name: conn.name }));
 
     try {
       await invoke('close_connection', { id: conn.id });
@@ -400,9 +440,9 @@ export default function ConnectionManager() {
       if (activeConnectionId === conn.id) {
         setActiveConnection(null);
       }
-      appendLog(conn.id, t('connectionClosed'));
+      appendLog(conn.id, tLog('connectionClosed'));
     } catch (error) {
-      appendLog(conn.id, formatConnectionError(error, locale));
+      appendLog(conn.id, formatConnectionError(error, 'en-US'));
     }
   };
 
@@ -477,7 +517,23 @@ export default function ConnectionManager() {
                 <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-text flex items-center gap-2">
                   <Server size={14} /> Explorer
                 </h2>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => importFileRef.current?.click()}
+                    className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
+                    title={t('importConnections')}
+                  >
+                    <Upload size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportConnections}
+                    className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
+                    title={t('exportConnections')}
+                  >
+                    <Download size={15} />
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
@@ -789,6 +845,14 @@ export default function ConnectionManager() {
           onClose={() => setExpandedLogsConnectionId(null)}
         />
       ) : null}
+
+      <input
+        ref={importFileRef}
+        type="file"
+        accept=".json"
+        className="hidden"
+        onChange={importConnections}
+      />
 
       <div className="shrink-0 rounded-lg border border-border/80 glass-panel px-4 py-1 text-[10px] shadow-[0_18px_42px_rgba(0,0,0,0.2)]">
         <div className="flex items-center justify-between gap-3">

@@ -238,7 +238,11 @@ const messages = {
     statusConnected: 'CONECTADA',
     statusReconnecting: 'RECONECTANDO',
     statusFailed: 'FALHA',
-    sameInstant: 'mesmo instante'
+    sameInstant: 'mesmo instante',
+    importConnections: 'Importar conexoes',
+    exportConnections: 'Exportar conexoes',
+    importConnectionsError: 'Falha ao importar: {message}',
+    importConnectionsSuccess: '{count} conexao(oes) importada(s).'
   },
   'en-US': {
     language: 'Language',
@@ -467,7 +471,11 @@ const messages = {
     statusConnected: 'CONNECTED',
     statusReconnecting: 'RECONNECTING',
     statusFailed: 'FAILED',
-    sameInstant: 'same moment'
+    sameInstant: 'same moment',
+    importConnections: 'Import connections',
+    exportConnections: 'Export connections',
+    importConnectionsError: 'Import failed: {message}',
+    importConnectionsSuccess: '{count} connection(s) imported.'
   }
 } as const;
 
