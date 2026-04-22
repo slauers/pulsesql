@@ -230,7 +230,7 @@ export function DatabaseExplorer({
             <LoaderCircle size={18} className="animate-spin text-muted" />
           </div>
         ) : schemaError ? (
-          <ExplorerError message={schemaError} />
+          <ExplorerError message={schemaError} onRetry={() => void handleRefresh()} />
         ) : schemas.length ? (
           <div className="mt-2">
             {schemas.map((schema) => (
@@ -407,6 +407,17 @@ function SchemaItem({
     };
   }, [connId, engine, expanded, schema]);
 
+  const handleRetryTables = () => {
+    let cancelled = false;
+    setLoading(true);
+    ensureTablesCached(connId, engine, schema, { force: true })
+      .catch(() => null)
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  };
+
   return (
     <div>
       <div
@@ -438,8 +449,19 @@ function SchemaItem({
             <LoaderCircle size={14} className="animate-spin text-muted" />
           </div>
         ) : schemaEntry?.tablesError ? (
-          <div className="ml-5 border-l border-border/50 pl-3 py-2 text-xs text-red-300">
-            {schemaEntry.tablesError}
+          <div className="ml-5 border-l border-border/50 pl-3 py-2">
+            <div className="text-xs text-red-300">{schemaEntry.tablesError}</div>
+            <button
+              type="button"
+              onClick={handleRetryTables}
+              className="mt-1.5 text-[11px] text-muted hover:text-text underline underline-offset-2"
+            >
+              Tentar novamente
+            </button>
+          </div>
+        ) : schemaEntry && !schemaEntry.tables.length ? (
+          <div className="ml-5 border-l border-border/50 pl-3 py-2 text-xs text-muted/60 italic">
+            Schema vazio
           </div>
         ) : (
           <div className="ml-5 border-l border-border/50 pl-2">
@@ -644,8 +666,21 @@ function DescribeTableModal({
   );
 }
 
-function ExplorerError({ message }: { message: string }) {
-  return <div className="rounded-lg border border-red-400/20 bg-red-400/8 p-3 text-sm text-red-300">{message}</div>;
+function ExplorerError({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div className="rounded-lg border border-red-400/20 bg-red-400/8 p-3 text-sm text-red-300">
+      <div>{message}</div>
+      {onRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 text-xs text-muted hover:text-text underline underline-offset-2"
+        >
+          Tentar novamente
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 function resolveActionTitle(action: ExplorerActionId): string {
