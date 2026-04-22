@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ArrowUpCircle } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import { marked } from 'marked';
 
 export interface UpdateInfo {
   version: string;
@@ -122,9 +123,10 @@ export function UpdateButton({ update }: { update: UpdateInfo }) {
                   A new version is ready to install.
                 </div>
                 {update.body ? (
-                  <div className="mt-2 text-[11px] leading-relaxed text-muted">
-                    {update.body}
-                  </div>
+                  <div
+                    className="mt-3 text-[11px] leading-relaxed text-muted/80 prose-sm max-h-48 overflow-y-auto [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:space-y-0.5 [&_h3]:font-semibold [&_h3]:text-text [&_h3]:mt-2 [&_h3]:mb-1"
+                    dangerouslySetInnerHTML={{ __html: marked.parse(update.body) as string }}
+                  />
                 ) : null}
               </div>
 
