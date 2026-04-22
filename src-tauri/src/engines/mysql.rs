@@ -39,9 +39,11 @@ pub async fn test_connection(url: &str, timeout_seconds: u64) -> Result<(), Stri
 pub async fn open_connection(url: &str, timeout_seconds: u64) -> Result<MySqlPool, String> {
     MySqlPoolOptions::new()
         .max_connections(5)
+        .min_connections(2)
         .acquire_timeout(Duration::from_secs(timeout_seconds))
-        .idle_timeout(Duration::from_secs(60))
-        .test_before_acquire(true)
+        .idle_timeout(Duration::from_secs(300))
+        .max_lifetime(Duration::from_secs(3600))
+        .test_before_acquire(false)
         .connect(url)
         .await
         .map_err(|error| format!("Failed to open MySQL connection: {error}"))
@@ -95,12 +97,14 @@ pub async fn execute_query(
     query: &str,
     page: Option<u32>,
     page_size: Option<u32>,
+    known_total_rows: Option<u64>,
 ) -> Result<QueryResult, String> {
     execute_query_on_pool(
         pool,
         query,
         page.unwrap_or(1),
         page_size.unwrap_or(DEFAULT_PAGE_SIZE),
+        known_total_rows,
     )
     .await
 }
@@ -110,12 +114,14 @@ pub async fn execute_query_on_connection(
     query: &str,
     page: Option<u32>,
     page_size: Option<u32>,
+    known_total_rows: Option<u64>,
 ) -> Result<QueryResult, String> {
     execute_query_on_active_connection(
         connection.as_mut(),
         query,
         page.unwrap_or(1),
         page_size.unwrap_or(DEFAULT_PAGE_SIZE),
+        known_total_rows,
     )
     .await
 }
@@ -149,6 +155,7 @@ async fn execute_query_on_pool(
     query: &str,
     page: u32,
     page_size: u32,
+    known_total_rows: Option<u64>,
 ) -> Result<QueryResult, String> {
     let trimmed = query.trim();
     let started_at = Instant::now();
@@ -164,14 +171,25 @@ async fn execute_query_on_pool(
             let count_sql =
                 format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
 
-            let rows = sqlx::query(&paged_sql)
-                .fetch_all(pool)
-                .await
-                .map_err(|error| error.to_string())?;
-            let total_rows = sqlx::query_scalar::<_, i64>(&count_sql)
-                .fetch_one(pool)
-                .await
-                .map_err(|error| error.to_string())?;
+            // Run paged data and COUNT in parallel.
+            // When total rows is already known (page navigation), skip the COUNT query.
+            let (rows, total_rows) = tokio::try_join!(
+                async {
+                    sqlx::query(&paged_sql)
+                        .fetch_all(pool)
+                        .await
+                        .map_err(|error| error.to_string())
+                },
+                async {
+                    match known_total_rows {
+                        Some(known) => Ok::<i64, String>(known as i64),
+                        None => sqlx::query_scalar::<_, i64>(&count_sql)
+                            .fetch_one(pool)
+                            .await
+                            .map_err(|error| error.to_string()),
+                    }
+                },
+            )?;
 
             let columns = rows
                 .first()
@@ -298,6 +316,7 @@ async fn execute_query_on_active_connection(
     query: &str,
     page: u32,
     page_size: u32,
+    known_total_rows: Option<u64>,
 ) -> Result<QueryResult, String> {
     let trimmed = query.trim();
     let started_at = Instant::now();
@@ -313,14 +332,18 @@ async fn execute_query_on_active_connection(
             let count_sql =
                 format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
 
+            // Single connection — cannot parallelize; skip COUNT when already known.
             let rows = sqlx::query(&paged_sql)
                 .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
-            let total_rows = sqlx::query_scalar::<_, i64>(&count_sql)
-                .fetch_one(&mut *connection)
-                .await
-                .map_err(|error| error.to_string())?;
+            let total_rows = match known_total_rows {
+                Some(known) => known as i64,
+                None => sqlx::query_scalar::<_, i64>(&count_sql)
+                    .fetch_one(&mut *connection)
+                    .await
+                    .map_err(|error| error.to_string())?,
+            };
 
             let columns = rows
                 .first()

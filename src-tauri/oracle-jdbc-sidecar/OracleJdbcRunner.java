@@ -21,6 +21,15 @@ import java.util.Properties;
 
 public class OracleJdbcRunner {
   public static void main(String[] args) throws Exception {
+    // Persistent server mode: read JSON requests from stdin, write responses to stdout.
+    // Invoked as: java OracleJdbcRunner --server
+    if (args.length > 0 && "--server".equals(args[0])) {
+      runServer();
+      return;
+    }
+
+    // Legacy single-shot mode kept for compatibility:
+    // java OracleJdbcRunner <command> <request.json> <response.json>
     if (args.length < 3) {
       throw new IllegalArgumentException("Expected command, request path and response path.");
     }
@@ -64,6 +73,75 @@ public class OracleJdbcRunner {
       System.err.println(error.getMessage());
       System.exit(1);
     }
+  }
+
+  /**
+   * Persistent server: reads one JSON request line from stdin, dispatches it, writes one JSON
+   * response line to stdout. Runs until stdin is closed (parent process exits).
+   */
+  private static void runServer() throws Exception {
+    java.io.BufferedReader stdin = new java.io.BufferedReader(
+        new java.io.InputStreamReader(System.in, StandardCharsets.UTF_8));
+
+    String line;
+    while ((line = stdin.readLine()) != null) {
+      if (line.trim().isEmpty()) {
+        continue;
+      }
+
+      String response;
+      try {
+        String command = extractFieldFromLine(line, "command");
+        Request request = Request.parse(line);
+
+        switch (command) {
+          case "test":
+            testConnection(request);
+            response = "{\"message\":\"Connection successful\"}";
+            break;
+          case "open":
+            testConnection(request);
+            response = "{\"message\":\"Connection opened\"}";
+            break;
+          case "listDatabases":
+            response = listItems(request, "SELECT SYS_CONTEXT('USERENV', 'DB_NAME') AS DB_NAME FROM dual");
+            break;
+          case "listSchemas":
+            response = listItems(request, "SELECT username FROM all_users WHERE username NOT IN ('SYS', 'SYSTEM') ORDER BY username");
+            break;
+          case "listTables":
+            response = listItems(request, "SELECT table_name FROM all_tables WHERE owner = '" + escapeSql(request.schema) + "' ORDER BY table_name");
+            break;
+          case "listColumns":
+            response = listColumns(request);
+            break;
+          case "executeQuery":
+            response = executeQuery(request);
+            break;
+          default:
+            response = "{\"error\":" + quote("Unsupported Oracle sidecar command: " + command) + "}";
+            break;
+        }
+      } catch (Exception error) {
+        String msg = error.getMessage();
+        response = "{\"error\":" + quote("Oracle JDBC sidecar error: " + (msg != null ? msg : error.toString())) + "}";
+      }
+
+      System.out.println(response);
+      System.out.flush();
+    }
+  }
+
+  /** Extracts a plain string field value from a JSON line without a full parser. */
+  private static String extractFieldFromLine(String json, String field) {
+    String needle = "\"" + field + "\":\"";
+    int start = json.indexOf(needle);
+    if (start < 0) {
+      return "";
+    }
+    int valueStart = start + needle.length();
+    int valueEnd = json.indexOf('"', valueStart);
+    return valueEnd < 0 ? "" : json.substring(valueStart, valueEnd);
   }
 
   private static void testConnection(Request request) throws Exception {
@@ -937,7 +1015,9 @@ public class OracleJdbcRunner {
       props.setProperty("oracle.jdbc.ReadTimeout", String.valueOf(Duration.ofSeconds(30).toMillis()));
       props.setProperty("oracle.net.CONNECT_TIMEOUT", String.valueOf(Duration.ofSeconds(10).toMillis()));
       props.setProperty("oracle.jdbc.defaultConnectionValidation", "NETWORK");
-      props.setProperty("defaultRowPrefetch", "10");
+      // Fetch rows in larger batches to reduce JDBC round-trips per query.
+      int prefetch = pageSize != null ? Math.min(pageSize, 200) : 200;
+      props.setProperty("defaultRowPrefetch", String.valueOf(prefetch));
 
       for (String line : oracleDriverProperties == null ? new String[0] : oracleDriverProperties.split("\\R")) {
         String trimmed = line.trim();

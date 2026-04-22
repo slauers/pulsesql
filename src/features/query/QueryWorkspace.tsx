@@ -480,6 +480,8 @@ export default function QueryWorkspace() {
         query: targetResult.statement,
         page: nextPage,
         pageSize: targetResult.page_size ?? resultPageSize,
+        // Pass the already-known total so the backend skips an extra COUNT(*) query.
+        knownTotalRows: targetResult.total_rows ?? undefined,
       });
       syncTransactionState(resolvedConnectionId, payload);
 
