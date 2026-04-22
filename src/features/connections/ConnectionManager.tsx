@@ -156,7 +156,7 @@ export default function ConnectionManager() {
   const contextMenuState = contextMenuConnection
     ? resolveRuntimeConnectionState(runtimeStatus, contextMenuConnection.id)
     : 'disconnected';
-  const effectiveSidebarWidth = sidebarCollapsed ? 68 : compactViewport ? Math.min(sidebarWidth, 260) : sidebarWidth;
+  const effectiveSidebarWidth = sidebarCollapsed ? 68 : compactViewport ? Math.min(sidebarWidth, 300) : sidebarWidth;
 
   useEffect(() => {
     if (activeConnectionId && !activeConnection) {
@@ -471,7 +471,7 @@ export default function ConnectionManager() {
     }
 
     const handlePointerMove = (event: PointerEvent) => {
-      const nextWidth = Math.min(Math.max(event.clientX, 260), 520);
+      const nextWidth = Math.min(Math.max(event.clientX, 300), 520);
       handleSidebarWidthChange(nextWidth);
     };
 
