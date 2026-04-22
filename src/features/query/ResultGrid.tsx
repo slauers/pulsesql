@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, LoaderCircle } from 'lucide-react';
+import { ArrowUp, ArrowDown, Check, LoaderCircle } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface ResultGridProps {
@@ -37,6 +37,7 @@ export default function ResultGrid({
     startX: number;
     startWidth: number;
   } | null>(null);
+  const [sortConfig, setSortConfig] = useState<{ column: string; dir: 'asc' | 'desc' } | null>(null);
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
   const copyTimeoutRef = useRef<number | null>(null);
   const [activeEditCell, setActiveEditCell] = useState<string | null>(null);
@@ -55,11 +56,33 @@ export default function ResultGrid({
     [columnWidths, columns, rows],
   );
 
+  const sortedRows = useMemo(() => {
+    if (!sortConfig) return rows;
+    const { column, dir } = sortConfig;
+    return [...rows].sort((a, b) => {
+      const av = a[column];
+      const bv = b[column];
+      if (av === null || av === undefined) return dir === 'asc' ? 1 : -1;
+      if (bv === null || bv === undefined) return dir === 'asc' ? -1 : 1;
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return dir === 'asc' ? cmp : -cmp;
+    });
+  }, [rows, sortConfig]);
+
+  const handleSortToggle = (colName: string) => {
+    setSortConfig((current) => {
+      if (current?.column === colName) {
+        return current.dir === 'asc' ? { column: colName, dir: 'desc' } : null;
+      }
+      return { column: colName, dir: 'asc' };
+    });
+  };
+
   const rowHeight = density === 'compact' ? 26 : 30;
   const headerHeight = density === 'compact' ? 40 : 44;
 
   const rowVirtualizer = useVirtualizer({
-    count: rows.length,
+    count: sortedRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
     overscan: 20,
@@ -147,13 +170,13 @@ export default function ResultGrid({
 
   return (
     <div ref={parentRef} className="h-full w-full overflow-auto bg-transparent relative">
-      {!rows.length ? (
+      {!sortedRows.length ? (
         <div className="h-full flex items-center justify-center text-sm text-muted/60">
           Nenhum resultado para o filtro aplicado.
         </div>
       ) : null}
       <div
-        className={`min-w-fit ${rows.length ? '' : 'hidden'}`}
+        className={`min-w-fit ${sortedRows.length ? '' : 'hidden'}`}
         style={{
           height: `${rowVirtualizer.getTotalSize() + headerHeight}px`,
           position: 'relative',
@@ -163,57 +186,69 @@ export default function ResultGrid({
           <div className="w-14 px-2 py-2 text-center sticky left-0 bg-surface/95 select-none opacity-50 shrink-0 border-r border-border/50">
             #
           </div>
-          {columns.map((col, idx) => (
-            <div
-              key={idx}
-              className="relative border-r border-border/50"
-              style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
-            >
-              <div className="px-3 py-1.5 leading-tight whitespace-nowrap overflow-hidden text-ellipsis">
-                <div className="flex items-center gap-1.5 overflow-hidden">
-                  <span className="overflow-hidden text-ellipsis text-sm font-medium normal-case tracking-normal text-text">
-                    {col.name}
-                  </span>
-                  {col.isPrimaryKey ? (
-                    <span className="shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide bg-amber-400/18 text-amber-300 border border-amber-400/30">
-                      PK
+          {columns.map((col, idx) => {
+            const isSorted = sortConfig?.column === col.name;
+            return (
+              <div
+                key={idx}
+                className="relative border-r border-border/50"
+                style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
+              >
+                <div
+                  className="px-3 py-1.5 leading-tight whitespace-nowrap overflow-hidden text-ellipsis cursor-pointer select-none hover:bg-border/20"
+                  onClick={() => handleSortToggle(col.name)}
+                  title={`Ordenar por ${col.name}`}
+                >
+                  <div className="flex items-center gap-1.5 overflow-hidden">
+                    <span className={`overflow-hidden text-ellipsis text-sm font-medium normal-case tracking-normal ${isSorted ? 'text-primary' : 'text-text'}`}>
+                      {col.name}
                     </span>
-                  ) : null}
-                  {col.isForeignKey ? (
-                    <span className="shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide bg-sky-400/18 text-sky-300 border border-sky-400/30">
-                      FK
-                    </span>
+                    {isSorted ? (
+                      sortConfig.dir === 'asc'
+                        ? <ArrowUp size={11} className="shrink-0 text-primary" />
+                        : <ArrowDown size={11} className="shrink-0 text-primary" />
+                    ) : null}
+                    {col.isPrimaryKey ? (
+                      <span className="shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide bg-amber-400/18 text-amber-300 border border-amber-400/30">
+                        PK
+                      </span>
+                    ) : null}
+                    {col.isForeignKey ? (
+                      <span className="shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide bg-sky-400/18 text-sky-300 border border-sky-400/30">
+                        FK
+                      </span>
+                    ) : null}
+                  </div>
+                  {col.subtitle ? (
+                    <div className="overflow-hidden text-ellipsis text-[10px] font-normal normal-case tracking-normal text-muted/60">
+                      {col.subtitle}
+                    </div>
                   ) : null}
                 </div>
-                {col.subtitle ? (
-                  <div className="overflow-hidden text-ellipsis text-[10px] font-normal normal-case tracking-normal text-muted/60">
-                    {col.subtitle}
-                  </div>
-                ) : null}
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={`Resize ${col.name} column`}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    setActiveResize({
+                      column: col.name,
+                      startX: event.clientX,
+                      startWidth: resolvedWidths[col.name],
+                    });
+                  }}
+                  className={`absolute right-0 top-0 h-full w-1 cursor-col-resize transition-colors ${
+                    activeResize?.column === col.name ? 'bg-primary/40' : 'hover:bg-primary/25'
+                  }`}
+                />
               </div>
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                aria-label={`Resize ${col.name} column`}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  setActiveResize({
-                    column: col.name,
-                    startX: event.clientX,
-                    startWidth: resolvedWidths[col.name],
-                  });
-                }}
-                className={`absolute right-0 top-0 h-full w-1 cursor-col-resize transition-colors ${
-                  activeResize?.column === col.name ? 'bg-primary/40' : 'hover:bg-primary/25'
-                }`}
-              />
-            </div>
-          ))}
+            );
+          })}
         </div>
         
         <div className="absolute w-full divide-y divide-border/30" style={{ top: `${headerHeight}px` }}>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const row = rows[virtualRow.index];
+            const row = sortedRows[virtualRow.index];
             const rowTone = virtualRow.index % 2 === 0 ? 'bg-[#0A1321]' : 'bg-[#0D1726]';
             const isThisRowLocked = lockedRowIndex === virtualRow.index;
             const isSelectedRow = selectedRowIndex === virtualRow.index;
