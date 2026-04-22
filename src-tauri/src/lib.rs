@@ -214,6 +214,16 @@ fn finalize_startup(
 }
 
 #[tauri::command]
+fn save_connections_export(app: AppHandle, content: String, filename: String) -> Result<String, String> {
+    let download_dir = app.path().download_dir()
+        .map_err(|e| format!("Could not find Downloads folder: {e}"))?;
+    let path = download_dir.join(&filename);
+    std::fs::write(&path, content.as_bytes())
+        .map_err(|e| format!("Failed to write file: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 fn check_jdk_status() -> Result<jdk::JdkStatus, String> {
     let sidecar_root = engines::oracle::sidecar_root()?;
     Ok(jdk::detect_jdk(&sidecar_root))
@@ -284,6 +294,7 @@ pub fn run() {
             db::list_query_history,
             db::delete_query_history_item,
             db::clear_query_history,
+            save_connections_export,
             check_jdk_status,
             download_install_jdk,
             updater::check_for_updates,

@@ -106,6 +106,9 @@ export default function ConnectionManager() {
   const semanticToggleRef = useRef<HTMLButtonElement | null>(null);
   const serverTimeRequestInFlightRef = useRef(false);
   const importFileRef = useRef<HTMLInputElement | null>(null);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(new Set());
+  const [exportSavedPath, setExportSavedPath] = useState<string | null>(null);
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
@@ -267,15 +270,25 @@ export default function ConnectionManager() {
     appendLog(connId, t('logsCopied'));
   };
 
-  const exportConnections = () => {
-    const data = JSON.stringify(connections, null, 2);
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'pulsesql-connections.json';
-    a.click();
-    URL.revokeObjectURL(url);
+  const openExportModal = () => {
+    setExportSelectedIds(new Set(connections.map((c) => c.id)));
+    setExportSavedPath(null);
+    setExportModalOpen(true);
+  };
+
+  const confirmExport = async () => {
+    const selected = connections.filter((c) => exportSelectedIds.has(c.id));
+    if (!selected.length) return;
+    const content = JSON.stringify(selected, null, 2);
+    try {
+      const path = await invoke<string>('save_connections_export', {
+        content,
+        filename: 'pulsesql-connections.json',
+      });
+      setExportSavedPath(path);
+    } catch (err) {
+      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   const importConnections = (event: ChangeEvent<HTMLInputElement>) => {
@@ -528,7 +541,7 @@ export default function ConnectionManager() {
                   </button>
                   <button
                     type="button"
-                    onClick={exportConnections}
+                    onClick={openExportModal}
                     className="p-1.5 text-muted hover:bg-background/45 hover:text-text"
                     title={t('exportConnections')}
                   >
@@ -853,6 +866,91 @@ export default function ConnectionManager() {
         className="hidden"
         onChange={importConnections}
       />
+
+      {exportModalOpen ? createPortal(
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) { setExportModalOpen(false); setExportSavedPath(null); } }}
+        >
+          <div className="w-[400px] max-h-[80vh] flex flex-col rounded-xl border border-border/80 bg-surface shadow-2xl">
+            <div className="px-5 py-4 border-b border-border/50">
+              <h2 className="text-sm font-semibold text-text">{t('exportConnections')}</h2>
+              <p className="text-xs text-muted/70 mt-0.5">Select which connections to include in the export file.</p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-1">
+              <button
+                type="button"
+                className="text-xs text-primary hover:underline self-start px-2 mb-1"
+                onClick={() => setExportSelectedIds(
+                  exportSelectedIds.size === connections.length
+                    ? new Set()
+                    : new Set(connections.map((c) => c.id))
+                )}
+              >
+                {exportSelectedIds.size === connections.length ? 'Deselect all' : 'Select all'}
+              </button>
+              {connections.map((conn) => (
+                <label
+                  key={conn.id}
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer hover:bg-background/40 transition-colors"
+                >
+                  <input
+                    type="checkbox"
+                    checked={exportSelectedIds.has(conn.id)}
+                    onChange={(e) => {
+                      setExportSelectedIds((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(conn.id);
+                        else next.delete(conn.id);
+                        return next;
+                      });
+                    }}
+                    className="accent-primary w-3.5 h-3.5"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-text truncate">{conn.name}</div>
+                    <div className="text-xs text-muted/60 truncate">{conn.engine} • {conn.host}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {exportSavedPath ? (
+              <div className="px-5 py-3 border-t border-border/50 flex flex-col gap-3">
+                <div className="flex items-start gap-2 text-xs text-emerald-300 bg-emerald-400/10 rounded-lg px-3 py-2.5">
+                  <Check size={13} className="shrink-0 mt-0.5" />
+                  <span className="break-all">Saved to {exportSavedPath}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setExportModalOpen(false); setExportSavedPath(null); }}
+                  className="w-full rounded-lg bg-primary/20 text-primary text-sm font-medium py-2 hover:bg-primary/30 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <div className="px-5 py-4 border-t border-border/50 flex gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => { setExportModalOpen(false); setExportSavedPath(null); }}
+                  className="px-4 py-1.5 text-sm text-muted hover:text-text rounded-lg hover:bg-background/40 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={exportSelectedIds.size === 0}
+                  onClick={() => void confirmExport()}
+                  className="px-4 py-1.5 text-sm font-medium rounded-lg bg-primary text-surface hover:bg-primary/85 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Export {exportSelectedIds.size > 0 ? `(${exportSelectedIds.size})` : ''}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body
+      ) : null}
 
       <div className="shrink-0 rounded-lg border border-border/80 glass-panel px-4 py-1 text-[10px] shadow-[0_18px_42px_rgba(0,0,0,0.2)]">
         <div className="flex items-center justify-between gap-3">
