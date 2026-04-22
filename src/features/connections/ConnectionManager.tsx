@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   ChevronsLeft,
   ChevronsRight,
+  Check,
   Copy,
   CircleAlert,
   Eye,
@@ -544,9 +545,23 @@ export default function ConnectionManager() {
             <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-0">
               <div className="space-y-1">
                 {connections.length === 0 ? (
-                  <p className="border border-border/70 bg-background/24 px-3 py-4 text-center text-sm text-muted">
-                    {t('noSavedConnections')}
-                  </p>
+                  <div className="flex flex-col items-center gap-4 rounded-lg border border-border/50 bg-background/24 px-4 py-8 text-center">
+                    <div className="rounded-full border border-border/60 bg-surface/60 p-3 text-muted">
+                      <Plug size={22} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-text">{t('noSavedConnections')}</p>
+                      <p className="mt-1 text-xs text-muted/70">{t('addFirstConnection')}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowForm(true)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/12 px-4 py-2 text-sm font-medium text-primary hover:bg-primary/18 transition-colors"
+                    >
+                      <Plus size={15} />
+                      {t('newConnection')}
+                    </button>
+                  </div>
                 ) : (
                   connections.map((conn) => {
                     const isSelected = selectedConnectionId === conn.id;
@@ -1177,10 +1192,19 @@ function ConnectionLogEntry({
   const { timestamp, message } = extractLogParts(entry);
   const tone = resolveLogTone(message);
   const Icon = tone.icon;
+  const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<number | null>(null);
+
+  const handleCopyLine = () => {
+    navigator.clipboard.writeText(message).catch(() => null);
+    if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
+    setCopied(true);
+    copyTimeoutRef.current = window.setTimeout(() => setCopied(false), 1200);
+  };
 
   return (
     <div
-      className={`rounded-lg px-2.5 py-2 whitespace-pre-wrap break-words ${
+      className={`group rounded-lg px-2.5 py-2 whitespace-pre-wrap break-words ${
         highlighted
           ? `${tone.highlight} shadow-[inset_2px_0_0_rgba(34,199,255,0.55)]`
           : tone.base
@@ -1202,6 +1226,16 @@ function ConnectionLogEntry({
           ) : null}
           <div className={tone.text}>{message}</div>
         </div>
+        <button
+          type="button"
+          onClick={handleCopyLine}
+          className={`shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 transition-opacity ${
+            copied ? 'text-emerald-300' : 'text-muted hover:text-text'
+          }`}
+          title={translate(locale, 'copyLogs')}
+        >
+          {copied ? <Check size={11} /> : <Copy size={11} />}
+        </button>
       </div>
     </div>
   );
