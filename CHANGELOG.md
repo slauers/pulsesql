@@ -27,10 +27,18 @@ All notable changes to PulseSQL are documented here.
 
 ### Added
 - Grid sorting: click any column header to sort results ascending/descending
-- Delete row confirmation dialog
+- Delete row confirmation dialog (replaces browser confirm dialog)
 - Copy feedback on cell click with visual indicator
 - Explorer error retry button when schema/table metadata fails to load
 - Query error retry button in the query workspace
+- Empty-state CTA button when no connections are saved
+- Per-line copy button on connection logs and history entries
+- Import/Export connections: backup and restore all connections as JSON
+- Bottom-of-sidebar "New connection" button
+
+### Fixed
+- Connection removal broken due to `window.confirm()` returning `false` in Tauri's WebView
+- All connection log messages now always output in English regardless of app locale
 
 ## [0.1.13] - 2025-02-xx
 
