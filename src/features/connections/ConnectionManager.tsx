@@ -709,7 +709,7 @@ export default function ConnectionManager() {
               sidebarCollapsed ? 'px-1.5 py-2' : 'px-3 py-3'
             }`}
           >
-            {!sidebarCollapsed ? (
+            {connections.length > 0 && (!sidebarCollapsed ? (
               <button
                 type="button"
                 onClick={() => {
@@ -734,7 +734,7 @@ export default function ConnectionManager() {
               >
                 <Plus size={14} />
               </button>
-            )}
+            ))}
             <div
               className={`rounded-xl border-border/60 bg-background/36 ${
                 sidebarCollapsed
