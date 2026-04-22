@@ -21,6 +21,7 @@ import {
   ChevronRight,
   ChevronDown,
   Check,
+  RotateCcw,
   Trash2,
   Maximize2,
   Minimize2,
@@ -1086,7 +1087,7 @@ export default function QueryWorkspace() {
           </div>
         ) : null}
         {error && !loading ? (
-          <QueryErrorPanel error={error} activeSchema={schemaLabel} />
+          <QueryErrorPanel error={error} activeSchema={schemaLabel} onRetry={() => void executeQuery()} />
         ) : activeResult ? (
           <div className="flex h-full min-h-0 flex-col">
             {activeResult.summary ? (
@@ -1525,9 +1526,11 @@ function DangerousUpdateModal({
 function QueryErrorPanel({
   error,
   activeSchema,
+  onRetry,
 }: {
   error: QueryErrorPresentation;
   activeSchema?: string;
+  onRetry?: () => void;
 }) {
   return (
     <div className="p-4 md:p-5">
@@ -1568,6 +1571,19 @@ function QueryErrorPanel({
                 {error.technicalMessage}
               </pre>
             </div>
+
+            {onRetry ? (
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-background/30 px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+                >
+                  <RotateCcw size={12} />
+                  Tentar novamente
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

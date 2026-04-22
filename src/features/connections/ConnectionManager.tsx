@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   ChevronsLeft,
   ChevronsRight,
+  Check,
   Copy,
   CircleAlert,
   Eye,
@@ -18,6 +19,7 @@ import {
   PlugZap,
   Server,
   Star,
+  Trash2,
   XCircle,
   Dot,
 } from 'lucide-react';
@@ -96,6 +98,9 @@ export default function ConnectionManager() {
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [connectionContextMenu, setConnectionContextMenu] = useState<ConnectionContextMenuState | null>(null);
   const [expandedLogsConnectionId, setExpandedLogsConnectionId] = useState<string | null>(null);
+  const [connectionToDelete, setConnectionToDelete] = useState<ConnectionConfig | null>(null);
+  const [copiedLogsId, setCopiedLogsId] = useState<string | null>(null);
+  const copiedLogsTimeoutRef = useRef<number | null>(null);
   const [serverTimeValue, setServerTimeValue] = useState<string | null>(null);
   const [compactViewport, setCompactViewport] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth < 980 || window.innerHeight < 700 : false,
@@ -259,6 +264,9 @@ export default function ConnectionManager() {
 
     await navigator.clipboard.writeText(entries.join('\n'));
     appendLog(connId, t('logsCopied'));
+    if (copiedLogsTimeoutRef.current) window.clearTimeout(copiedLogsTimeoutRef.current);
+    setCopiedLogsId(connId);
+    copiedLogsTimeoutRef.current = window.setTimeout(() => setCopiedLogsId(null), 1500);
   };
 
   const handleAutocommitStatusBarToggle = async () => {
@@ -376,15 +384,7 @@ export default function ConnectionManager() {
   };
 
   const confirmRemoveConnection = (conn: ConnectionConfig) => {
-    const confirmed = window.confirm(
-      t('removeConnectionConfirm', { name: conn.name }),
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    handleRemoveConnection(conn.id);
+    setConnectionToDelete(conn);
   };
 
   const disconnectConnection = async (conn: ConnectionConfig) => {
@@ -612,6 +612,7 @@ export default function ConnectionManager() {
                               onToggle={() => setLogsExpanded(conn.id, !logsExpanded)}
                               onCopy={() => void copyLogs(conn.id)}
                               onExpand={() => setExpandedLogsConnectionId(conn.id)}
+                              copied={copiedLogsId === conn.id}
                             />
 
                             {activeConnectionId === conn.id ? (
@@ -772,6 +773,7 @@ export default function ConnectionManager() {
           entries={connectionLogs[expandedLogsConnectionId] ?? []}
           onCopy={() => void copyLogs(expandedLogsConnectionId)}
           onClose={() => setExpandedLogsConnectionId(null)}
+          copied={copiedLogsId === expandedLogsConnectionId}
         />
       ) : null}
 
@@ -818,6 +820,43 @@ export default function ConnectionManager() {
               </>
             ) : null}
           </div>
+          {connectionToDelete ? createPortal(
+            <div
+              className="fixed inset-0 z-[160] flex items-center justify-center bg-background/76 p-6 backdrop-blur-sm"
+              onMouseDown={() => setConnectionToDelete(null)}
+            >
+              <div
+                className="w-full max-w-md rounded-lg border border-red-400/30 bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="border-b border-border px-5 py-4">
+                  <div className="text-sm font-semibold text-text">{translate(locale, 'removeConnectionTitle')}</div>
+                  <div className="mt-1 text-xs text-muted">{connectionToDelete.name}</div>
+                </div>
+                <div className="px-5 py-4 text-sm text-red-100/90">
+                  {translate(locale, 'removeConnectionWarning')}
+                </div>
+                <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
+                  <button
+                    type="button"
+                    onClick={() => setConnectionToDelete(null)}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+                  >
+                    {translate(locale, 'cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { handleRemoveConnection(connectionToDelete.id); setConnectionToDelete(null); }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/40 bg-red-400/12 px-3 py-1.5 text-xs font-medium text-red-200 hover:bg-red-400/18"
+                  >
+                    <Trash2 size={12} />
+                    {translate(locale, 'remove')}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          ) : null}
           {statusBarConnection ? (
             <div className="flex items-center gap-2 shrink-0">
               <span className="max-w-[220px] truncate text-[10px] uppercase tracking-[0.14em] text-slate-200/90">
@@ -915,6 +954,7 @@ function LogsSection({
   onToggle,
   onCopy,
   onExpand,
+  copied = false,
 }: {
   locale: 'pt-BR' | 'en-US';
   connectionName: string;
@@ -923,6 +963,7 @@ function LogsSection({
   onToggle: () => void;
   onCopy: () => void;
   onExpand: () => void;
+  copied?: boolean;
 }) {
   return (
     <div className="rounded-lg border border-border/60 bg-background/24 p-3">
@@ -953,10 +994,10 @@ function LogsSection({
             </button>
             <button
               onClick={onCopy}
-              className="inline-flex items-center rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:text-text hover:bg-border/30"
+              className={`inline-flex items-center rounded-lg border px-2 py-1 text-[11px] transition-colors hover:bg-border/30 ${copied ? 'border-emerald-400/40 text-emerald-300' : 'border-border text-muted hover:text-text'}`}
               title={translate(locale, 'copyLogs')}
             >
-              <Copy size={11} />
+              {copied ? <Check size={11} /> : <Copy size={11} />}
             </button>
           </div>
           {entries.length ? (
@@ -1096,12 +1137,14 @@ function LogsModal({
   entries,
   onCopy,
   onClose,
+  copied = false,
 }: {
   locale: 'pt-BR' | 'en-US';
   connectionName: string;
   entries: string[];
   onCopy: () => void;
   onClose: () => void;
+  copied?: boolean;
 }) {
   return createPortal(
     <div
@@ -1121,10 +1164,10 @@ function LogsModal({
             <button
               type="button"
               onClick={onCopy}
-              className="inline-flex items-center rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
+              className={`inline-flex items-center rounded-lg border px-2.5 py-1.5 text-xs transition-colors hover:bg-border/30 ${copied ? 'border-emerald-400/40 text-emerald-300' : 'border-border text-muted hover:text-text'}`}
               title={translate(locale, 'copyLogs')}
             >
-              <Copy size={12} />
+              {copied ? <Check size={12} /> : <Copy size={12} />}
             </button>
             <button
               type="button"
