@@ -530,7 +530,7 @@ export default function ConnectionManager() {
                     className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-sky-300 hover:bg-sky-400/12 hover:text-sky-200 transition-colors"
                     title={t('importConnections')}
                   >
-                    <Upload size={12} />
+                    <Download size={12} />
                     <span>Import</span>
                   </button>
                   <button
@@ -539,7 +539,7 @@ export default function ConnectionManager() {
                     className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-emerald-300 hover:bg-emerald-400/12 hover:text-emerald-200 transition-colors"
                     title={t('exportConnections')}
                   >
-                    <Download size={12} />
+                    <Upload size={12} />
                     <span>Export</span>
                   </button>
                   <button
