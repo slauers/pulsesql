@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   ChevronsLeft,
   ChevronsRight,
+  PanelLeft,
   Check,
   Copy,
   CircleAlert,
@@ -18,7 +19,6 @@ import {
   Plus,
   Plug,
   PlugZap,
-  Server,
   Star,
   Upload,
   XCircle,
@@ -471,7 +471,7 @@ export default function ConnectionManager() {
     }
 
     const handlePointerMove = (event: PointerEvent) => {
-      const nextWidth = Math.min(Math.max(event.clientX, 220), 520);
+      const nextWidth = Math.min(Math.max(event.clientX, 260), 520);
       handleSidebarWidthChange(nextWidth);
     };
 
@@ -521,7 +521,7 @@ export default function ConnectionManager() {
             ) : (
               <>
                 <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-text flex items-center gap-2">
-                  <Server size={14} /> Explorer
+                  <PanelLeft size={14} /> Explorer
                 </h2>
                 <div className="flex items-center gap-1">
                   <button
