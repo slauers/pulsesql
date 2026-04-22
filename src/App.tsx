@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { createPortal } from 'react-dom';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { ChevronDown, CircleHelp, Command, Info, Settings2, SquareTerminal, Waypoints } from 'lucide-react';
-import brandMark from './assets/pulsesql-mark.svg';
+import { Menu, MenuItem, Submenu, PredefinedMenuItem } from '@tauri-apps/api/menu';
 import tauriConfig from '../src-tauri/tauri.conf.json';
 import ConnectionManager from './features/connections/ConnectionManager';
 import ConfigurationDialog from './features/settings/ConfigurationDialog';
@@ -12,15 +11,12 @@ import { useConnectionsStore } from './store/connections';
 import { useConnectionRuntimeStore } from './store/connectionRuntime';
 import { useDatabaseSessionStore } from './store/databaseSession';
 import { useUiPreferencesStore } from './store/uiPreferences';
-import { APP_THEMES, getThemeById } from './themes';
+import { getThemeById } from './themes';
 import { translate, type AppLocale } from './i18n';
 import { LOCK_SPLASH_FOR_DEV } from './devFlags';
 import { UpdateButton, type UpdateInfo } from './features/updater/UpdateNotifier';
 
 function App() {
-  const menuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const themeButtonRef = useRef<HTMLButtonElement | null>(null);
-  const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const tabs = useQueriesStore((state) => state.tabs);
   const activeTabId = useQueriesStore((state) => state.activeTabId);
   const addTab = useQueriesStore((state) => state.addTab);
@@ -34,7 +30,6 @@ function App() {
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
   const locale = useUiPreferencesStore((state) => state.locale);
   const themeId = useUiPreferencesStore((state) => state.themeId);
-  const setThemeId = useUiPreferencesStore((state) => state.setThemeId);
   const density = useUiPreferencesStore((state) => state.density);
   const commandPaletteShortcut = useUiPreferencesStore((state) => state.commandPaletteShortcut);
   const newQueryTabShortcut = useUiPreferencesStore((state) => state.newQueryTabShortcut);
@@ -45,15 +40,28 @@ function App() {
   const startupSequenceStartedRef = useRef(false);
   const startupSequenceFinishedRef = useRef(false);
   const autoConnectStartedRef = useRef(false);
-  const [activeMenu, setActiveMenu] = useState<'file' | 'edit' | 'view' | 'help' | 'about' | null>(null);
   const [configurationOpen, setConfigurationOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [pendingUpdate, setPendingUpdate] = useState<UpdateInfo | null>(null);
-  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const activeTheme = useMemo(() => getThemeById(themeId), [themeId]);
+
+  const handlersRef = useRef({
+    addTab,
+    handleCloseCurrentTab: () => { if (activeTabId) closeTab(activeTabId); },
+    openCommandPalette: () => setCommandPaletteOpen(true),
+    openNewConnectionForm: () => { window.dispatchEvent(new CustomEvent('pulsesql:new-connection')); },
+    setConfigurationOpen,
+    setHelpOpen,
+    setAboutOpen,
+    semanticBackgroundEnabled,
+    setSemanticBackgroundEnabled,
+    toggleConnectionsSidebar: () => { window.dispatchEvent(new CustomEvent('pulsesql:toggle-sidebar')); },
+    handleExitApplication: async () => {
+      try { await getCurrentWindow().close(); } catch { window.close(); }
+    },
+  });
 
   useEffect(() => {
     const root = document.documentElement;
@@ -184,6 +192,23 @@ function App() {
     void openFavoriteConnection();
   }, [activeConnectionId, appendLog, connections, favoriteConnectionId, locale, runtimeStatus, setActiveConnection, setRuntimeStatus]);
 
+  // Keep handlersRef current on every render so native menu callbacks always have latest state.
+  handlersRef.current = {
+    addTab,
+    handleCloseCurrentTab: () => { if (activeTabId) closeTab(activeTabId); },
+    openCommandPalette: () => setCommandPaletteOpen(true),
+    openNewConnectionForm: () => { window.dispatchEvent(new CustomEvent('pulsesql:new-connection')); },
+    setConfigurationOpen,
+    setHelpOpen,
+    setAboutOpen,
+    semanticBackgroundEnabled,
+    setSemanticBackgroundEnabled,
+    toggleConnectionsSidebar: () => { window.dispatchEvent(new CustomEvent('pulsesql:toggle-sidebar')); },
+    handleExitApplication: async () => {
+      try { await getCurrentWindow().close(); } catch { window.close(); }
+    },
+  };
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (matchesShortcut(event, commandPaletteShortcut)) {
@@ -211,66 +236,57 @@ function App() {
   }, [activeTabId, addTab, closeQueryTabShortcut, closeTab, commandPaletteShortcut, newQueryTabShortcut]);
 
   useEffect(() => {
-    if (!activeMenu) {
-      return;
-    }
+    const buildMenu = async () => {
+      const separator = await PredefinedMenuItem.new({ item: 'Separator' });
+      const quit = await PredefinedMenuItem.new({ item: 'Quit' });
 
-    const updatePosition = () => {
-      const button = menuButtonRefs.current[activeMenu];
-      if (!button) {
-        return;
-      }
-
-      const rect = button.getBoundingClientRect();
-      setMenuPosition({
-        top: rect.bottom + 8,
-        left: Math.max(8, rect.right - 220),
+      const fileMenu = await Submenu.new({
+        text: translate(locale, 'file'),
+        items: [
+          await MenuItem.new({ text: translate(locale, 'newConnection'), action: () => handlersRef.current.openNewConnectionForm() }),
+          await MenuItem.new({ text: translate(locale, 'configuration'), action: () => handlersRef.current.setConfigurationOpen(true) }),
+          separator,
+          quit,
+        ],
       });
+
+      const editMenu = await Submenu.new({
+        text: translate(locale, 'edit'),
+        items: [
+          await MenuItem.new({ text: translate(locale, 'newQueryTab'), action: () => handlersRef.current.addTab() }),
+          await MenuItem.new({ text: translate(locale, 'closeQueryTab'), action: () => handlersRef.current.handleCloseCurrentTab() }),
+          await MenuItem.new({ text: translate(locale, 'commandPalette'), action: () => handlersRef.current.openCommandPalette() }),
+        ],
+      });
+
+      const viewMenu = await Submenu.new({
+        text: translate(locale, 'view'),
+        items: [
+          await MenuItem.new({
+            text: handlersRef.current.semanticBackgroundEnabled
+              ? translate(locale, 'disableSemanticBackground')
+              : translate(locale, 'enableSemanticBackground'),
+            action: () => handlersRef.current.setSemanticBackgroundEnabled(!handlersRef.current.semanticBackgroundEnabled),
+          }),
+          await MenuItem.new({ text: translate(locale, 'toggleConnectionsSidebar'), action: () => handlersRef.current.toggleConnectionsSidebar() }),
+        ],
+      });
+
+      const helpMenu = await Submenu.new({
+        text: translate(locale, 'help'),
+        items: [
+          await MenuItem.new({ text: translate(locale, 'keyboardShortcuts'), action: () => handlersRef.current.setHelpOpen(true) }),
+          await PredefinedMenuItem.new({ item: 'Separator' }),
+          await MenuItem.new({ text: translate(locale, 'aboutBlacktable'), action: () => handlersRef.current.setAboutOpen(true) }),
+        ],
+      });
+
+      const menu = await Menu.new({ items: [fileMenu, editMenu, viewMenu, helpMenu] });
+      await menu.setAsAppMenu();
     };
 
-    updatePosition();
-
-    const handlePointerDown = () => setActiveMenu(null);
-    const handleReposition = () => updatePosition();
-    window.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('resize', handleReposition);
-    window.addEventListener('scroll', handleReposition, true);
-
-    return () => {
-      window.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('resize', handleReposition);
-      window.removeEventListener('scroll', handleReposition, true);
-    };
-  }, [activeMenu]);
-
-  useEffect(() => {
-    if (!themeMenuOpen) {
-      return;
-    }
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (themeMenuRef.current?.contains(target) || themeButtonRef.current?.contains(target)) {
-        return;
-      }
-
-      setThemeMenuOpen(false);
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setThemeMenuOpen(false);
-      }
-    };
-
-    window.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      window.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [themeMenuOpen]);
+    void buildMenu();
+  }, [locale]);
 
   const openNewConnectionForm = () => {
     window.dispatchEvent(new CustomEvent('pulsesql:new-connection'));
@@ -280,197 +296,17 @@ function App() {
     window.dispatchEvent(new CustomEvent('pulsesql:toggle-sidebar'));
   };
 
-  const handleCloseCurrentTab = () => {
-    if (activeTabId) {
-      closeTab(activeTabId);
-    }
-  };
-
-  const handleExitApplication = async () => {
-    try {
-      await getCurrentWindow().close();
-    } catch {
-      window.close();
-    }
-  };
-
-  const openCommandPalette = () => {
-    setActiveMenu(null);
-    setCommandPaletteOpen(true);
-  };
-
-  const menuDefinitions: Array<{
-    id: 'file' | 'edit' | 'view' | 'help' | 'about';
-    label: string;
-    items: Array<{ label: string; onClick: () => void; disabled?: boolean; icon?: typeof Settings2 }>;
-  }> = [
-    {
-      id: 'file',
-      label: translate(locale, 'file'),
-      items: [
-        { label: translate(locale, 'newConnection'), onClick: openNewConnectionForm, icon: Waypoints },
-        { label: translate(locale, 'configuration'), onClick: () => setConfigurationOpen(true), icon: Settings2 },
-        { label: translate(locale, 'exit'), onClick: () => void handleExitApplication() },
-      ],
-    },
-    {
-      id: 'edit',
-      label: translate(locale, 'edit'),
-      items: [
-        { label: translate(locale, 'newQueryTab'), onClick: addTab, icon: SquareTerminal },
-        { label: translate(locale, 'closeQueryTab'), onClick: handleCloseCurrentTab, disabled: !activeTabId },
-        { label: translate(locale, 'commandPalette'), onClick: openCommandPalette, icon: Command },
-      ],
-    },
-    {
-      id: 'view',
-      label: translate(locale, 'view'),
-      items: [
-        {
-          label: semanticBackgroundEnabled
-            ? translate(locale, 'disableSemanticBackground')
-            : translate(locale, 'enableSemanticBackground'),
-          onClick: () => setSemanticBackgroundEnabled(!semanticBackgroundEnabled),
-        },
-        { label: translate(locale, 'toggleConnectionsSidebar'), onClick: toggleConnectionsSidebar },
-      ],
-    },
-    {
-      id: 'help',
-      label: translate(locale, 'help'),
-      items: [
-        { label: translate(locale, 'keyboardShortcuts'), onClick: () => setHelpOpen(true), icon: CircleHelp },
-      ],
-    },
-    {
-      id: 'about',
-      label: translate(locale, 'about'),
-      items: [
-        { label: translate(locale, 'aboutBlacktable'), onClick: () => setAboutOpen(true), icon: Info },
-      ],
-    },
-  ];
-
   return (
     <div className={`h-screen w-screen overflow-hidden bg-background text-text flex flex-col relative bt-density-${density}`}>
-      <div className="min-h-8 shrink-0 border-b border-border/80 bg-background/95 px-2 py-1 relative z-20 backdrop-blur">
-        <div className="flex min-h-6 items-center justify-between gap-x-4 gap-y-1">
-          <div className="flex min-w-0 items-center gap-3 overflow-x-auto scrollbar-hide">
-            <img src={brandMark} alt="PulseSQL" className="h-4 w-4 shrink-0" />
-            <div className="flex items-center gap-0.5 shrink-0">
-              <div className="flex items-center gap-1">
-                {menuDefinitions.map((menu) => (
-                  <div key={menu.id} className="relative">
-                    <button
-                      ref={(element) => {
-                        menuButtonRefs.current[menu.id] = element;
-                      }}
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setThemeMenuOpen(false);
-                        setActiveMenu((current) => (current === menu.id ? null : menu.id));
-                      }}
-                      className={`inline-flex h-6 items-center gap-1 px-2 text-[12px] ${
-                        activeMenu === menu.id
-                          ? 'bg-background/70 text-text'
-                          : 'text-muted hover:bg-background/55 hover:text-text'
-                      }`}
-                    >
-                      <span>{menu.label}</span>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="hidden min-[880px]:flex items-center gap-1 shrink-0">
-            {pendingUpdate ? <UpdateButton update={pendingUpdate} /> : null}
-          <div className="relative flex items-center">
-            <button
-              ref={themeButtonRef}
-              type="button"
-              onClick={() => {
-                setActiveMenu(null);
-                setThemeMenuOpen((current) => !current);
-              }}
-              className={`inline-flex h-6 items-center gap-2 px-2 text-[11px] transition-colors ${
-                themeMenuOpen
-                  ? 'bg-background/70 text-text'
-                  : 'text-muted hover:bg-background/55 hover:text-text'
-              }`}
-            >
-              <span>{activeTheme.label}</span>
-              <ChevronDown size={11} className={`transition-transform ${themeMenuOpen ? 'rotate-180 opacity-80' : 'opacity-40'}`} />
-            </button>
-
-            {themeMenuOpen ? (
-              <div
-                ref={themeMenuRef}
-                className="absolute right-0 top-[calc(100%+8px)] z-[180] min-w-[220px] border border-border/80 bg-surface/95 p-1 shadow-[0_16px_48px_rgba(0,0,0,0.45)]"
-              >
-                {APP_THEMES.map((theme) => (
-                  <button
-                    key={theme.id}
-                    type="button"
-                    onClick={() => {
-                      setThemeId(theme.id);
-                      setThemeMenuOpen(false);
-                    }}
-                    className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[12px] transition-colors ${
-                      theme.id === activeTheme.id
-                        ? 'bg-primary/18 text-text'
-                        : 'text-text hover:bg-primary/20'
-                    }`}
-                  >
-                    <span>{theme.label}</span>
-                    <span className="text-[10px] uppercase tracking-[0.12em] text-muted">
-                      {theme.mode}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          </div>
+      {pendingUpdate ? (
+        <div className="shrink-0 flex items-center justify-end px-3 py-1 border-b border-border/80 bg-background/95 relative z-20">
+          <UpdateButton update={pendingUpdate} />
         </div>
-      </div>
+      ) : null}
 
       <div className="flex-1 overflow-hidden relative z-10">
         <ConnectionManager />
       </div>
-
-      {activeMenu && menuPosition
-        ? createPortal(
-            <div
-              className="fixed z-[180] min-w-[220px] border border-border/80 bg-surface/95 p-1 shadow-[0_16px_48px_rgba(0,0,0,0.45)]"
-              style={{ top: menuPosition.top, left: menuPosition.left }}
-              onMouseDown={(event) => event.stopPropagation()}
-            >
-              {menuDefinitions
-                .find((menu) => menu.id === activeMenu)
-                ?.items.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <button
-                      key={item.label}
-                      type="button"
-                      disabled={item.disabled}
-                      onClick={() => {
-                        setActiveMenu(null);
-                        item.onClick();
-                      }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-text transition-colors hover:bg-primary/20 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {Icon ? <Icon size={14} className="text-muted" /> : <span className="w-[14px]" />}
-                      <span>{item.label}</span>
-                    </button>
-                  );
-                })}
-            </div>,
-            document.body,
-          )
-        : null}
 
       <ConfigurationDialog open={configurationOpen} onClose={() => setConfigurationOpen(false)} />
       <CommandPalette
