@@ -5,23 +5,20 @@
 @layer base {
   :root {
     color-scheme: var(--bt-color-scheme, dark);
-    --bt-background: #0b0f14;
-    --bt-background-rgb: 11 15 20;
-    --bt-surface: #10171f;
-    --bt-surface-rgb: 16 23 31;
-    --bt-border: #1d2a34;
-    --bt-border-rgb: 29 42 52;
-    --bt-primary: #2bd3c9;
-    --bt-primary-rgb: 43 211 201;
-    --bt-text: #e6edf3;
-    --bt-text-rgb: 230 237 243;
-    --bt-muted: #88a0af;
-    --bt-muted-rgb: 136 160 175;
-    --bt-body-background:
-      radial-gradient(circle at top center, rgba(43, 211, 201, 0.16), transparent 34%),
-      radial-gradient(circle at 18% 18%, rgba(43, 211, 201, 0.08), transparent 24%),
-      linear-gradient(180deg, #0d1218 0%, #0b0f14 48%, #090d11 100%);
-    --bt-glass-panel: rgba(16, 23, 31, 0.8);
+    --bt-background: #08111a;
+    --bt-background-rgb: 8 17 26;
+    --bt-surface: #0d1824;
+    --bt-surface-rgb: 13 24 36;
+    --bt-border: #1a2c3c;
+    --bt-border-rgb: 26 44 60;
+    --bt-primary: #47c4e8;
+    --bt-primary-rgb: 71 196 232;
+    --bt-text: #edf4fb;
+    --bt-text-rgb: 237 244 251;
+    --bt-muted: #8aa3b6;
+    --bt-muted-rgb: 138 163 182;
+    --bt-body-background: #08111a;
+    --bt-glass-panel: rgba(13, 24, 36, 0.85);
   }
 
   html,

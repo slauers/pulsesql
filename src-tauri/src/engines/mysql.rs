@@ -466,7 +466,7 @@ async fn execute_query_on_active_connection(
 }
 
 fn is_result_set_query(query: &str) -> bool {
-    let upper = query.trim_start().to_uppercase();
+    let upper = strip_leading_sql_comments(query).to_uppercase();
     upper.starts_with("SELECT")
         || upper.starts_with("WITH")
         || upper.starts_with("SHOW")
@@ -475,8 +475,32 @@ fn is_result_set_query(query: &str) -> bool {
 }
 
 fn is_paginable_result_query(query: &str) -> bool {
-    let upper = query.trim_start().to_uppercase();
+    let upper = strip_leading_sql_comments(query).to_uppercase();
     upper.starts_with("SELECT") || upper.starts_with("WITH")
+}
+
+fn strip_leading_sql_comments(query: &str) -> &str {
+    let mut rest = query.trim_start();
+
+    loop {
+        if let Some(next) = rest.strip_prefix("--") {
+            rest = match next.find('\n') {
+                Some(index) => next[index + 1..].trim_start(),
+                None => "",
+            };
+            continue;
+        }
+
+        if let Some(next) = rest.strip_prefix("/*") {
+            rest = match next.find("*/") {
+                Some(index) => next[index + 2..].trim_start(),
+                None => "",
+            };
+            continue;
+        }
+
+        return rest;
+    }
 }
 
 fn mysql_value_to_json(row: &sqlx::mysql::MySqlRow, index: usize) -> Value {

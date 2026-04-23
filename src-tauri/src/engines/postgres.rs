@@ -2,8 +2,8 @@ use crate::connection::types::ConnectionConfig;
 use crate::db::{ColumnDef, QueryColumnMeta, QueryResult};
 use serde_json::{json, Value};
 use sqlx::{
-    pool::PoolConnection, postgres::PgConnection, postgres::PgPoolOptions, raw_sql, PgPool,
-    Postgres, Row,
+    pool::PoolConnection, postgres::PgConnection, postgres::PgPoolOptions, raw_sql, Column,
+    PgPool, Postgres, Row, TypeInfo,
 };
 use std::time::{Duration, Instant};
 
@@ -414,43 +414,38 @@ fn decode_jsonb_rows(rows: Vec<sqlx::postgres::PgRow>) -> Result<Vec<Value>, Str
         .collect()
 }
 
-/// Extracts column names and type metadata by inspecting the JSON keys of the first row.
-/// The `to_jsonb` wrapper preserves the original column names as JSON keys and PG knows
-/// the types from the inner query, but we only have the JSON value here — so we infer the
-/// data_type from the JSON value type. This is sufficient for the frontend display.
+/// Extracts column names and type metadata from the actual PostgreSQL row metadata.
+/// This preserves the original SELECT order; reading keys from the JSON payload would
+/// alphabetize them because the JSON object map does not keep insertion order here.
 fn extract_columns_and_meta_from_jsonb(
     rows: &[sqlx::postgres::PgRow],
 ) -> (Vec<String>, Vec<QueryColumnMeta>) {
-    let first = rows.first().and_then(|row| row.try_get::<Value, _>("__blacktable_json").ok());
+    let Some(first) = rows.first() else {
+        return (Vec::new(), Vec::new());
+    };
 
-    match first {
-        Some(Value::Object(map)) => {
-            let columns: Vec<String> = map.keys().cloned().collect();
-            let column_meta: Vec<QueryColumnMeta> = map
-                .iter()
-                .map(|(k, v)| QueryColumnMeta {
-                    name: k.clone(),
-                    data_type: json_value_type_name(v).to_string(),
-                })
-                .collect();
-            (columns, column_meta)
-        }
-        _ => (Vec::new(), Vec::new()),
-    }
-}
+    let columns: Vec<String> = first
+        .columns()
+        .iter()
+        .filter(|column| column.name() != "__blacktable_json")
+        .map(|column| column.name().to_string())
+        .collect();
 
-fn json_value_type_name(v: &Value) -> &'static str {
-    match v {
-        Value::Number(n) if n.is_i64() || n.is_u64() => "BIGINT",
-        Value::Number(_) => "FLOAT8",
-        Value::Bool(_) => "BOOL",
-        Value::Null => "TEXT",
-        _ => "TEXT",
-    }
+    let column_meta: Vec<QueryColumnMeta> = first
+        .columns()
+        .iter()
+        .filter(|column| column.name() != "__blacktable_json")
+        .map(|column| QueryColumnMeta {
+            name: column.name().to_string(),
+            data_type: column.type_info().name().to_string(),
+        })
+        .collect();
+
+    (columns, column_meta)
 }
 
 fn is_result_set_query(query: &str) -> bool {
-    let upper = query.trim_start().to_uppercase();
+    let upper = strip_leading_sql_comments(query).to_uppercase();
     upper.starts_with("SELECT")
         || upper.starts_with("WITH")
         || upper.starts_with("SHOW")
@@ -458,6 +453,30 @@ fn is_result_set_query(query: &str) -> bool {
 }
 
 fn is_paginable_result_query(query: &str) -> bool {
-    let upper = query.trim_start().to_uppercase();
+    let upper = strip_leading_sql_comments(query).to_uppercase();
     upper.starts_with("SELECT") || upper.starts_with("WITH")
+}
+
+fn strip_leading_sql_comments(query: &str) -> &str {
+    let mut rest = query.trim_start();
+
+    loop {
+        if let Some(next) = rest.strip_prefix("--") {
+            rest = match next.find('\n') {
+                Some(index) => next[index + 1..].trim_start(),
+                None => "",
+            };
+            continue;
+        }
+
+        if let Some(next) = rest.strip_prefix("/*") {
+            rest = match next.find("*/") {
+                Some(index) => next[index + 2..].trim_start(),
+                None => "",
+            };
+            continue;
+        }
+
+        return rest;
+    }
 }

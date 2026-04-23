@@ -11,7 +11,6 @@ import {
   FilePenLine,
   FileSearch,
   Pin,
-  LayoutTemplate,
   LoaderCircle,
   RefreshCw,
   Rows4,
@@ -81,7 +80,7 @@ const SCHEMA_MENU_WIDTH = 220;
 
 export function DatabaseExplorer({
   connId,
-  dbName,
+  dbName: _dbName,
   engine,
   showRefreshButton = true,
   refreshToken = 0,
@@ -97,6 +96,7 @@ export function DatabaseExplorer({
   const requestTabExecution = useQueriesStore((state) => state.requestTabExecution);
 
   const [loading, setLoading] = useState(true);
+  const [tablesLoading, setTablesLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [contextMenu, setContextMenu] = useState<TableContextMenuState | null>(null);
   const [schemaContextMenu, setSchemaContextMenu] = useState<SchemaContextMenuState | null>(null);
@@ -106,7 +106,10 @@ export function DatabaseExplorer({
     let cancelled = false;
 
     setLoading(true);
-    ensureSchemasCached(connId, engine, refreshToken > 0 ? { force: true } : undefined)
+    ensureSchemasCached(connId, engine, {
+      force: refreshToken > 0,
+      markActive: true,
+    })
       .catch(() => null)
       .finally(() => {
         if (!cancelled) {
@@ -144,12 +147,37 @@ export function DatabaseExplorer({
   const schemas = metadataConnection?.schemas ?? [];
   const schemaError = metadataConnection?.schemasError;
   const preferredSchema = connection?.preferredSchema ?? null;
+  const resolvedSchema = activeSchema ?? preferredSchema ?? schemas[0] ?? null;
+  const schemaEntry = resolvedSchema ? metadataConnection?.schemasByName[resolvedSchema] : undefined;
+  const tables = schemaEntry?.tables ?? [];
+  const tablesError = schemaEntry?.tablesError ?? null;
+
+  useEffect(() => {
+    if (!resolvedSchema) {
+      return;
+    }
+
+    let cancelled = false;
+    setTablesLoading(true);
+
+    ensureTablesCached(connId, engine, resolvedSchema)
+      .catch(() => null)
+      .finally(() => {
+        if (!cancelled) {
+          setTablesLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connId, engine, resolvedSchema]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     invalidateMetadataCache(connId);
     try {
-      await ensureSchemasCached(connId, engine, { force: true });
+      await ensureSchemasCached(connId, engine, { force: true, markActive: true });
     } finally {
       setRefreshing(false);
     }
@@ -203,56 +231,72 @@ export function DatabaseExplorer({
   };
 
   return (
-    <div className="flex flex-col h-full bg-surface relative">
-      <div className="p-3 border-b border-border bg-background/50 flex items-center gap-2">
-        <Database size={16} className="text-primary" />
-        <span className="font-semibold text-sm truncate">{dbName}</span>
-        {activeSchema ? (
-          <span className="ml-auto rounded-full border border-border/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted">
-            {activeSchema}
-          </span>
+    <div className="relative flex h-full flex-col bg-surface/35">
+      <div className="flex items-center gap-2 border-b border-border/60" style={{ padding: '10px 14px 9px' }}>
+        <span className="text-muted uppercase" style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.6, whiteSpace: 'nowrap' }}>
+          Tables
+        </span>
+        <div className="flex-1 h-px bg-border/60" />
+        {resolvedSchema ? (
+          <button
+            type="button"
+            onClick={(event) =>
+              setSchemaContextMenu({
+                ...resolveMenuAnchor(event, SCHEMA_MENU_WIDTH),
+                schema: resolvedSchema,
+              })
+            }
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-background/30 px-2 py-1 text-muted transition-colors hover:bg-background/45 hover:text-text"
+            style={{ fontSize: 9.5 }}
+            title={resolvedSchema}
+          >
+            <span className="max-w-[110px] truncate">{resolvedSchema}</span>
+            <ChevronDown size={11} />
+          </button>
         ) : null}
         {showRefreshButton ? (
           <button
             type="button"
             onClick={() => void handleRefresh()}
-            className="rounded-lg border border-border/70 p-1.5 text-muted hover:bg-border/30 hover:text-text"
+            className="text-muted hover:text-text transition-colors"
             title="Atualizar metadata"
           >
-            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+            <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
           </button>
         ) : null}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         {loading ? (
           <div className="flex justify-center p-4">
             <LoaderCircle size={18} className="animate-spin text-muted" />
           </div>
         ) : schemaError ? (
           <ExplorerError message={schemaError} onRetry={() => void handleRefresh()} />
-        ) : schemas.length ? (
-          <div className="mt-2">
-            {schemas.map((schema) => (
-              <SchemaItem
-                key={schema}
+        ) : !resolvedSchema ? (
+          <div className="flex h-full items-center justify-center px-4 text-center text-xs text-muted/75">
+            Nenhum schema encontrado para esta conexao.
+          </div>
+        ) : tablesLoading && !tables.length ? (
+          <div className="flex justify-center p-4">
+            <LoaderCircle size={18} className="animate-spin text-muted" />
+          </div>
+        ) : tablesError ? (
+          <ExplorerError message={tablesError} onRetry={() => void handleRefresh()} />
+        ) : tables.length ? (
+          <div className="space-y-1">
+            {tables.map((table) => (
+              <FlatTableItem
+                key={table}
                 connId={connId}
                 engine={engine}
-                schema={schema}
-                active={activeSchema === schema}
-                preferred={preferredSchema === schema}
-                onActivate={() => setActiveSchema(connId, schema)}
-                onOpenSchemaContextMenu={(event) =>
-                  setSchemaContextMenu({
-                    ...resolveMenuAnchor(event, SCHEMA_MENU_WIDTH),
-                    schema,
-                  })
-                }
-                onOpenAction={(action, table) => void openQueryFromExplorer(action, schema, table)}
-                onOpenContextMenu={(event, table) =>
+                schema={resolvedSchema}
+                table={table}
+                onOpenAction={(action) => void openQueryFromExplorer(action, resolvedSchema, table)}
+                onOpenContextMenu={(event) =>
                   setContextMenu({
                     ...resolveMenuAnchor(event, TABLE_MENU_WIDTH),
-                    schema,
+                    schema: resolvedSchema,
                     table,
                   })
                 }
@@ -260,7 +304,9 @@ export function DatabaseExplorer({
             ))}
           </div>
         ) : (
-          <div className="p-3 text-sm text-muted">Nenhum schema encontrado.</div>
+          <div className="flex h-full items-center justify-center px-4 text-center text-xs text-muted/75">
+            Nenhuma tabela encontrada neste schema.
+          </div>
         )}
       </div>
 
@@ -302,17 +348,28 @@ export function DatabaseExplorer({
               onMouseDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveSchema(connId, schemaContextMenu.schema);
-                  setSchemaContextMenu(null);
-                }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
-              >
-                <Crosshair size={14} className="text-muted" />
-                <span>Usar neste editor</span>
-              </button>
+              {schemas.map((schema) => (
+                <button
+                  key={schema}
+                  type="button"
+                  onClick={() => {
+                    setActiveSchema(connId, schema);
+                    setSchemaContextMenu(null);
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
+                    schema === resolvedSchema ? 'bg-background/55 text-primary' : 'text-text hover:bg-background/55'
+                  }`}
+                >
+                  <Crosshair size={14} className="text-muted" />
+                  <span className="flex-1 truncate text-left">{schema}</span>
+                  {preferredSchema === schema ? (
+                    <span className="rounded border border-border/60 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.14em] text-muted">
+                      default
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+              <div className="my-1 border-t border-border/70" />
               <button
                 type="button"
                 onClick={() => openCreateTableTemplate(schemaContextMenu.schema)}
@@ -356,134 +413,15 @@ export function DatabaseExplorer({
   );
 }
 
-function SchemaItem({
-  connId,
-  engine,
-  schema,
-  active,
-  preferred,
-  onActivate,
-  onOpenSchemaContextMenu,
-  onOpenAction,
-  onOpenContextMenu,
-}: {
-  connId: string;
-  engine: DatabaseEngine;
-  schema: string;
-  active: boolean;
-  preferred: boolean;
-  onActivate: () => void;
-  onOpenSchemaContextMenu: (event: ReactMouseEvent<HTMLElement>) => void;
-  onOpenAction: (action: ExplorerActionId, table: string) => void;
-  onOpenContextMenu: (event: ReactMouseEvent<HTMLElement>, table: string) => void;
-}) {
-  const schemaEntry = useDatabaseSessionStore((state) => state.metadataByConnection[connId]?.schemasByName[schema]);
-  const [expanded, setExpanded] = useState(schema === 'public' || active);
-  const [loading, setLoading] = useState(false);
+function buildTableMetaLabel(columnCount?: number) {
+  if (typeof columnCount === 'number' && columnCount > 0) {
+    return `${columnCount}c`;
+  }
 
-  useEffect(() => {
-    if (active) {
-      setExpanded(true);
-    }
-  }, [active]);
-
-  useEffect(() => {
-    if (!expanded) {
-      return;
-    }
-
-    let cancelled = false;
-    setLoading(true);
-    ensureTablesCached(connId, engine, schema)
-      .catch(() => null)
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [connId, engine, expanded, schema]);
-
-  const handleRetryTables = () => {
-    let cancelled = false;
-    setLoading(true);
-    ensureTablesCached(connId, engine, schema, { force: true })
-      .catch(() => null)
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  };
-
-  return (
-    <div>
-      <div
-        onContextMenu={(event) => {
-          event.preventDefault();
-          onOpenSchemaContextMenu(event);
-        }}
-        onClick={() => {
-          onActivate();
-          setExpanded((current) => !current);
-        }}
-        className={`flex items-center gap-1.5 py-1.5 px-2 rounded cursor-pointer select-none ${
-          active ? 'bg-primary/10 text-primary' : 'text-text hover:bg-border/30'
-        }`}
-      >
-        {expanded ? <ChevronDown size={15} className="text-muted" /> : <ChevronRight size={15} className="text-muted" />}
-        <LayoutTemplate size={15} className="text-amber-400" />
-        <span className="text-sm font-medium">{schema}</span>
-        {preferred ? (
-          <span className="ml-auto rounded-full border border-border/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted">
-            padrao
-          </span>
-        ) : null}
-      </div>
-
-      {expanded ? (
-        loading && !schemaEntry?.tables.length ? (
-          <div className="ml-6 py-1">
-            <LoaderCircle size={14} className="animate-spin text-muted" />
-          </div>
-        ) : schemaEntry?.tablesError ? (
-          <div className="ml-5 border-l border-border/50 pl-3 py-2">
-            <div className="text-xs text-red-300">{schemaEntry.tablesError}</div>
-            <button
-              type="button"
-              onClick={handleRetryTables}
-              className="mt-1.5 text-[11px] text-muted hover:text-text underline underline-offset-2"
-            >
-              Tentar novamente
-            </button>
-          </div>
-        ) : schemaEntry && !schemaEntry.tables.length ? (
-          <div className="ml-5 border-l border-border/50 pl-3 py-2 text-xs text-muted/60 italic">
-            Schema vazio
-          </div>
-        ) : (
-          <div className="ml-5 border-l border-border/50 pl-2">
-            {schemaEntry?.tables.map((table) => (
-              <TableItem
-                key={table}
-                connId={connId}
-                engine={engine}
-                schema={schema}
-                table={table}
-                onOpenAction={onOpenAction}
-                onOpenContextMenu={onOpenContextMenu}
-              />
-            ))}
-          </div>
-        )
-      ) : null}
-    </div>
-  );
+  return '--';
 }
 
-function TableItem({
+function FlatTableItem({
   connId,
   engine,
   schema,
@@ -495,87 +433,105 @@ function TableItem({
   engine: DatabaseEngine;
   schema: string;
   table: string;
-  onOpenAction: (action: ExplorerActionId, table: string) => void;
-  onOpenContextMenu: (event: ReactMouseEvent<HTMLElement>, table: string) => void;
+  onOpenAction: (action: ExplorerActionId) => void;
+  onOpenContextMenu: (event: ReactMouseEvent<HTMLElement>) => void;
 }) {
   const tableEntry = useDatabaseSessionStore(
     (state) => state.metadataByConnection[connId]?.schemasByName[schema]?.tablesByName[table],
   );
   const [expanded, setExpanded] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loadingColumns, setLoadingColumns] = useState(false);
 
   useEffect(() => {
     if (!expanded) {
       return;
     }
 
+    if (tableEntry?.columns?.length) {
+      return;
+    }
+
     let cancelled = false;
-    setLoading(true);
+    setLoadingColumns(true);
+
     ensureColumnsCached(connId, engine, schema, table)
       .catch(() => null)
       .finally(() => {
         if (!cancelled) {
-          setLoading(false);
+          setLoadingColumns(false);
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [connId, engine, expanded, schema, table]);
+  }, [connId, engine, expanded, schema, table, tableEntry?.columns?.length]);
+
+  const columns = tableEntry?.columns ?? [];
+  const metaLabel = buildTableMetaLabel(columns.length);
 
   return (
-    <div>
+    <div className="rounded-lg">
       <div
-        className="group flex items-center gap-1.5 py-1 text-text hover:bg-border/30 rounded select-none"
+        className="group flex items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-background/38"
         onContextMenu={(event) => {
           event.preventDefault();
-          onOpenContextMenu(event, table);
+          onOpenContextMenu(event);
         }}
       >
         <button
           type="button"
           onClick={() => setExpanded((current) => !current)}
-          onDoubleClick={() => void onOpenAction('selectTop100', table)}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          onDoubleClick={() => onOpenAction('selectTop100')}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          title={`${schema}.${table}`}
         >
           {expanded ? (
-            <ChevronDown size={14} className="shrink-0 text-muted" />
+            <ChevronDown size={12} className="shrink-0 text-muted" />
           ) : (
-            <ChevronRight size={14} className="shrink-0 text-muted" />
+            <ChevronRight size={12} className="shrink-0 text-muted" />
           )}
-          <Table2 size={14} className="h-[14px] w-[14px] shrink-0 text-blue-400" />
-          <span className="text-sm truncate">{table}</span>
+          <Table2 size={13} className="shrink-0 text-muted" />
+          <span className="truncate font-mono text-[13px] text-text">{table}</span>
         </button>
-
+        <span className="shrink-0 text-[11px] font-mono text-muted/70">{metaLabel}</span>
         <button
           type="button"
-          onClick={(event) => onOpenContextMenu(event, table)}
-          className="mr-1 rounded p-1 text-muted opacity-0 transition-opacity hover:bg-background/60 hover:text-text group-hover:opacity-100"
+          onClick={onOpenContextMenu}
+          className="rounded p-1 text-muted opacity-0 transition-opacity hover:bg-background/60 hover:text-text group-hover:opacity-100"
           title="Acoes da tabela"
         >
-          <EllipsisVertical size={13} />
+          <EllipsisVertical size={12} />
         </button>
       </div>
 
       {expanded ? (
-        loading && !tableEntry?.columns?.length ? (
-          <div className="ml-6 py-1">
-            <LoaderCircle size={14} className="animate-spin text-muted" />
-          </div>
-        ) : tableEntry?.columnsError ? (
-          <div className="ml-6 py-2 text-xs text-red-300">{tableEntry.columnsError}</div>
-        ) : (
-          <div className="ml-6 border-l border-border/50 pl-2">
-            {tableEntry?.columns?.map((column) => (
-              <div key={column.columnName} className="flex items-center gap-2 py-1 text-muted hover:text-text cursor-default">
-                <Columns size={13} className="opacity-70" />
-                <span className="text-sm truncate">{column.columnName}</span>
-                <span className="text-xs text-muted/60 ml-auto">{column.dataType}</span>
-              </div>
-            ))}
-          </div>
-        )
+        <div className="ml-5 border-l border-border/40 pl-3">
+          {loadingColumns && !columns.length ? (
+            <div className="flex items-center gap-2 py-2 text-[11px] text-muted">
+              <LoaderCircle size={12} className="animate-spin" />
+              Carregando colunas...
+            </div>
+          ) : tableEntry?.columnsError ? (
+            <div className="py-2 text-[11px] text-red-300">{tableEntry.columnsError}</div>
+          ) : columns.length ? (
+            <div className="py-1">
+              {columns.map((column) => (
+                <div
+                  key={column.columnName}
+                  className="flex items-center gap-2 py-1.5 text-[12px] text-muted/90"
+                  title={`${column.columnName} • ${column.dataType}`}
+                >
+                  <Columns size={12} className="shrink-0 text-muted/70" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-text/90">{column.columnName}</span>
+                  <span className="shrink-0 text-[10px] font-mono text-muted/65">{column.dataType}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-2 text-[11px] text-muted/70">Nenhuma coluna encontrada.</div>
+          )}
+        </div>
       ) : null}
     </div>
   );

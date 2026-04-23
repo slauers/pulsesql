@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { useQueriesStore } from '../../store/queries';
-import { type DatabaseEngine, useConnectionsStore } from '../../store/connections';
+import { type DatabaseEngine, useConnectionsStore, getConnectionColor, hexToRgba } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
 import { createPortal } from 'react-dom';
 import { ensureColumnsCached, ensureSchemasCached, ensureTablesCached, invalidateMetadataCache } from '../database/metadata-cache';
@@ -97,6 +97,7 @@ export default function QueryWorkspace() {
   const { activeConnectionId, connections, setActiveConnection } = useConnectionsStore();
   const runtimeStatusMap = useConnectionRuntimeStore((state) => state.runtimeStatus);
   const transactionOpenByConnection = useConnectionRuntimeStore((state) => state.transactionOpenByConnection);
+  const connectionLogs = useConnectionRuntimeStore((state) => state.connectionLogs);
   const setRuntimeStatus = useConnectionRuntimeStore((state) => state.setRuntimeStatus);
   const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
   const setAutocommitEnabled = useConnectionRuntimeStore((state) => state.setAutocommitEnabled);
@@ -119,12 +120,14 @@ export default function QueryWorkspace() {
   const activeTab = tabs.find(t => t.id === activeTabId);
   const resolvedConnectionId = activeTab?.connectionId ?? activeConnectionId ?? null;
   const selectedConnection = connections.find((connection) => connection.id === resolvedConnectionId) ?? null;
+  const connectionColor = getConnectionColor(connections, resolvedConnectionId);
   const engine = selectedConnection?.engine;
   const connectionLabel = selectedConnection?.name;
   const schemaLabel = resolvedConnectionId ? activeSchemaByConnection[resolvedConnectionId] ?? selectedConnection?.preferredSchema : undefined;
   const runtimeStatus = resolvedConnectionId ? runtimeStatusMap[resolvedConnectionId] : undefined;
   const isConnectionReady = runtimeStatus === 'connected';
   const transactionOpen = resolvedConnectionId ? transactionOpenByConnection[resolvedConnectionId] === true : false;
+  const activeConnectionLogCount = resolvedConnectionId ? (connectionLogs[resolvedConnectionId]?.length ?? 0) : 0;
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<QueryErrorPresentation | null>(null);
@@ -150,6 +153,7 @@ export default function QueryWorkspace() {
   const [selectedSourceRowIndex, setSelectedSourceRowIndex] = useState<number | null>(null);
   const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
   const [gridFullscreen, setGridFullscreen] = useState(false);
+  const [activePanel, setActivePanel] = useState<'results' | 'logs'>('results');
   const editErrorTimeoutRef = useRef<number | null>(null);
   const executeQueryRef = useRef<() => void>(() => {});
   const editorRef = useRef<any>(null);
@@ -274,6 +278,7 @@ export default function QueryWorkspace() {
     setSemanticBackgroundState('running');
     setLoading(true);
     setError(null);
+    setActivePanel('results');
 
     try {
       const nextResults: QueryExecutionResult[] = [];
@@ -614,6 +619,32 @@ export default function QueryWorkspace() {
   }, [activeResultIndex, resolvedConnectionId, quickFilter, activeResult?.statement]);
 
   useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent('pulsesql:workspace-metrics', {
+        detail: {
+          connectionId: resolvedConnectionId,
+          visibleRows: activeResult ? filteredRows.length : null,
+          totalRows: activeResult?.total_rows ?? activeResult?.rows.length ?? null,
+          executionTime: activeResult?.execution_time ?? null,
+        },
+      }),
+    );
+
+    return () => {
+      window.dispatchEvent(
+        new CustomEvent('pulsesql:workspace-metrics', {
+          detail: {
+            connectionId: resolvedConnectionId,
+            visibleRows: null,
+            totalRows: null,
+            executionTime: null,
+          },
+        }),
+      );
+    };
+  }, [activeResult, filteredRows.length, resolvedConnectionId]);
+
+  useEffect(() => {
     if (!resolvedConnectionId || !engine || !activeSourceTable?.schemaName || !activeSourceTable.tableName || runtimeStatus !== 'connected') {
       return;
     }
@@ -903,50 +934,72 @@ export default function QueryWorkspace() {
       }`}
       style={fullscreen ? undefined : { height: `${resultsHeight}%` }}
     >
-      <div className="p-2 border-b border-border text-sm font-medium text-muted flex justify-between items-center bg-background/42">
-        <div className="flex gap-2 px-2 shrink-0 overflow-x-auto scrollbar-hide">
+      <div
+        className="flex flex-wrap items-center gap-2 border-b border-border/80 px-3"
+        style={{ background: 'var(--bt-surface)', paddingTop: 8, paddingBottom: 8 }}
+      >
+        {/* Pill tabs */}
+        <div style={{ display: 'flex', gap: 2, padding: 2, background: 'var(--bt-background)', borderRadius: 7, border: '1px solid var(--bt-border)', flexShrink: 0 }}>
           {(results.length ? results : [{ title: t('result') } as QueryExecutionResult]).map((item, index) => (
-            <div
-              key={`${item.title}-${index}`}
-              className={`rounded-t-lg border-b-2 px-2.5 pb-1 pt-0.5 text-xs transition-colors ${
-                activeResultIndex === index
-                  ? 'text-text border-primary'
-                  : 'text-muted border-transparent hover:text-text hover:border-border/70'
-              }`}
-            >
+            <div key={`${item.title}-${index}`} className="inline-flex items-center">
               <button
-                onClick={() => setActiveResultIndex(index)}
-                className="inline-flex items-center gap-1.5"
+                onClick={() => { setActiveResultIndex(index); setActivePanel('results'); }}
+                className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs font-semibold transition-colors"
+                style={activePanel === 'results' && activeResultIndex === index
+                  ? { background: hexToRgba(connectionColor, 0.15), color: connectionColor, border: `1px solid ${hexToRgba(connectionColor, 0.30)}` }
+                  : { background: 'transparent', color: 'var(--bt-muted)', border: '1px solid transparent' }
+                }
               >
-                <span>{results.length <= 1 ? t('result') : item.title}</span>
+                {results.length <= 1 ? t('result') : item.title}
+                {results.length > 1 ? (
+                  <span
+                    onClick={(event) => { event.stopPropagation(); closeResultTab(index); }}
+                    className="ml-1 hover:text-text transition-colors"
+                    aria-label={`Fechar ${item.title}`}
+                  >
+                    <X size={11} />
+                  </span>
+                ) : null}
               </button>
-              {results.length > 1 ? (
-                <button
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    closeResultTab(index);
-                  }}
-                  className="ml-1 inline-flex items-center text-muted transition-colors hover:text-text"
-                  aria-label={`Fechar ${item.title}`}
-                >
-                  <X size={12} />
-                </button>
-              ) : null}
             </div>
           ))}
+          <button
+            onClick={() => setActivePanel('logs')}
+            className="inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition-colors"
+            style={activePanel === 'logs'
+              ? { background: hexToRgba(connectionColor, 0.15), color: connectionColor, border: `1px solid ${hexToRgba(connectionColor, 0.30)}` }
+              : { background: 'transparent', color: 'var(--bt-muted)', border: '1px solid transparent' }
+            }
+          >
+            Logs
+            {activeConnectionLogCount > 0 ? (
+              <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 10, opacity: 0.75 }}>
+                {activeConnectionLogCount}
+              </span>
+            ) : null}
+          </button>
         </div>
+
         {activeResult ? (
-          <div className="flex items-center gap-2 px-2 min-w-0">
-            <div className="hidden md:flex items-center gap-2 text-xs text-muted shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="hidden md:flex items-center gap-1.5 text-xs shrink-0" style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--bt-muted)' }}>
               {hasGridResult ? (
-                <span>
-                  {formatNumber(locale, filteredRows.length)}
-                  {quickFilter ? ` / ${formatNumber(locale, activeResult.rows.length)}` : ''} {t('rowsLabel')}
-                </span>
+                <>
+                  <span style={{ color: connectionColor }}>✓</span>
+                  <span>
+                    {formatNumber(locale, filteredRows.length)}
+                    {quickFilter ? ` / ${formatNumber(locale, activeResult.rows.length)}` : ''} {t('rowsLabel')}
+                  </span>
+                  {canPaginate ? (
+                    <>
+                      <span style={{ opacity: 0.4 }}>│</span>
+                      <span>{t('pageOf', { page: currentPage, total: totalPages })}</span>
+                    </>
+                  ) : null}
+                  <span style={{ opacity: 0.4 }}>│</span>
+                </>
               ) : null}
-              {hasGridResult ? <span>{t('totalRecords', { count: formatNumber(locale, totalRows) })}</span> : null}
-              {canPaginate ? <span>{t('pageOf', { page: currentPage, total: totalPages })}</span> : null}
-              <span>{activeResult.execution_time}ms</span>
+              <span style={{ color: connectionColor }}>{activeResult.execution_time}ms</span>
             </div>
             {transactionOpen ? (
               <>
@@ -1078,7 +1131,22 @@ export default function QueryWorkspace() {
       </div>
 
       <div className="flex-1 overflow-auto bg-background/10 relative">
-        {loading ? (
+        {activePanel === 'logs' ? (
+          <div className="h-full overflow-y-auto p-3" style={{ fontFamily: 'ui-monospace, "SF Mono", monospace', fontSize: 11.5 }}>
+            {resolvedConnectionId && connectionLogs[resolvedConnectionId]?.length ? (
+              connectionLogs[resolvedConnectionId].map((entry, i) => (
+                <div key={i} className="py-1 border-b border-border/30 last:border-0" style={{ color: 'var(--bt-muted)', lineHeight: 1.6 }}>
+                  {entry}
+                </div>
+              ))
+            ) : (
+              <div className="flex h-full items-center justify-center text-muted/50 text-sm" style={{ fontFamily: 'inherit' }}>
+                Nenhum log registrado para esta conexão.
+              </div>
+            )}
+          </div>
+        ) : null}
+        {activePanel === 'results' && loading ? (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/55 backdrop-blur-[1px]">
             <div className="flex items-center gap-3">
               <LoaderCircle size={16} className="animate-spin text-primary" />
@@ -1088,9 +1156,9 @@ export default function QueryWorkspace() {
             </div>
           </div>
         ) : null}
-        {error && !loading ? (
+        {activePanel === 'results' && error && !loading ? (
           <QueryErrorPanel error={error} activeSchema={schemaLabel} onRetry={() => void executeQuery()} />
-        ) : activeResult ? (
+        ) : activePanel === 'results' && activeResult ? (
           <div className="flex h-full min-h-0 flex-col">
             {activeResult.summary ? (
               <div className="border-b border-border/60 bg-emerald-400/5 px-4 py-3 text-xs text-emerald-100/90">
@@ -1122,11 +1190,11 @@ export default function QueryWorkspace() {
               )}
             </div>
           </div>
-        ) : (
+        ) : activePanel === 'results' ? (
           <div className="h-full flex items-center justify-center text-muted/50 text-sm">
             {t('runQueryToSeeResults')}
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -1144,18 +1212,29 @@ export default function QueryWorkspace() {
         ) : null}
 
         <div className="relative z-10 flex h-full min-h-0 flex-col gap-3">
-          <div className="shrink-0 overflow-hidden rounded-lg border border-border/80 glass-panel shadow-[0_18px_48px_rgba(0,0,0,0.22)]">
-            <div className="flex items-center overflow-x-auto scrollbar-hide border-b border-border/70 bg-background/16">
-              {tabs.map(tab => (
+          <div className="shrink-0 overflow-hidden">
+            <div className="flex items-stretch overflow-x-auto scrollbar-hide" style={{ background: 'rgba(10,20,32,0.4)' }}>
+              {tabs.map(tab => {
+                const tabColor = getConnectionColor(connections, tab.connectionId ?? activeConnectionId);
+                return (
                 <div
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`group flex items-center gap-2 px-3 py-3 border-r border-border/70 min-w-[148px] max-w-[240px] cursor-pointer select-none rounded-t-lg border-b-2 transition-colors ${
-                    activeTabId === tab.id
-                      ? 'bg-background/80 text-primary border-b-primary'
-                      : 'text-muted border-b-transparent hover:bg-border/20'
+                  className={`group relative flex items-center gap-2 px-3 py-2.5 border-r border-border/60 min-w-[148px] max-w-[240px] cursor-pointer select-none transition-colors ${
+                    activeTabId === tab.id ? 'text-text' : 'text-muted hover:bg-white/4'
                   }`}
+                  style={{
+                    background: activeTabId === tab.id ? 'var(--bt-surface)' : 'transparent',
+                    borderBottom: activeTabId === tab.id ? '1px solid var(--bt-surface)' : '1px solid var(--bt-border)',
+                  }}
                 >
+                  {activeTabId === tab.id && (
+                    <div style={{
+                      position: 'absolute', top: 0, left: 0, right: 0, height: 2,
+                      background: tabColor, boxShadow: `0 0 10px ${tabColor}`,
+                    }} />
+                  )}
+                  <span style={{ width: 6, height: 6, borderRadius: 2, flexShrink: 0, background: tabColor, opacity: activeTabId === tab.id ? 1 : 0.5 }} />
                   <span className="text-sm truncate flex-1">{tab.title}</span>
                   <button
                     onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
@@ -1166,38 +1245,46 @@ export default function QueryWorkspace() {
                     <X size={14} />
                   </button>
                 </div>
-              ))}
-              <div className="ml-auto mr-2 flex shrink-0 items-center gap-2">
-                <button
-                  onClick={() => addTab(resolvedConnectionId)}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-border/60 px-3 py-2 text-xs font-medium text-muted hover:text-text hover:border-primary/50 hover:bg-primary/6 transition-colors"
-                >
-                  <Plus size={15} />
-                  <span className="hidden sm:inline">{t('newQueryTab')}</span>
-                  <span className="sm:hidden">{t('newQuery')}</span>
-                </button>
-              </div>
+                );
+              })}
+              <button
+                onClick={() => addTab(resolvedConnectionId)}
+                className="flex flex-1 items-center px-3 text-muted hover:text-text transition-colors"
+                style={{ borderBottom: '1px solid var(--bt-border)', minWidth: 40, paddingTop: 10, paddingBottom: 10 }}
+                title={t('newQueryTab')}
+              >
+                <Plus size={14} />
+              </button>
             </div>
 
-            <div className="px-3 py-2.5 flex flex-wrap items-center gap-2">
+            <div className="px-3 py-2.5 flex flex-wrap items-center gap-2" style={{ background: 'var(--bt-surface)', borderBottom: '1px solid var(--bt-border)' }}>
               <button
                 onClick={() => void executeQuery()}
                 disabled={loading || !activeTab || !resolvedConnectionId}
-                className="flex items-center gap-1.5 bg-emerald-400/18 text-emerald-200 hover:bg-emerald-400/26 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-400/35 shadow-[0_0_18px_rgba(16,185,129,0.18)] hover:shadow-[0_0_24px_rgba(16,185,129,0.28)]"
+                className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  background: connectionColor,
+                  color: '#08111A',
+                  border: 'none',
+                  letterSpacing: 0.4,
+                  boxShadow: `0 0 18px ${hexToRgba(connectionColor, 0.50)}, inset 0 1px 0 rgba(255,255,255,0.20)`,
+                }}
               >
-                {loading ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} className="fill-green-400/50" />}
+                {loading
+                  ? <LoaderCircle size={14} className="animate-spin" style={{ color: '#08111A' }} />
+                  : <Play size={14} style={{ fill: '#08111A', opacity: 0.75 }} />
+                }
                 {t('run')}
+                <span style={{ opacity: 0.5, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}>⌘↵</span>
               </button>
-              <span className="rounded-full border border-border/70 bg-background/22 px-2.5 py-1 text-[11px] text-muted">
-                Cmd+Enter
-              </span>
               <button
                 onClick={toggleHistory}
-                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-                  historyOpen
-                    ? 'border-primary/40 bg-primary/10 text-primary'
-                    : 'border-border text-muted hover:bg-border/30 hover:text-text'
-                }`}
+                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
+                style={{
+                  background: historyOpen ? hexToRgba(connectionColor, 0.12) : 'var(--bt-surface)',
+                  border: `1px solid ${historyOpen ? hexToRgba(connectionColor, 0.35) : 'var(--bt-border)'}`,
+                  color: historyOpen ? connectionColor : 'var(--bt-muted)',
+                }}
               >
                 <Clock3 size={13} />
                 {t('history')}
@@ -1207,12 +1294,10 @@ export default function QueryWorkspace() {
                   ref={connectionMenuButtonRef}
                   type="button"
                   onClick={toggleConnectionMenu}
-                  className={`flex w-full min-w-0 sm:min-w-[240px] items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${
-                    connectionMenuOpen
-                      ? 'border-primary/40 bg-background/40'
-                      : 'border-border/70 bg-background/22 hover:bg-border/30'
-                  }`}
+                  className="flex w-full min-w-0 sm:min-w-[240px] items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors border-border/70 bg-background/22 hover:bg-border/30"
+                  style={connectionMenuOpen ? { borderColor: hexToRgba(connectionColor, 0.45) } : undefined}
                 >
+                  <span style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: connectionColor, boxShadow: `0 0 6px ${hexToRgba(connectionColor, 0.8)}` }} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[11px] uppercase tracking-[0.14em] text-muted">
                       {selectedConnection ? `${selectedConnection.engine.toUpperCase()} - ${selectedConnection.name}` : t('noActiveConnection')}
@@ -1234,7 +1319,14 @@ export default function QueryWorkspace() {
             </div>
           </div>
 
-          <div className="flex-1 relative min-h-0 flex flex-col overflow-hidden rounded-lg border border-border/80 glass-panel shadow-[0_18px_48px_rgba(0,0,0,0.24)]">
+          <div
+            className="flex-1 relative min-h-0 flex flex-col overflow-hidden rounded-lg glass-panel shadow-[0_18px_48px_rgba(0,0,0,0.24)]"
+            style={{
+              border: `1px solid ${hexToRgba(connectionColor, 0.28)}`,
+              borderLeft: `2px solid ${connectionColor}`,
+              boxShadow: `0 18px 48px rgba(0,0,0,0.24), inset 4px 0 18px -4px ${hexToRgba(connectionColor, 0.10)}`,
+            }}
+          >
             {activeTab ? (
               <div className="flex-1 min-h-[220px] overflow-hidden rounded-lg bg-background/30">
                 <Editor
