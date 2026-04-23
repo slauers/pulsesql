@@ -245,7 +245,14 @@ const messages = {
     importConnections: 'Importar conexoes',
     exportConnections: 'Exportar conexoes',
     importConnectionsError: 'Falha ao importar: {message}',
-    importConnectionsSuccess: '{count} conexao(oes) importada(s).'
+    importConnectionsSuccess: '{count} conexao(oes) importada(s).',
+    format: 'Formatar',
+    explain: 'Explicar',
+    explainComingSoon: 'Em breve · requer IA',
+    statusRunning: 'EM EXECUCAO',
+    statusSuccess: 'SUCESSO',
+    statusError: 'ERRO',
+    statusWarning: 'AVISO',
   },
   'en-US': {
     language: 'Language',
@@ -481,7 +488,14 @@ const messages = {
     importConnections: 'Import connections',
     exportConnections: 'Export connections',
     importConnectionsError: 'Import failed: {message}',
-    importConnectionsSuccess: '{count} connection(s) imported.'
+    importConnectionsSuccess: '{count} connection(s) imported.',
+    format: 'Format',
+    explain: 'Explain',
+    explainComingSoon: 'Coming soon · requires AI',
+    statusRunning: 'RUNNING',
+    statusSuccess: 'SUCCESS',
+    statusError: 'ERROR',
+    statusWarning: 'WARNING',
   }
 } as const;
 

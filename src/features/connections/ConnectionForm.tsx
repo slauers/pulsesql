@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { CheckCircle, Eye, EyeOff, LoaderCircle, XCircle } from 'lucide-react';
 import { createDefaultConnectionForm, ENGINE_DEFINITIONS } from './connection-engines';
-import { ConnectionConfig, DatabaseEngine, OracleConnectionType, PostgresSslMode, SshAuthMethod, useConnectionsStore } from '../../store/connections';
+import { CONNECTION_COLOR_PALETTE, ConnectionConfig, DatabaseEngine, OracleConnectionType, PostgresSslMode, SshAuthMethod, useConnectionsStore } from '../../store/connections';
 import AppSelect from '../../components/ui/AppSelect';
 import JdkSetupBanner from './JdkSetupBanner';
 
@@ -227,13 +227,47 @@ export default function ConnectionForm({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm text-muted mb-1">Connection Name</label>
-            <input
-              value={formData.name}
-              onChange={(event) => updateField('name', event.target.value)}
-              className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
-              placeholder="Production DB"
-              required
-            />
+            <div className="flex items-center gap-2">
+              <input
+                value={formData.name}
+                onChange={(event) => updateField('name', event.target.value)}
+                className="flex-1 bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                placeholder="Production DB"
+                required
+              />
+              <div className="relative flex-shrink-0">
+                <div
+                  className="w-8 h-8 rounded-md border-2 border-border cursor-pointer flex items-center justify-center overflow-hidden"
+                  style={{ borderColor: formData.color ?? '#47C4E8', background: (formData.color ?? '#47C4E8') + '22' }}
+                  title="Connection color"
+                >
+                  <input
+                    type="color"
+                    value={formData.color ?? '#47C4E8'}
+                    onChange={(e) => updateField('color', e.target.value)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    style={{ width: '200%', height: '200%', transform: 'translate(-25%, -25%)' }}
+                  />
+                  <div className="w-3.5 h-3.5 rounded-sm" style={{ background: formData.color ?? '#47C4E8' }} />
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-1.5 mt-2">
+              {CONNECTION_COLOR_PALETTE.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => updateField('color', c)}
+                  className="w-5 h-5 rounded-sm transition-transform hover:scale-110"
+                  style={{
+                    background: c,
+                    outline: formData.color === c ? `2px solid ${c}` : 'none',
+                    outlineOffset: 2,
+                  }}
+                  title={c}
+                />
+              ))}
+            </div>
           </div>
           <div>
             <label className="block text-sm text-muted mb-1">Database Engine</label>
