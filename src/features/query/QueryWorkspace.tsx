@@ -923,12 +923,7 @@ export default function QueryWorkspace() {
     setConnectionMenuOpen(false);
   }, [activeTab, setActiveConnection, setTabConnection]);
 
-  const toggleConnectionMenu = useCallback(() => {
-    const rect = connectionMenuButtonRef.current?.getBoundingClientRect();
-    if (!rect) {
-      return;
-    }
-
+  const openConnectionMenu = useCallback((rect: DOMRect) => {
     setConnectionMenuPosition({
       x: Math.round(Math.max(8, Math.min(rect.right - CONNECTION_MENU_WIDTH, window.innerWidth - CONNECTION_MENU_WIDTH - 8))),
       y: Math.round(Math.min(rect.bottom + 8, window.innerHeight - 220)),
@@ -1232,47 +1227,68 @@ export default function QueryWorkspace() {
 
         <div className="relative z-10 flex h-full min-h-0 flex-col gap-3">
           <div className="shrink-0 overflow-hidden">
-            <div className="flex items-stretch overflow-x-auto scrollbar-hide" style={{ background: 'rgba(10,20,32,0.4)' }}>
-              {tabs.map(tab => {
-                const tabColor = getConnectionColor(connections, tab.connectionId ?? activeConnectionId);
-                return (
-                <div
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`group relative flex items-center gap-2 px-3 py-2.5 border-r border-border/60 min-w-[148px] max-w-[240px] cursor-pointer select-none transition-colors ${
-                    activeTabId === tab.id ? 'text-text' : 'text-muted hover:bg-white/4'
-                  }`}
-                  style={{
-                    background: activeTabId === tab.id ? 'var(--bt-surface)' : 'transparent',
-                    borderBottom: activeTabId === tab.id ? '1px solid var(--bt-surface)' : '1px solid var(--bt-border)',
-                  }}
-                >
-                  {activeTabId === tab.id && (
-                    <div style={{
-                      position: 'absolute', top: 0, left: 0, right: 0, height: 2,
-                      background: tabColor, boxShadow: `0 0 10px ${tabColor}`,
-                    }} />
-                  )}
-                  <span style={{ width: 6, height: 6, borderRadius: 2, flexShrink: 0, background: tabColor, opacity: activeTabId === tab.id ? 1 : 0.5 }} />
-                  <span className="text-sm truncate flex-1">{tab.title}</span>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
-                    className={`p-1 rounded hover:bg-border/50 text-muted transition-opacity flex-shrink-0 ${
-                      activeTabId === tab.id ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'
+            <div className="flex items-stretch" style={{ background: 'rgba(10,20,32,0.4)' }}>
+              <div className="flex flex-1 min-w-0 items-stretch overflow-x-auto scrollbar-hide">
+                {tabs.map(tab => {
+                  const tabColor = getConnectionColor(connections, tab.connectionId ?? activeConnectionId);
+                  return (
+                  <div
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`group relative flex items-center gap-2 px-3 py-2.5 border-r border-border/60 min-w-[148px] max-w-[240px] cursor-pointer select-none transition-colors ${
+                      activeTabId === tab.id ? 'text-text' : 'text-muted hover:bg-white/4'
                     }`}
+                    style={{
+                      background: activeTabId === tab.id ? 'var(--bt-surface)' : 'transparent',
+                      borderBottom: activeTabId === tab.id ? '1px solid var(--bt-surface)' : '1px solid var(--bt-border)',
+                    }}
                   >
-                    <X size={14} />
-                  </button>
-                </div>
-                );
-              })}
+                    {activeTabId === tab.id && (
+                      <div style={{
+                        position: 'absolute', top: 0, left: 0, right: 0, height: 2,
+                        background: tabColor, boxShadow: `0 0 10px ${tabColor}`,
+                      }} />
+                    )}
+                    <span style={{ width: 6, height: 6, borderRadius: 2, flexShrink: 0, background: tabColor, opacity: activeTabId === tab.id ? 1 : 0.5 }} />
+                    <span className="text-sm truncate flex-1">{tab.title}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                      className={`p-1 rounded hover:bg-border/50 text-muted transition-opacity flex-shrink-0 ${
+                        activeTabId === tab.id ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      }`}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  );
+                })}
+                <button
+                  onClick={() => addTab(resolvedConnectionId)}
+                  className="flex items-center px-3 text-muted hover:text-text transition-colors"
+                  style={{ borderBottom: '1px solid var(--bt-border)', minWidth: 40, paddingTop: 10, paddingBottom: 10 }}
+                  title={t('newQueryTab')}
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
               <button
-                onClick={() => addTab(resolvedConnectionId)}
-                className="flex flex-1 items-center px-3 text-muted hover:text-text transition-colors"
-                style={{ borderBottom: '1px solid var(--bt-border)', minWidth: 40, paddingTop: 10, paddingBottom: 10 }}
-                title={t('newQueryTab')}
+                ref={connectionMenuButtonRef}
+                type="button"
+                onClick={(e) => openConnectionMenu(e.currentTarget.getBoundingClientRect())}
+                className="shrink-0 flex items-center gap-2 border-l border-border/60 px-3 text-muted hover:text-text transition-colors"
+                style={{
+                  borderBottom: connectionMenuOpen ? `1px solid ${connectionColor}` : '1px solid var(--bt-border)',
+                  background: connectionMenuOpen ? hexToRgba(connectionColor, 0.08) : undefined,
+                  color: connectionMenuOpen ? connectionColor : undefined,
+                }}
               >
-                <Plus size={14} />
+                <span style={{ width: 7, height: 7, borderRadius: 2, flexShrink: 0, background: connectionColor, boxShadow: `0 0 5px ${hexToRgba(connectionColor, 0.8)}` }} />
+                <span className="text-[11px] uppercase tracking-[0.12em] truncate max-w-[180px]">
+                  {selectedConnection
+                    ? `${selectedConnection.engine.toUpperCase()} · ${selectedConnection.name}`
+                    : t('noActiveConnection')}
+                </span>
+                <ChevronDown size={11} className={`shrink-0 transition-transform ${connectionMenuOpen ? 'rotate-180' : ''}`} />
               </button>
             </div>
 
@@ -1334,45 +1350,18 @@ export default function QueryWorkspace() {
                 <Sparkles size={13} />
                 {t('explain')}
               </button>
-              <div className="ml-auto flex min-w-0 w-full sm:w-auto items-center gap-2">
-                {toolbarStatus ? (
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] transition-colors${toolbarStatus.pulse ? ' animate-pulse' : ''}`}
-                    style={{
-                      borderColor: hexToRgba(toolbarStatus.color, 0.35),
-                      background: hexToRgba(toolbarStatus.color, 0.10),
-                      color: toolbarStatus.color,
-                    }}
-                  >
-                    {toolbarStatus.label}
-                  </span>
-                ) : null}
-                <button
-                  ref={connectionMenuButtonRef}
-                  type="button"
-                  onClick={toggleConnectionMenu}
-                  className="flex w-full min-w-0 sm:min-w-[240px] items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors border-border/70 bg-background/22 hover:bg-border/30"
-                  style={connectionMenuOpen ? { borderColor: hexToRgba(connectionColor, 0.45) } : undefined}
+              {toolbarStatus ? (
+                <span
+                  className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] transition-colors${toolbarStatus.pulse ? ' animate-pulse' : ''}`}
+                  style={{
+                    borderColor: hexToRgba(toolbarStatus.color, 0.35),
+                    background: hexToRgba(toolbarStatus.color, 0.10),
+                    color: toolbarStatus.color,
+                  }}
                 >
-                  <span style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: connectionColor, boxShadow: `0 0 6px ${hexToRgba(connectionColor, 0.8)}` }} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[11px] uppercase tracking-[0.14em] text-muted">
-                      {selectedConnection ? `${selectedConnection.engine.toUpperCase()} - ${selectedConnection.name}` : t('noActiveConnection')}
-                    </div>
-                  </div>
-                  {schemaLabel ? (
-                    <span className="rounded-full border border-border/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted">
-                      {schemaLabel}
-                    </span>
-                  ) : null}
-                  {resolvedConnectionId && !isConnectionReady ? (
-                    <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-amber-200">
-                      {t('disconnected')}
-                    </span>
-                  ) : null}
-                  <ChevronDown size={14} className={`shrink-0 text-muted transition-transform ${connectionMenuOpen ? 'rotate-180' : ''}`} />
-                </button>
-              </div>
+                  {toolbarStatus.label}
+                </span>
+              ) : null}
             </div>
           </div>
 

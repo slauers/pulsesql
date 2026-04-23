@@ -26,7 +26,7 @@ export default function TitleBar({ connectionColor, connectionName, schema, isCo
   return (
     <div
       className="relative z-10 flex shrink-0 items-center border-b border-border"
-      style={{ height: 38, padding: '0 14px 0 76px', gap: 0 }}
+      style={{ height: 38, padding: '0 14px', gap: 0 }}
       data-tauri-drag-region
     >
       <PulseSQLMark size={18} color={connectionColor} />
