@@ -7,6 +7,7 @@ export interface SystemConfig {
     showAutocommitInStatusBar: boolean;
     resultPageSize: number;
     themeId: string;
+    monacoThemeName: string;
     density: 'compact' | 'comfortable';
     editorFontSize: number;
   };
@@ -72,7 +73,8 @@ export function defaultSystemConfig(): SystemConfig {
       showServerTimeInStatusBar: false,
       showAutocommitInStatusBar: true,
       resultPageSize: 100,
-      themeId: 'pulsesql-dark',
+      themeId: 'solarized-dark',
+      monacoThemeName: 'default',
       density: 'comfortable',
       editorFontSize: 14,
     },
@@ -111,6 +113,7 @@ function normalizeSystemConfig(input: unknown): SystemConfig {
       showAutocommitInStatusBar: ui.showAutocommitInStatusBar !== false,
       resultPageSize: normalizePageSize(ui.resultPageSize),
       themeId: normalizeThemeId(ui.themeId),
+      monacoThemeName: normalizeMonacoThemeName(ui.monacoThemeName),
       density: normalizeDensity(ui.density),
       editorFontSize: normalizeEditorFontSize(ui.editorFontSize),
     },
@@ -152,6 +155,7 @@ function readLegacyUiPreferences(defaults: SystemConfig['ui']): SystemConfig['ui
       showAutocommitInStatusBar: defaults.showAutocommitInStatusBar,
       resultPageSize: normalizePageSize(parsed.resultPageSize),
       themeId: defaults.themeId,
+      monacoThemeName: defaults.monacoThemeName,
       density: defaults.density,
       editorFontSize: defaults.editorFontSize,
     };
@@ -184,11 +188,15 @@ function normalizeLocale(value: unknown): 'pt-BR' | 'en-US' {
 }
 
 function normalizeThemeId(value: unknown) {
-  if (value === 'pulsesql-dark' || value === 'teal-grid') {
+  if (value === 'pulsesql-dark' || value === 'teal-grid' || value === 'solarized-dark') {
     return value;
   }
 
   return 'pulsesql-dark';
+}
+
+function normalizeMonacoThemeName(value: unknown) {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : 'default';
 }
 
 function normalizeDensity(value: unknown): 'compact' | 'comfortable' {

@@ -1,6 +1,5 @@
 import { Clock3, RefreshCcw, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { ConnectionConfig } from '../../../store/connections';
 import { useQueryHistory } from '../hooks/useQueryHistory';
 import type { QueryHistoryItem } from '../types';
 import QueryHistoryFilters from './QueryHistoryFilters';
@@ -10,7 +9,8 @@ import { translate, type AppLocale } from '../../../i18n';
 export default function QueryHistoryDrawer({
   open,
   locale,
-  connections,
+  activeConnectionId,
+  activeConnectionName,
   refreshToken,
   onClose,
   onOpenInNewTab,
@@ -19,7 +19,8 @@ export default function QueryHistoryDrawer({
 }: {
   open: boolean;
   locale: AppLocale;
-  connections: ConnectionConfig[];
+  activeConnectionId: string | null;
+  activeConnectionName?: string | null;
   refreshToken?: number;
   onClose: () => void;
   onOpenInNewTab: (item: QueryHistoryItem) => void;
@@ -27,7 +28,7 @@ export default function QueryHistoryDrawer({
   onRunAgain: (item: QueryHistoryItem) => void;
 }) {
   const { items, loading, error, filter, updateFilter, refresh, removeItem, clearAll, setStatus } =
-    useQueryHistory(open);
+    useQueryHistory(open, activeConnectionId);
   const [drawerWidth, setDrawerWidth] = useState(430);
   const [resizing, setResizing] = useState(false);
 
@@ -76,7 +77,7 @@ export default function QueryHistoryDrawer({
     }
 
     void refresh();
-  }, [open, refreshToken]);
+  }, [open, refreshToken, activeConnectionId]);
 
   return (
     <>
@@ -101,7 +102,9 @@ export default function QueryHistoryDrawer({
             <Clock3 size={16} className="text-primary" />
             <div>
               <div className="text-sm font-semibold text-text">{translate(locale, 'queryHistory')}</div>
-              <div className="text-[11px] text-muted">{translate(locale, 'recentManualExecutions')}</div>
+              <div className="text-[11px] text-muted">
+                {activeConnectionName ?? translate(locale, 'noActiveConnection')}
+              </div>
             </div>
           </div>
 
@@ -118,9 +121,7 @@ export default function QueryHistoryDrawer({
         <QueryHistoryFilters
           locale={locale}
           filter={filter}
-          connections={connections}
           onQueryChange={(value) => updateFilter({ query: value })}
-          onConnectionChange={(value) => updateFilter({ connectionId: value || undefined })}
           onStatusChange={setStatus}
         />
 

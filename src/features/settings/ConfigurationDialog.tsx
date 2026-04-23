@@ -8,7 +8,7 @@ import { useConnectionsStore } from '../../store/connections';
 import { readSystemConfig, type SystemConfig } from '../../store/systemConfig';
 import { APP_THEMES } from '../../themes';
 import { APP_LOCALES, translate } from '../../i18n';
-import { ensureMonacoThemes, resolveMonacoTheme } from '../../lib/monaco-theme';
+import { ensureConfiguredMonacoTheme, resolveConfiguredMonacoTheme } from '../../lib/monaco-theme';
 
 type ConfigurationTab = 'form' | 'json';
 
@@ -25,6 +25,7 @@ export default function ConfigurationDialog({
   const locale = useUiPreferencesStore((state) => state.locale);
   const resultPageSize = useUiPreferencesStore((state) => state.resultPageSize);
   const themeId = useUiPreferencesStore((state) => state.themeId);
+  const monacoThemeName = useUiPreferencesStore((state) => state.monacoThemeName);
   const density = useUiPreferencesStore((state) => state.density);
   const editorFontSize = useUiPreferencesStore((state) => state.editorFontSize);
   const sidebarWidth = useUiPreferencesStore((state) => state.sidebarWidth);
@@ -39,6 +40,7 @@ export default function ConfigurationDialog({
   const setLocale = useUiPreferencesStore((state) => state.setLocale);
   const setResultPageSize = useUiPreferencesStore((state) => state.setResultPageSize);
   const setThemeId = useUiPreferencesStore((state) => state.setThemeId);
+  const setMonacoThemeName = useUiPreferencesStore((state) => state.setMonacoThemeName);
   const setDensity = useUiPreferencesStore((state) => state.setDensity);
   const setEditorFontSize = useUiPreferencesStore((state) => state.setEditorFontSize);
   const setSidebarWidth = useUiPreferencesStore((state) => state.setSidebarWidth);
@@ -61,6 +63,7 @@ export default function ConfigurationDialog({
         showAutocommitInStatusBar,
         resultPageSize,
         themeId,
+        monacoThemeName,
         density,
         editorFontSize,
       },
@@ -84,6 +87,7 @@ export default function ConfigurationDialog({
       density,
       editorFontSize,
       locale,
+      monacoThemeName,
       favoriteConnectionId,
       logsExpandedByDefault,
       newQueryTabShortcut,
@@ -132,6 +136,7 @@ export default function ConfigurationDialog({
     setShowAutocommitInStatusBar(nextConfig.ui.showAutocommitInStatusBar);
     setResultPageSize(nextConfig.ui.resultPageSize);
     setThemeId(nextConfig.ui.themeId);
+    setMonacoThemeName(nextConfig.ui.monacoThemeName);
     setDensity(nextConfig.ui.density);
     setEditorFontSize(nextConfig.ui.editorFontSize);
     setSidebarWidth(nextConfig.workbench.sidebarWidth);
@@ -315,6 +320,26 @@ export default function ConfigurationDialog({
                           label: theme.label,
                         }))}
                         className="w-full"
+                      />
+                    </label>
+
+                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
+                      <div className="text-sm text-text">{translate(locale, 'monacoThemeName')}</div>
+                      <div className="mb-2 text-xs text-muted">{translate(locale, 'monacoThemeNameDescription')}</div>
+                      <input
+                        value={draft.ui.monacoThemeName}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            ui: {
+                              ...current.ui,
+                              monacoThemeName: event.target.value,
+                            },
+                          }))
+                        }
+                        placeholder="default"
+                        spellCheck={false}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-text outline-none focus:border-primary"
                       />
                     </label>
 
@@ -612,14 +637,14 @@ export default function ConfigurationDialog({
                 <Editor
                   height="100%"
                   language="json"
-                  theme={resolveMonacoTheme(themeId)}
+                  theme={resolveConfiguredMonacoTheme(monacoThemeName, themeId)}
                   value={jsonDraft}
                   onChange={(value) => setJsonDraft(value ?? '')}
                   beforeMount={(monaco) => {
-                    ensureMonacoThemes(monaco);
+                    ensureConfiguredMonacoTheme(monaco, monacoThemeName, themeId);
                   }}
                   options={{
-                    minimap: { enabled: false },
+                    minimap: { enabled: true },
                     fontSize: 13,
                     fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
                     scrollBeyondLastLine: false,
@@ -678,6 +703,7 @@ function normalizeJsonConfig(input: unknown): SystemConfig {
       showAutocommitInStatusBar: ui.showAutocommitInStatusBar !== false,
       resultPageSize: normalizePageSize(ui.resultPageSize),
       themeId: normalizeThemeId(ui.themeId),
+      monacoThemeName: normalizeMonacoThemeName(ui.monacoThemeName),
       density: normalizeDensity(ui.density),
       editorFontSize: normalizeEditorFontSize(ui.editorFontSize),
     },
@@ -710,6 +736,10 @@ function normalizePageSize(value: unknown) {
 
 function normalizeThemeId(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0 ? value : 'pulsesql-dark';
+}
+
+function normalizeMonacoThemeName(value: unknown) {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : 'default';
 }
 
 function normalizeDensity(value: unknown): 'compact' | 'comfortable' {

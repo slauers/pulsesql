@@ -13,6 +13,7 @@ interface UiPreferencesState {
   semanticBackgroundVersion: number;
   resultPageSize: number;
   themeId: string;
+  monacoThemeName: string;
   density: 'compact' | 'comfortable';
   editorFontSize: number;
   sidebarWidth: number;
@@ -28,6 +29,7 @@ interface UiPreferencesState {
   setSemanticBackgroundState: (state: SemanticBackgroundState) => void;
   setResultPageSize: (pageSize: number) => void;
   setThemeId: (themeId: string) => void;
+  setMonacoThemeName: (themeName: string) => void;
   setDensity: (density: 'compact' | 'comfortable') => void;
   setEditorFontSize: (fontSize: number) => void;
   setSidebarWidth: (width: number) => void;
@@ -47,6 +49,7 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
   showAutocommitInStatusBar: systemConfig.ui.showAutocommitInStatusBar,
   resultPageSize: systemConfig.ui.resultPageSize,
   themeId: systemConfig.ui.themeId,
+  monacoThemeName: systemConfig.ui.monacoThemeName,
   density: systemConfig.ui.density,
   editorFontSize: systemConfig.ui.editorFontSize,
   sidebarWidth: systemConfig.workbench.sidebarWidth,
@@ -128,6 +131,18 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
         },
       }));
       return { themeId };
+    }),
+  setMonacoThemeName: (themeName) =>
+    set(() => {
+      const monacoThemeName = normalizeMonacoThemeName(themeName);
+      updateSystemConfig((current) => ({
+        ...current,
+        ui: {
+          ...current.ui,
+          monacoThemeName,
+        },
+      }));
+      return { monacoThemeName };
     }),
   setDensity: (density) =>
     set(() => {
@@ -230,6 +245,10 @@ function normalizePageSize(value: unknown) {
   }
 
   return 100;
+}
+
+function normalizeMonacoThemeName(value: unknown) {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : 'default';
 }
 
 function normalizeEditorFontSize(value: unknown) {

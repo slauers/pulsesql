@@ -16,6 +16,7 @@ interface QueriesState {
   updateTabContent: (id: string, content: string) => void;
   replaceActiveTabContent: (content: string, title?: string, connectionId?: string | null) => string | null;
   setTabConnection: (id: string, connectionId: string | null) => void;
+  reorderTab: (fromIndex: number, toIndex: number) => void;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   requestTabExecution: (id: string) => void;
@@ -109,6 +110,25 @@ export const useQueriesStore = create<QueriesState>((set) => ({
       tabs: state.tabs.map((tab) => (tab.id === id ? { ...tab, connectionId } : tab)),
       activeTabId: state.activeTabId,
     };
+    writeQueriesState(next);
+    return next;
+  }),
+
+  reorderTab: (fromIndex, toIndex) => set((state) => {
+    if (
+      fromIndex === toIndex ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= state.tabs.length ||
+      toIndex >= state.tabs.length
+    ) {
+      return state;
+    }
+
+    const tabs = [...state.tabs];
+    const [moved] = tabs.splice(fromIndex, 1);
+    tabs.splice(toIndex, 0, moved);
+    const next = { tabs, activeTabId: state.activeTabId };
     writeQueriesState(next);
     return next;
   }),
