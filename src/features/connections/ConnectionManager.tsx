@@ -684,7 +684,8 @@ export default function ConnectionManager() {
                 </div>
               ) : (
                 <>
-                  <div className="shrink-0 space-y-1.5">
+                  <div className="shrink-0 overflow-y-auto max-h-[calc(100%_-_148px)]">
+                    <div className="space-y-1.5">
                     {connections.map((conn) => {
                       const connectionState = resolveConnectionState(conn.id);
                       const isActiveCard = activeConnectionId === conn.id;
@@ -807,22 +808,23 @@ export default function ConnectionManager() {
                         </button>
                       );
                     })}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingConnectionId(null);
+                        setShowForm(true);
+                      }}
+                      className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 px-4 py-3 text-sm text-muted transition-colors hover:border-primary/45 hover:bg-primary/6 hover:text-text"
+                      title={t('newConnection')}
+                    >
+                      <Plus size={14} />
+                      {t('newConnection')}
+                    </button>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingConnectionId(null);
-                      setShowForm(true);
-                    }}
-                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 px-4 py-3 text-sm text-muted transition-colors hover:border-primary/45 hover:bg-primary/6 hover:text-text"
-                    title={t('newConnection')}
-                  >
-                    <Plus size={14} />
-                    {t('newConnection')}
-                  </button>
-
-                  <div className="mt-3 min-h-0 flex-1 overflow-hidden rounded-xl border border-border/70 bg-background/18">
+                  <div className="mt-3 min-h-[120px] flex-1 overflow-hidden rounded-xl border border-border/70 bg-background/18">
                     {activeConnection ? (
                       <DatabaseExplorer
                         connId={activeConnection.id}

@@ -1436,20 +1436,25 @@ export default function QueryWorkspace() {
                   }}
                   onMount={(editor, monaco) => {
                     editorRef.current = editor;
-                    // Tauri WKWebView blocks navigator.clipboard.readText(); intercept native paste events directly
-                    const domNode = editor.getDomNode();
-                    if (domNode) {
-                      domNode.addEventListener('paste', (e: ClipboardEvent) => {
-                        const text = e.clipboardData?.getData('text/plain');
-                        if (!text) return;
-                        e.stopPropagation();
-                        e.preventDefault();
-                        const sel = editor.getSelection();
-                        const model = editor.getModel();
-                        if (!model) return;
-                        editor.executeEdits('paste', [{ range: sel ?? model.getFullModelRange(), text, forceMoveMarkers: true }]);
-                      }, true);
-                    }
+                    // Tauri WKWebView: navigator.clipboard.readText() fails outside user-gesture context.
+                    // Override Cmd+V with a sync execCommand approach via a temp textarea.
+                    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
+                      const sel = editor.getSelection();
+                      const model = editor.getModel();
+                      if (!sel || !model) return;
+                      const ta = document.createElement('textarea');
+                      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;';
+                      document.body.appendChild(ta);
+                      ta.focus();
+                      document.execCommand('paste');
+                      const text = ta.value;
+                      ta.remove();
+                      editor.focus();
+                      if (!text) return;
+                      editor.pushUndoStop();
+                      editor.executeEdits('paste', [{ range: sel, text, forceMoveMarkers: true }]);
+                      editor.pushUndoStop();
+                    });
                     autocompleteDisposableRef.current?.dispose();
                     autocompleteDisposableRef.current = registerSqlAutocomplete(monaco, () => autocompleteContextRef.current);
                     lastCursorPositionRef.current = editor.getPosition();
