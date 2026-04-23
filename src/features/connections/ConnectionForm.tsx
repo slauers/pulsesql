@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { CheckCircle, Eye, EyeOff, LoaderCircle, XCircle } from 'lucide-react';
+import { CheckCircle, Eye, EyeOff, LoaderCircle } from 'lucide-react';
 import { createDefaultConnectionForm, ENGINE_DEFINITIONS } from './connection-engines';
 import { CONNECTION_COLOR_PALETTE, ConnectionConfig, DatabaseEngine, OracleConnectionType, PostgresSslMode, SshAuthMethod, useConnectionsStore } from '../../store/connections';
 import AppSelect from '../../components/ui/AppSelect';
@@ -34,6 +34,7 @@ export default function ConnectionForm({
   const [showImportPanel, setShowImportPanel] = useState(false);
   const [connectionString, setConnectionString] = useState('');
   const [importMessage, setImportMessage] = useState('');
+  const colorInputRef = useRef<HTMLInputElement | null>(null);
   const [touchedDefaultFields, setTouchedDefaultFields] = useState<Record<DefaultableField, boolean>>(() =>
     initialConnection
       ? {
@@ -178,10 +179,10 @@ export default function ConnectionForm({
   };
 
   return (
-    <div className="h-full overflow-auto p-4 md:p-8">
-      <div className="max-w-4xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-blue-300">
+    <div className="h-full overflow-auto p-3 md:p-4">
+      <div className="mx-auto max-w-3xl">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="bg-gradient-to-r from-primary to-blue-300 bg-clip-text text-xl font-bold text-transparent">
           {initialConnection ? 'Edit Connection' : 'New Connection'}
         </h2>
         <div className="flex items-center gap-2">
@@ -199,15 +200,15 @@ export default function ConnectionForm({
       </div>
 
       {showImportPanel ? (
-        <div className="mb-5 rounded-lg border border-border/70 bg-surface/65 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
+        <div className="mb-3 rounded-lg border border-border/70 bg-surface/65 p-3 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
           <div className="mb-2 text-sm font-medium text-text">Import Connection String</div>
           <textarea
             value={connectionString}
             onChange={(event) => setConnectionString(event.target.value)}
             placeholder="postgresql://postgres:password@host:5432/postgres?sslmode=require"
-            className="min-h-24 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono text-text outline-none transition-colors focus:border-primary"
+            className="min-h-16 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono text-text outline-none transition-colors focus:border-primary"
           />
-          <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="mt-2 flex items-center justify-between gap-3">
             <div className="text-xs text-muted">
               Suporta `postgres://` e `postgresql://`. Para Supabase, use `sslmode=require`.
             </div>
@@ -223,36 +224,39 @@ export default function ConnectionForm({
         </div>
       ) : null}
 
-      <form onSubmit={handleSubmit} className="space-y-5 glass-panel p-4 md:p-6 rounded-lg border border-border shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <form onSubmit={handleSubmit} className="glass-panel space-y-3 rounded-lg border border-border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.35)] md:p-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <label className="block text-sm text-muted mb-1">Connection Name</label>
             <div className="flex items-center gap-2">
               <input
                 value={formData.name}
                 onChange={(event) => updateField('name', event.target.value)}
-                className="flex-1 bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
                 placeholder="Production DB"
                 required
               />
               <div className="relative flex-shrink-0">
-                <div
-                  className="w-8 h-8 rounded-md border-2 border-border cursor-pointer flex items-center justify-center overflow-hidden"
+                <button
+                  type="button"
+                  onClick={() => colorInputRef.current?.click()}
+                  className="flex h-8 w-8 items-center justify-center rounded-md border-2 border-border transition-transform hover:scale-105"
                   style={{ borderColor: formData.color ?? '#47C4E8', background: (formData.color ?? '#47C4E8') + '22' }}
                   title="Connection color"
                 >
-                  <input
-                    type="color"
-                    value={formData.color ?? '#47C4E8'}
-                    onChange={(e) => updateField('color', e.target.value)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    style={{ width: '200%', height: '200%', transform: 'translate(-25%, -25%)' }}
-                  />
                   <div className="w-3.5 h-3.5 rounded-sm" style={{ background: formData.color ?? '#47C4E8' }} />
-                </div>
+                </button>
+                <input
+                  ref={colorInputRef}
+                  type="color"
+                  value={formData.color ?? '#47C4E8'}
+                  onChange={(e) => updateField('color', e.target.value)}
+                  className="sr-only"
+                  tabIndex={-1}
+                />
               </div>
             </div>
-            <div className="flex gap-1.5 mt-2">
+            <div className="mt-2 flex gap-1.5">
               {CONNECTION_COLOR_PALETTE.map((c) => (
                 <button
                   key={c}
@@ -282,13 +286,13 @@ export default function ConnectionForm({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="md:col-span-2">
             <label className="block text-sm text-muted mb-1">Host</label>
             <input
               value={formData.host}
               onChange={(event) => updateField('host', event.target.value)}
-              className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
               placeholder={engineDefinition.placeholderHost}
               required
             />
@@ -304,16 +308,16 @@ export default function ConnectionForm({
                 setFormData((current) => ({ ...current, port: val === '' ? undefined : Number(val) }));
               }}
               placeholder={String(engineDefinition.defaultPort)}
-              className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
               required
             />
           </div>
         </div>
 
         {currentEngine === 'oracle' ? (
-          <div className="space-y-4">
+          <div className="space-y-3">
             <JdkSetupBanner />
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <div className="md:col-span-2">
                 <label className="block text-sm text-muted mb-1">
                   {(formData.oracleConnectionType ?? 'serviceName') === 'sid' ? 'SID' : engineDefinition.databaseLabel}
@@ -321,7 +325,7 @@ export default function ConnectionForm({
                 <input
                   value={formData.database}
                   onChange={(event) => updateField('database', event.target.value)}
-                  className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
                   placeholder={engineDefinition.placeholderDatabase}
                   required
                 />
@@ -344,7 +348,7 @@ export default function ConnectionForm({
               <textarea
                 value={formData.oracleDriverProperties ?? ''}
                 onChange={(event) => updateField('oracleDriverProperties', event.target.value)}
-                className="min-h-32 w-full resize-y bg-background border border-border rounded px-3 py-2 text-sm font-mono focus:border-primary focus:outline-none"
+                className="min-h-20 w-full resize-y rounded border border-border bg-background px-3 py-2 text-sm font-mono focus:border-primary focus:outline-none"
                 placeholder={ORACLE_DRIVER_PROPERTIES_PLACEHOLDER}
               />
               <p className="mt-1 text-xs text-muted">
@@ -358,7 +362,7 @@ export default function ConnectionForm({
             <input
               value={formData.database}
               onChange={(event) => updateField('database', event.target.value)}
-              className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
               placeholder={engineDefinition.placeholderDatabase}
               required
             />
@@ -380,13 +384,13 @@ export default function ConnectionForm({
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-border/50 pt-4">
+        <div className="grid grid-cols-1 gap-3 border-t border-border/50 pt-3 md:grid-cols-2">
           <div>
             <label className="block text-sm text-muted mb-1">User</label>
             <input
               value={formData.user}
               onChange={(event) => updateField('user', event.target.value)}
-              className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
               required
             />
           </div>
@@ -397,7 +401,7 @@ export default function ConnectionForm({
                 type={showMainPassword ? 'text' : 'password'}
                 value={formData.password}
                 onChange={(event) => updateField('password', event.target.value)}
-                className="w-full bg-background border border-border rounded px-3 py-2 pr-10 text-sm focus:border-primary focus:outline-none"
+                className="w-full rounded border border-border bg-background px-3 py-1.5 pr-10 text-sm focus:border-primary focus:outline-none"
               />
               <button
                 type="button"
@@ -411,30 +415,7 @@ export default function ConnectionForm({
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 rounded-lg border border-border/60 bg-background/35 px-3 py-2">
-          {testState !== 'idle' ? (
-            <div className="flex items-center gap-2 text-xs">
-              {testState === 'testing' ? (
-                <>
-                  <LoaderCircle size={14} className="animate-spin text-primary" />
-                  <span className="text-primary/80">Testing...</span>
-                </>
-              ) : testState === 'success' ? (
-                <>
-                  <CheckCircle size={14} className="text-emerald-400" />
-                  <span className="text-emerald-300">Connection OK</span>
-                </>
-              ) : (
-                <>
-                  <XCircle size={14} className="text-red-400" />
-                  <span className="text-red-300">Connection failed</span>
-                </>
-              )}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label className="block text-sm text-muted mb-1">Connect Timeout (seconds)</label>
             <input
@@ -443,11 +424,11 @@ export default function ConnectionForm({
               max={120}
               value={formData.connectTimeoutSeconds ?? 10}
               onChange={(event) => updateField('connectTimeoutSeconds', Number(event.target.value))}
-              className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
             />
           </div>
           <div className="flex items-end">
-            <label className="flex items-center gap-2 cursor-pointer select-none rounded border border-border/70 bg-background/40 px-3 py-2.5">
+            <label className="flex w-full cursor-pointer select-none items-center gap-2 rounded border border-border/70 bg-background/40 px-3 py-2">
               <input
                 type="checkbox"
                 checked={Boolean(formData.autoReconnect ?? true)}
@@ -457,29 +438,28 @@ export default function ConnectionForm({
               <span className="text-sm text-text">Auto-reconnect on open failure</span>
             </label>
           </div>
-        </div>
-
-        <div className="pt-2">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={sshEnabled}
-              onChange={(event) => updateSshField('enabled', event.target.checked)}
-              className="accent-primary"
-            />
-            <span className="text-sm font-medium text-emerald-400">Use SSH Tunnel</span>
-          </label>
+          <div className="flex items-end">
+            <label className="flex w-full cursor-pointer select-none items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">
+              <input
+                type="checkbox"
+                checked={sshEnabled}
+                onChange={(event) => updateSshField('enabled', event.target.checked)}
+                className="accent-primary"
+              />
+              <span className="text-sm font-medium text-emerald-400">Use SSH Tunnel</span>
+            </label>
+          </div>
         </div>
 
         {sshEnabled && (
-          <div className="bg-surface/50 p-4 rounded border border-emerald-500/30 space-y-4 animate-in fade-in slide-in-from-top-2">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="animate-in fade-in slide-in-from-top-2 space-y-3 rounded border border-emerald-500/30 bg-surface/50 p-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
               <div className="md:col-span-3">
                 <label className="block text-sm text-emerald-400/80 mb-1">SSH Host</label>
                 <input
                   value={formData.ssh?.host}
                   onChange={(event) => updateSshField('host', event.target.value)}
-                  className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
                   placeholder="203.0.113.50"
                   required={sshEnabled}
                 />
@@ -490,19 +470,19 @@ export default function ConnectionForm({
                   type="number"
                   value={formData.ssh?.port}
                   onChange={(event) => updateSshField('port', Number(event.target.value))}
-                  className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
                   required={sshEnabled}
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
                 <label className="block text-sm text-emerald-400/80 mb-1">SSH User</label>
                 <input
                   value={formData.ssh?.user}
                   onChange={(event) => updateSshField('user', event.target.value)}
-                  className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
                   required={sshEnabled}
                 />
               </div>
@@ -528,7 +508,7 @@ export default function ConnectionForm({
                     type={showSshPassword ? 'text' : 'password'}
                     value={formData.ssh?.password}
                     onChange={(event) => updateSshField('password', event.target.value)}
-                    className="w-full bg-background border border-border rounded px-3 py-2 pr-10 text-sm focus:border-emerald-500 focus:outline-none"
+                    className="w-full rounded border border-border bg-background px-3 py-1.5 pr-10 text-sm focus:border-emerald-500 focus:outline-none"
                     placeholder="Optional"
                   />
                   <button
@@ -542,13 +522,13 @@ export default function ConnectionForm({
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
                   <label className="block text-sm text-emerald-400/80 mb-1">Private Key Path</label>
                   <input
                     value={formData.ssh?.privateKeyPath}
                     onChange={(event) => updateSshField('privateKeyPath', event.target.value)}
-                    className="w-full bg-background border border-border rounded px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+                    className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
                     placeholder="~/.ssh/id_rsa"
                     required={sshAuthMethod === 'privateKey'}
                   />
@@ -560,7 +540,7 @@ export default function ConnectionForm({
                       type={showPassphrase ? 'text' : 'password'}
                       value={formData.ssh?.passphrase}
                       onChange={(event) => updateSshField('passphrase', event.target.value)}
-                      className="w-full bg-background border border-border rounded px-3 py-2 pr-10 text-sm focus:border-emerald-500 focus:outline-none"
+                      className="w-full rounded border border-border bg-background px-3 py-1.5 pr-10 text-sm focus:border-emerald-500 focus:outline-none"
                       placeholder="Optional"
                     />
                     <button
@@ -592,7 +572,7 @@ export default function ConnectionForm({
           </div>
         ) : null}
 
-        <div className="pt-4 flex justify-end gap-3">
+        <div className="flex justify-end gap-3 pt-2">
           <button
             type="button"
             onClick={() => void handleTestConnection()}
@@ -668,6 +648,7 @@ function buildPayload(formData: Partial<ConnectionConfig>): ConnectionConfig | n
     oracleDriverProperties:
       formData.engine === 'oracle' ? formData.oracleDriverProperties?.trim() || undefined : undefined,
     preferredSchema: formData.preferredSchema?.trim() || undefined,
+    color: formData.color?.trim() || undefined,
     ssh,
   };
 }

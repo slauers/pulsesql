@@ -1,15 +1,14 @@
 import { startTransition, useDeferredValue, useEffect, useState } from 'react';
-import { clearQueryHistory, deleteQueryHistoryItem, listQueryHistory } from '../services/historyService';
+import { deleteQueryHistoryItem, listQueryHistory } from '../services/historyService';
 import type { QueryHistoryFilter, QueryHistoryItem, QueryHistoryStatus } from '../types';
 
 const DEFAULT_FILTER: QueryHistoryFilter = {
   query: '',
-  connectionId: '',
   limit: 100,
   offset: 0,
 };
 
-export function useQueryHistory(open: boolean) {
+export function useQueryHistory(open: boolean, connectionId?: string | null) {
   const [items, setItems] = useState<QueryHistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,6 +16,15 @@ export function useQueryHistory(open: boolean) {
   const deferredQuery = useDeferredValue(filter.query ?? '');
 
   const load = async (nextFilter: QueryHistoryFilter) => {
+    if (!connectionId) {
+      startTransition(() => {
+        setItems([]);
+      });
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -24,7 +32,7 @@ export function useQueryHistory(open: boolean) {
       const historyItems = await listQueryHistory({
         ...nextFilter,
         query: deferredQuery.trim() || undefined,
-        connectionId: nextFilter.connectionId || undefined,
+        connectionId,
         status: nextFilter.status || undefined,
       });
       startTransition(() => {
@@ -43,7 +51,7 @@ export function useQueryHistory(open: boolean) {
     }
 
     void load(filter);
-  }, [open, filter.connectionId, filter.status, filter.limit, filter.offset, deferredQuery]);
+  }, [open, connectionId, filter.status, filter.limit, filter.offset, deferredQuery]);
 
   const updateFilter = (partial: Partial<QueryHistoryFilter>) => {
     setFilter((current) => ({ ...current, ...partial, offset: 0 }));
@@ -59,7 +67,11 @@ export function useQueryHistory(open: boolean) {
   };
 
   const clearAll = async () => {
-    await clearQueryHistory();
+    if (!items.length) {
+      return;
+    }
+
+    await Promise.all(items.map((item) => deleteQueryHistoryItem(item.id)));
     await refresh();
   };
 

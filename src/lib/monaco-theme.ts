@@ -1,4 +1,7 @@
 import type * as Monaco from 'monaco-editor';
+import { getThemeById, type AppThemeDefinition } from '../themes';
+
+const AUTO_MONACO_THEME_ID = 'pulsesql-auto';
 
 export function ensureMonacoThemes(monaco: typeof Monaco) {
   monaco.editor.defineTheme('pulsesql-dark', {
@@ -64,12 +67,220 @@ export function ensureMonacoThemes(monaco: typeof Monaco) {
       'editorSuggestWidgetStatus.foreground': '#8EA6B0',
     },
   });
+
+  monaco.editor.defineTheme('solarized-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'keyword', foreground: '859900' },
+      { token: 'number', foreground: 'D33682' },
+      { token: 'string', foreground: '2AA198' },
+      { token: 'comment', foreground: '586E75', fontStyle: 'italic' },
+      { token: 'delimiter', foreground: '93A1A1' },
+      { token: 'operator', foreground: '839496' },
+      { token: 'identifier', foreground: 'D2DEE0' },
+    ],
+    colors: {
+      'editor.background': '#002B36',
+      'editor.foreground': '#D2DEE0',
+      'editor.lineHighlightBackground': '#073642',
+      'editorCursor.foreground': '#93A1A1',
+      'editorLineNumber.foreground': '#586E75',
+      'editorLineNumber.activeForeground': '#93A1A1',
+      'editor.selectionBackground': '#124B56',
+      'editor.inactiveSelectionBackground': '#073642',
+      'editorIndentGuide.background1': '#073642',
+      'editorIndentGuide.activeBackground1': '#586E75',
+      'editorOverviewRuler.border': '#073642',
+      'minimap.background': '#002B36',
+      'minimapSlider.background': '#586E7544',
+      'minimapSlider.hoverBackground': '#586E7566',
+      'minimapSlider.activeBackground': '#586E7588',
+      'scrollbarSlider.background': '#586E7544',
+      'scrollbarSlider.hoverBackground': '#586E7566',
+      'scrollbarSlider.activeBackground': '#586E7588',
+      'editorSuggestWidget.background': '#073642',
+      'editorSuggestWidget.border': '#124B56',
+      'editorSuggestWidget.foreground': '#D2DEE0',
+      'editorSuggestWidget.highlightForeground': '#B58900',
+      'editorSuggestWidget.selectedBackground': '#124B56',
+      'editorSuggestWidget.selectedForeground': '#FDF6E3',
+      'editorSuggestWidget.selectedIconForeground': '#2AA198',
+      'editorSuggestWidgetStatus.foreground': '#93A1A1',
+    },
+  });
+
+  monaco.editor.defineTheme('monokai', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'keyword', foreground: 'F92672' },
+      { token: 'number', foreground: 'AE81FF' },
+      { token: 'string', foreground: 'E6DB74' },
+      { token: 'comment', foreground: '75715E', fontStyle: 'italic' },
+      { token: 'delimiter', foreground: 'F8F8F2' },
+      { token: 'operator', foreground: 'F92672' },
+      { token: 'identifier', foreground: 'F8F8F2' },
+    ],
+    colors: {
+      'editor.background': '#272822',
+      'editor.foreground': '#F8F8F2',
+      'editor.lineHighlightBackground': '#3E3D32',
+      'editorCursor.foreground': '#F8F8F0',
+      'editorLineNumber.foreground': '#90908A',
+      'editorLineNumber.activeForeground': '#F8F8F2',
+      'editor.selectionBackground': '#49483E',
+      'editor.inactiveSelectionBackground': '#3E3D32',
+      'editorIndentGuide.background1': '#3B3A32',
+      'editorIndentGuide.activeBackground1': '#5A594D',
+      'editorOverviewRuler.border': '#272822',
+      'minimap.background': '#272822',
+      'minimapSlider.background': '#75715E44',
+      'minimapSlider.hoverBackground': '#75715E66',
+      'minimapSlider.activeBackground': '#75715E88',
+      'scrollbarSlider.background': '#75715E44',
+      'scrollbarSlider.hoverBackground': '#75715E66',
+      'scrollbarSlider.activeBackground': '#75715E88',
+      'editorSuggestWidget.background': '#3E3D32',
+      'editorSuggestWidget.border': '#49483E',
+      'editorSuggestWidget.foreground': '#F8F8F2',
+      'editorSuggestWidget.highlightForeground': '#A6E22E',
+      'editorSuggestWidget.selectedBackground': '#49483E',
+      'editorSuggestWidget.selectedForeground': '#FFFFFF',
+      'editorSuggestWidget.selectedIconForeground': '#66D9EF',
+      'editorSuggestWidgetStatus.foreground': '#CFCFC2',
+    },
+  });
 }
 
 export function resolveMonacoTheme(themeId: string) {
+  const normalizedThemeId = themeId.trim();
+
+  if (!normalizedThemeId) {
+    return 'solarized-dark';
+  }
+
+  if (themeId === 'solarized-dark') {
+    return 'solarized-dark';
+  }
+
   if (themeId === 'teal-grid') {
     return 'teal-grid';
   }
 
-  return 'pulsesql-dark';
+  if (themeId === 'pulsesql-dark') {
+    return 'pulsesql-dark';
+  }
+
+  return normalizedThemeId;
+}
+
+export function resolveConfiguredMonacoTheme(monacoThemeName: string, appThemeId: string) {
+  const normalizedThemeName = monacoThemeName.trim();
+
+  if (normalizedThemeName === 'auto') {
+    return AUTO_MONACO_THEME_ID;
+  }
+
+  if (normalizedThemeName === 'default') {
+    return resolveMonacoTheme(appThemeId);
+  }
+
+  return resolveMonacoTheme(normalizedThemeName);
+}
+
+export function ensureConfiguredMonacoTheme(
+  monaco: typeof Monaco,
+  monacoThemeName: string,
+  appThemeId: string,
+) {
+  ensureMonacoThemes(monaco);
+
+  if (monacoThemeName.trim() === 'auto') {
+    defineAutoMonacoTheme(monaco, getThemeById(appThemeId));
+  }
+
+  return resolveConfiguredMonacoTheme(monacoThemeName, appThemeId);
+}
+
+function defineAutoMonacoTheme(monaco: typeof Monaco, appTheme: AppThemeDefinition) {
+  const { background, surface, border, primary, text, muted } = appTheme.colors;
+  const accentSoft = mixHex(primary, background, 0.62);
+  const accentFaint = mixHex(primary, background, 0.2);
+  const surfaceRaised = mixHex(surface, background, 0.76);
+
+  monaco.editor.defineTheme(AUTO_MONACO_THEME_ID, {
+    base: appTheme.mode === 'light' ? 'vs' : 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'keyword', foreground: stripHash(accentSoft) },
+      { token: 'number', foreground: stripHash(mixHex(primary, text, 0.38)) },
+      { token: 'string', foreground: stripHash(mixHex(primary, text, 0.46)) },
+      { token: 'comment', foreground: stripHash(muted), fontStyle: 'italic' },
+      { token: 'delimiter', foreground: stripHash(mixHex(muted, text, 0.45)) },
+      { token: 'operator', foreground: stripHash(accentSoft) },
+      { token: 'identifier', foreground: stripHash(text) },
+    ],
+    colors: {
+      'editor.background': background,
+      'editor.foreground': text,
+      'editor.lineHighlightBackground': mixHex(primary, background, 0.11),
+      'editorCursor.foreground': accentSoft,
+      'editorLineNumber.foreground': muted,
+      'editorLineNumber.activeForeground': text,
+      'editor.selectionBackground': mixHex(primary, background, 0.26),
+      'editor.inactiveSelectionBackground': mixHex(primary, background, 0.14),
+      'editorIndentGuide.background1': mixHex(border, background, 0.62),
+      'editorIndentGuide.activeBackground1': mixHex(primary, background, 0.32),
+      'editorOverviewRuler.border': border,
+      'minimap.background': background,
+      'minimapSlider.background': `#${stripHash(accentFaint)}66`,
+      'minimapSlider.hoverBackground': `#${stripHash(accentFaint)}88`,
+      'minimapSlider.activeBackground': `#${stripHash(accentFaint)}AA`,
+      'scrollbarSlider.background': `#${stripHash(accentFaint)}66`,
+      'scrollbarSlider.hoverBackground': `#${stripHash(accentFaint)}88`,
+      'scrollbarSlider.activeBackground': `#${stripHash(accentFaint)}AA`,
+      'editorSuggestWidget.background': surfaceRaised,
+      'editorSuggestWidget.border': border,
+      'editorSuggestWidget.foreground': text,
+      'editorSuggestWidget.highlightForeground': accentSoft,
+      'editorSuggestWidget.selectedBackground': mixHex(primary, background, 0.18),
+      'editorSuggestWidget.selectedForeground': text,
+      'editorSuggestWidget.selectedIconForeground': accentSoft,
+      'editorSuggestWidgetStatus.foreground': muted,
+    },
+  });
+}
+
+function mixHex(foreground: string, background: string, amount: number) {
+  const fg = parseHexColor(foreground);
+  const bg = parseHexColor(background);
+
+  if (!fg || !bg) {
+    return foreground;
+  }
+
+  const clampAmount = Math.min(1, Math.max(0, amount));
+  const mixed = fg.map((channel, index) =>
+    Math.round(channel * clampAmount + bg[index] * (1 - clampAmount)),
+  );
+
+  return `#${mixed.map((channel) => channel.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+}
+
+function parseHexColor(value: string) {
+  const normalized = stripHash(value);
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+    return null;
+  }
+
+  return [
+    Number.parseInt(normalized.slice(0, 2), 16),
+    Number.parseInt(normalized.slice(2, 4), 16),
+    Number.parseInt(normalized.slice(4, 6), 16),
+  ];
+}
+
+function stripHash(value: string) {
+  return value.replace(/^#/, '');
 }

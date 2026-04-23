@@ -94,6 +94,7 @@ export default function ConnectionManager() {
   const [showForm, setShowForm] = useState(false);
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+  const [expandedSidebarConnId, setExpandedSidebarConnId] = useState<string | null>(null);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [connectionContextMenu, setConnectionContextMenu] = useState<ConnectionContextMenuState | null>(null);
   const [expandedLogsConnectionId, setExpandedLogsConnectionId] = useState<string | null>(null);
@@ -116,7 +117,6 @@ export default function ConnectionManager() {
   const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(new Set());
   const [exportSavedPath, setExportSavedPath] = useState<string | null>(null);
   const [removeConfirmConn, setRemoveConfirmConn] = useState<ConnectionConfig | null>(null);
-  const [colorPickerConnId, setColorPickerConnId] = useState<string | null>(null);
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
@@ -485,6 +485,7 @@ export default function ConnectionManager() {
     removeConnectionRuntime(connId);
     invalidateMetadataCache(connId);
     setSelectedConnectionId((current) => (current === connId ? null : current));
+    setExpandedSidebarConnId((current) => (current === connId ? null : current));
   };
 
   const confirmRemoveConnection = (conn: ConnectionConfig) => {
@@ -534,9 +535,6 @@ export default function ConnectionManager() {
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden">
-      {colorPickerConnId ? (
-        <div className="fixed inset-0 z-40" onMouseDown={() => setColorPickerConnId(null)} />
-      ) : null}
       <div
         style={{
           position: 'absolute',
@@ -683,34 +681,52 @@ export default function ConnectionManager() {
                   </button>
                 </div>
               ) : (
-                <>
-                  <div className="shrink-0 overflow-y-auto max-h-[calc(100%_-_148px)]">
-                    <div className="space-y-1.5">
-                    {connections.map((conn) => {
-                      const connectionState = resolveConnectionState(conn.id);
-                      const isActiveCard = activeConnectionId === conn.id;
-                      const isSelectedCard = selectedConnectionId === conn.id;
-                      const isHighlighted = isActiveCard || isSelectedCard;
-                      const isFavorite = favoriteConnectionId === conn.id;
-                      const connColor = getConnectionColor(connections, conn.id);
+                <div className="flex-1 overflow-y-auto min-h-0" style={{ paddingBottom: 4 }}>
+                  <div className="space-y-1.5">
+                  {connections.map((conn) => {
+                    const connectionState = resolveConnectionState(conn.id);
+                    const isActiveCard = activeConnectionId === conn.id;
+                    const isSelectedCard = selectedConnectionId === conn.id;
+                    const isHighlighted = isActiveCard || isSelectedCard;
+                    const isFavorite = favoriteConnectionId === conn.id;
+                    const connColor = getConnectionColor(connections, conn.id);
+                    const isExpanded = expandedSidebarConnId === conn.id;
+                    const hasFocused = expandedSidebarConnId !== null;
+                    const isFaded = hasFocused && !isExpanded;
 
-                      return (
+                    return (
+                      <div
+                        key={conn.id}
+                        style={{
+                          opacity: isFaded ? 0.6 : 1,
+                          transition: 'opacity 180ms ease-out',
+                        }}
+                      >
                         <button
-                          key={conn.id}
                           type="button"
                           onClick={() => {
-                            setSelectedConnectionId(conn.id);
-                            if (connectionState === 'connected') {
-                              setActiveConnection(conn.id);
+                            if (expandedSidebarConnId === conn.id) {
+                              setExpandedSidebarConnId(null);
+                            } else {
+                              setExpandedSidebarConnId(conn.id);
+                              setSelectedConnectionId(conn.id);
+                              if (connectionState === 'connected') {
+                                setActiveConnection(conn.id);
+                              }
                             }
                           }}
                           onDoubleClick={() => void openConnection(conn)}
                           onContextMenu={(event) => openConnectionContextMenu(event, conn.id)}
-                          className="group relative w-full rounded-lg text-left transition-colors"
+                          className="group relative w-full text-left transition-colors"
                           style={{
                             padding: '10px 10px 10px 14px',
-                            background: isHighlighted ? hexToRgba(connColor, isActiveCard ? 0.12 : 0.08) : 'transparent',
-                            border: `1px solid ${isHighlighted ? hexToRgba(connColor, isActiveCard ? 0.38 : 0.18) : 'transparent'}`,
+                            background: isExpanded
+                              ? hexToRgba(connColor, 0.13)
+                              : isHighlighted
+                                ? hexToRgba(connColor, isActiveCard ? 0.12 : 0.08)
+                                : 'transparent',
+                            border: `1px solid ${isExpanded ? hexToRgba(connColor, 0.40) : isHighlighted ? hexToRgba(connColor, isActiveCard ? 0.38 : 0.18) : 'transparent'}`,
+                            borderRadius: isExpanded ? '8px 8px 0 0' : 8,
                           }}
                         >
                           <span
@@ -723,8 +739,8 @@ export default function ConnectionManager() {
                               height: 26,
                               borderRadius: 2,
                               background: connColor,
-                              opacity: isHighlighted ? 1 : 0.55,
-                              boxShadow: isActiveCard ? `0 0 10px ${connColor}` : 'none',
+                              opacity: isHighlighted || isExpanded ? 1 : 0.55,
+                              boxShadow: isActiveCard || isExpanded ? `0 0 10px ${connColor}` : 'none',
                             }}
                           />
                           <div className="flex items-start gap-3 min-w-0">
@@ -743,102 +759,68 @@ export default function ConnectionManager() {
                                 style={{
                                   marginTop: 3,
                                   fontSize: 10.5,
-                                  color: isActiveCard ? connColor : 'var(--bt-muted)',
-                                  opacity: isActiveCard ? 1 : 0.92,
+                                  color: isActiveCard || isExpanded ? connColor : 'var(--bt-muted)',
+                                  opacity: isActiveCard || isExpanded ? 1 : 0.92,
                                 }}
                               >
                                 {conn.host}{conn.database ? `/${conn.database}` : ''}
                               </div>
                             </div>
-                            <div className="relative flex-shrink-0">
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); setColorPickerConnId(colorPickerConnId === conn.id ? null : conn.id); }}
-                                title="Change connection color"
-                                style={{
-                                  padding: '2px 6px',
-                                  borderRadius: 5,
-                                  fontSize: 9,
-                                  fontWeight: 700,
-                                  letterSpacing: 0.5,
-                                  color: connColor,
-                                  border: `1px solid ${hexToRgba(connColor, 0.3)}`,
-                                  background: hexToRgba(connColor, 0.1),
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                {conn.engine === 'oracle' ? 'ORA' : conn.engine === 'mysql' ? 'MY' : 'PG'}
-                              </button>
-                              {colorPickerConnId === conn.id && (
-                                <div
-                                  className="absolute right-0 top-7 z-50 rounded-lg border border-border bg-surface p-2 shadow-xl"
-                                  style={{ width: 160 }}
-                                  onClick={(e) => e.stopPropagation()}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                >
-                                  <div className="flex flex-wrap gap-1.5 mb-2">
-                                    {CONNECTION_COLOR_PALETTE.map((c) => (
-                                      <button
-                                        key={c}
-                                        type="button"
-                                        onClick={() => { updateConnection({ ...conn, color: c }); setColorPickerConnId(null); }}
-                                        className="w-6 h-6 rounded-md transition-transform hover:scale-110"
-                                        style={{
-                                          background: c,
-                                          outline: connColor === c ? `2px solid ${c}` : 'none',
-                                          outlineOffset: 2,
-                                        }}
-                                      />
-                                    ))}
-                                  </div>
-                                  <div className="relative flex items-center gap-1.5 rounded-md border border-border px-2 py-1 cursor-pointer hover:bg-background/40">
-                                    <div className="w-4 h-4 rounded-sm flex-shrink-0" style={{ background: connColor }} />
-                                    <span className="text-xs text-muted font-mono flex-1">{connColor}</span>
-                                    <input
-                                      type="color"
-                                      value={connColor}
-                                      onChange={(e) => updateConnection({ ...conn, color: e.target.value })}
-                                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                                    />
-                                  </div>
-                                </div>
-                              )}
-                            </div>
+                            <span
+                              style={{
+                                padding: '2px 6px',
+                                borderRadius: 5,
+                                fontSize: 9,
+                                fontWeight: 700,
+                                letterSpacing: 0.5,
+                                color: connColor,
+                                border: `1px solid ${hexToRgba(connColor, 0.3)}`,
+                                background: hexToRgba(connColor, 0.1),
+                                flexShrink: 0,
+                              }}
+                            >
+                              {conn.engine === 'oracle' ? 'ORA' : conn.engine === 'mysql' ? 'MY' : 'PG'}
+                            </span>
                           </div>
                         </button>
-                      );
-                    })}
-                    </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingConnectionId(null);
-                        setShowForm(true);
-                      }}
-                      className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 px-4 py-3 text-sm text-muted transition-colors hover:border-primary/45 hover:bg-primary/6 hover:text-text"
-                      title={t('newConnection')}
-                    >
-                      <Plus size={14} />
-                      {t('newConnection')}
-                    </button>
-                  </div>
-
-                  <div className="mt-3 min-h-[120px] flex-1 overflow-hidden rounded-xl border border-border/70 bg-background/18">
-                    {activeConnection ? (
-                      <DatabaseExplorer
-                        connId={activeConnection.id}
-                        dbName={activeConnection.database}
-                        engine={activeConnection.engine}
-                        showRefreshButton
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center px-5 text-center text-xs text-muted/80">
-                        Abra uma conexao para carregar as tabelas do schema ativo.
+                        {isExpanded ? (
+                          <div
+                            style={{
+                              height: 260,
+                              borderRadius: '0 0 8px 8px',
+                              border: `1px solid ${hexToRgba(connColor, 0.30)}`,
+                              borderTop: 'none',
+                              overflow: 'hidden',
+                              background: hexToRgba(connColor, 0.04),
+                            }}
+                          >
+                            <DatabaseExplorer
+                              connId={conn.id}
+                              dbName={conn.database}
+                              engine={conn.engine}
+                              showRefreshButton
+                            />
+                          </div>
+                        ) : null}
                       </div>
-                    )}
+                    );
+                  })}
                   </div>
-                </>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingConnectionId(null);
+                      setShowForm(true);
+                    }}
+                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 px-4 py-3 text-sm text-muted transition-colors hover:border-primary/45 hover:bg-primary/6 hover:text-text"
+                    title={t('newConnection')}
+                  >
+                    <Plus size={14} />
+                    {t('newConnection')}
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -946,21 +928,21 @@ export default function ConnectionManager() {
             <PlugZap size={14} className="text-muted" />
             <span>{t('disconnect')}</span>
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              const connId = connectionContextMenu.connId;
-              setConnectionContextMenu(null);
-              setColorPickerConnId(connId);
-            }}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
-          >
-            <span
-              className="h-3.5 w-3.5 rounded-sm flex-shrink-0"
-              style={{ background: getConnectionColor(connections, connectionContextMenu.connId) }}
-            />
-            <span>Change color…</span>
-          </button>
+          {contextMenuConnection ? (
+            <div className="px-3 py-2">
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
+                Cor
+              </div>
+              <ConnectionColorQuickActions
+                connection={contextMenuConnection}
+                activeColor={getConnectionColor(connections, contextMenuConnection.id)}
+                onSelectColor={(color) => {
+                  updateConnection({ ...contextMenuConnection, color });
+                  setConnectionContextMenu(null);
+                }}
+              />
+            </div>
+          ) : null}
           <div className="my-1 border-t border-border/70" />
           <button
             type="button"
@@ -1120,10 +1102,10 @@ export default function ConnectionManager() {
       ) : null}
 
       <div
-        className="relative z-10 shrink-0 flex items-center border-t border-border/50"
+        className="relative z-10 shrink-0 flex items-center border-t border-border/50 overflow-visible"
         style={{
           background: 'var(--bt-background)',
-          padding: '5px 14px',
+          padding: '5px 14px 5px 10px',
           fontSize: 10.5,
           fontFamily: 'ui-monospace, "SF Mono", monospace',
           letterSpacing: 0.5,
@@ -1131,7 +1113,7 @@ export default function ConnectionManager() {
           gap: 0,
         }}
       >
-        <div className="flex min-w-0 flex-1 items-center truncate" style={{ gap: 0 }}>
+        <div className="flex min-w-0 flex-1 items-center overflow-visible" style={{ gap: 0 }}>
           {statusBarConnection ? (
             <>
               <span className="flex shrink-0 items-center gap-1.5">
@@ -1145,7 +1127,7 @@ export default function ConnectionManager() {
                     boxShadow: `0 0 8px ${statusBarColor}`,
                   }}
                 />
-                <span style={{ color: statusBarColor, textTransform: 'uppercase' }}>
+                <span className="whitespace-nowrap" style={{ color: statusBarColor, textTransform: 'uppercase' }}>
                   {statusBarConnection.name}
                 </span>
               </span>
@@ -1153,7 +1135,7 @@ export default function ConnectionManager() {
             </>
           ) : null}
 
-          {statusBarEngine ? <span className="shrink-0">{statusBarEngine}</span> : null}
+          {statusBarEngine ? <span className="shrink-0 whitespace-nowrap">{statusBarEngine}</span> : null}
 
           {serverTimeIndicator ? (
             <>
@@ -1172,7 +1154,7 @@ export default function ConnectionManager() {
           ) : statusBarText ? (
             <>
               <StatusDivider hiddenOnMobile={Boolean(statusBarConnection)} />
-              <span className="truncate" style={{ textTransform: 'none' }}>{statusBarText}</span>
+              <span className="min-w-0 truncate" style={{ textTransform: 'none' }}>{statusBarText}</span>
             </>
           ) : null}
 
@@ -1281,6 +1263,56 @@ function buildStatusBarMetrics(
   }
 
   return parts.join(' · ') || null;
+}
+
+function ConnectionColorQuickActions({
+  connection,
+  activeColor,
+  onSelectColor,
+}: {
+  connection: ConnectionConfig;
+  activeColor: string;
+  onSelectColor: (color: string) => void;
+}) {
+  const colorInputRef = useRef<HTMLInputElement | null>(null);
+  const quickColors = CONNECTION_COLOR_PALETTE.slice(0, 4);
+
+  return (
+    <div className="flex items-center gap-2">
+      {quickColors.map((color) => (
+        <button
+          key={color}
+          type="button"
+          onClick={() => onSelectColor(color)}
+          className="h-5 w-5 rounded-[3px] transition-transform hover:scale-110"
+          style={{
+            background: color,
+            outline: activeColor.toLowerCase() === color.toLowerCase() ? `2px solid ${color}` : 'none',
+            outlineOffset: 2,
+          }}
+          title={color}
+        />
+      ))}
+      <button
+        type="button"
+        onClick={() => colorInputRef.current?.click()}
+        className="relative h-5 w-5 overflow-hidden rounded-[3px] border border-border/70 transition-transform hover:scale-110"
+        style={{
+          background:
+            'conic-gradient(from 90deg, #3ECF8E, #47C4E8, #7B6BFF, #FF6B9D, #E86A4E, #FFB547, #95E06C, #3ECF8E)',
+        }}
+        title="Escolher cor personalizada"
+      />
+      <input
+        ref={colorInputRef}
+        type="color"
+        value={connection.color ?? activeColor}
+        onChange={(event) => onSelectColor(event.target.value)}
+        className="sr-only"
+        tabIndex={-1}
+      />
+    </div>
+  );
 }
 
 function connectionShortLabel(name: string): string {

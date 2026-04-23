@@ -48,6 +48,22 @@ export const APP_THEMES: AppThemeDefinition[] = [
       glassPanel: 'rgba(17, 28, 36, 0.82)',
     },
   },
+  {
+    id: 'solarized-dark',
+    label: 'Solarized Dark',
+    mode: 'dark',
+    colors: {
+      background: '#002B36',
+      surface: '#073642',
+      border: '#124B56',
+      primary: '#2AA198',
+      text: '#D2DEE0',
+      muted: '#93A1A1',
+      bodyBackground:
+        'radial-gradient(circle at 12% 0%, rgba(42, 161, 152, 0.16), transparent 30%), radial-gradient(circle at 90% 8%, rgba(181, 137, 0, 0.10), transparent 28%), linear-gradient(180deg, #002B36 0%, #001E27 100%)',
+      glassPanel: 'rgba(7, 54, 66, 0.86)',
+    },
+  },
 ];
 
 export function getThemeById(themeId: string) {

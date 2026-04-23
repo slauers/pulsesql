@@ -28,6 +28,7 @@ function App() {
   const activeSchemas = useDatabaseSessionStore((state) => state.activeSchemaByConnection);
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
+  const semanticBackgroundState = useUiPreferencesStore((state) => state.semanticBackgroundState);
   const locale = useUiPreferencesStore((state) => state.locale);
   const themeId = useUiPreferencesStore((state) => state.themeId);
   const density = useUiPreferencesStore((state) => state.density);
@@ -297,15 +298,17 @@ function App() {
   };
 
   return (
-    <div className={`h-screen w-screen overflow-hidden bg-background text-text flex flex-col relative bt-density-${density}`}>
+    <div className={`atlas-app-background h-screen w-screen overflow-hidden bg-background text-text flex flex-col relative bt-density-${density}`}>
       {pendingUpdate ? (
         <div className="shrink-0 flex items-center justify-end px-3 py-1 border-b border-border/80 bg-background/95 relative z-20">
           <UpdateButton update={pendingUpdate} />
         </div>
       ) : null}
 
-      <div className="flex-1 overflow-hidden relative z-10">
-        <ConnectionManager />
+      <div className="atlas-app-frame-shell relative z-10 min-h-0 flex-1 overflow-hidden">
+        <div className={`atlas-app-frame atlas-frame-state-${semanticBackgroundState}`}>
+          <ConnectionManager />
+        </div>
       </div>
 
       <ConfigurationDialog open={configurationOpen} onClose={() => setConfigurationOpen(false)} />

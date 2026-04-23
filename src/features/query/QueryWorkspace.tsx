@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
+import type * as Monaco from 'monaco-editor';
 import Editor from '@monaco-editor/react';
 import { format as sqlFormat } from 'sql-formatter';
 import { readText as clipboardReadText, writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
@@ -14,8 +16,10 @@ import {
   X,
   Play,
   LoaderCircle,
-  AlertCircle,
   Clock3,
+  AlignLeft,
+  Sparkles,
+  AlertCircle,
   Download,
   FileJson,
   Search,
@@ -27,8 +31,6 @@ import {
   Trash2,
   Maximize2,
   Minimize2,
-  AlignLeft,
-  Sparkles,
 } from 'lucide-react';
 import ResultGrid from './ResultGrid';
 import QueryHistoryDrawer from '../history/components/QueryHistoryDrawer';
@@ -42,7 +44,7 @@ import {
 import { useConnectionRuntimeStore } from '../../store/connectionRuntime';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
 import { formatNumber, translate } from '../../i18n';
-import { ensureMonacoThemes, resolveMonacoTheme } from '../../lib/monaco-theme';
+import { ensureConfiguredMonacoTheme, resolveConfiguredMonacoTheme } from '../../lib/monaco-theme';
 
 interface QueryResult {
   columns: string[];
@@ -82,8 +84,31 @@ interface ExecuteQueryPayload {
 const SEMANTIC_SUCCESS_DURATION_MS = 3600;
 const SEMANTIC_ERROR_DURATION_MS = 6200;
 const SEMANTIC_WARNING_DURATION_MS = 6200;
+const MIN_RUNNING_VISIBLE_MS = 450;
 const CONNECTION_MENU_WIDTH = 340;
 let sqlFormatterRegistered = false;
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function waitForMinimumRunning(startedAt: number) {
+  const elapsed = window.performance.now() - startedAt;
+  const remaining = MIN_RUNNING_VISIBLE_MS - elapsed;
+  if (remaining > 0) {
+    await wait(remaining);
+  }
+}
+
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => resolve());
+    });
+  });
+}
 
 export default function QueryWorkspace() {
   const {
@@ -97,6 +122,7 @@ export default function QueryWorkspace() {
     updateTabContent,
     replaceActiveTabContent,
     setTabConnection,
+    reorderTab,
     clearPendingExecution,
   } = useQueriesStore();
   const { activeConnectionId, connections, setActiveConnection } = useConnectionsStore();
@@ -107,14 +133,13 @@ export default function QueryWorkspace() {
   const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
   const setAutocommitEnabled = useConnectionRuntimeStore((state) => state.setAutocommitEnabled);
   const setTransactionOpen = useConnectionRuntimeStore((state) => state.setTransactionOpen);
-  const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
   const locale = useUiPreferencesStore((state) => state.locale);
   const semanticBackgroundState = useUiPreferencesStore((state) => state.semanticBackgroundState);
-  const semanticBackgroundVersion = useUiPreferencesStore((state) => state.semanticBackgroundVersion);
   const setSemanticBackgroundState = useUiPreferencesStore((state) => state.setSemanticBackgroundState);
   const resultPageSize = useUiPreferencesStore((state) => state.resultPageSize);
   const setResultPageSize = useUiPreferencesStore((state) => state.setResultPageSize);
   const themeId = useUiPreferencesStore((state) => state.themeId);
+  const monacoThemeName = useUiPreferencesStore((state) => state.monacoThemeName);
   const editorFontSize = useUiPreferencesStore((state) => state.editorFontSize);
   const density = useUiPreferencesStore((state) => state.density);
   const metadataByConnection = useDatabaseSessionStore((state) => state.metadataByConnection);
@@ -140,9 +165,8 @@ export default function QueryWorkspace() {
     if (semanticBackgroundState === 'success') return { label: tr('statusSuccess'), color: '#4ade80', pulse: false };
     if (semanticBackgroundState === 'error') return { label: tr('statusError'), color: '#f87171', pulse: false };
     if (semanticBackgroundState === 'warning') return { label: tr('statusWarning'), color: '#fb923c', pulse: false };
-    if (resolvedConnectionId && isConnectionReady) return { label: tr('statusConnected'), color: connectionColor, pulse: false };
     return null;
-  }, [semanticBackgroundState, isConnectionReady, resolvedConnectionId, connectionColor, locale]);
+  }, [semanticBackgroundState, connectionColor, locale]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<QueryErrorPresentation | null>(null);
@@ -161,6 +185,8 @@ export default function QueryWorkspace() {
   const [pageSizeDraft, setPageSizeDraft] = useState(String(resultPageSize));
   const [connectionMenuOpen, setConnectionMenuOpen] = useState(false);
   const [connectionMenuPosition, setConnectionMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [exportedFormat, setExportedFormat] = useState<'csv' | 'json' | null>(null);
   const exportFeedbackRef = useRef<number | null>(null);
   const [editingCell, setEditingCell] = useState<string | null>(null);
@@ -172,7 +198,10 @@ export default function QueryWorkspace() {
   const editErrorTimeoutRef = useRef<number | null>(null);
   const executeQueryRef = useRef<() => void>(() => {});
   const editorRef = useRef<any>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
   const connectionMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const tabDragRef = useRef<{ tabId: string; startX: number; dragging: boolean } | null>(null);
+  const suppressTabClickRef = useRef(false);
   const lastCursorPositionRef = useRef<{ lineNumber: number; column: number } | null>(null);
   const autocompleteDisposableRef = useRef<{ dispose(): void } | null>(null);
   const suggestTimeoutRef = useRef<number | null>(null);
@@ -202,6 +231,15 @@ export default function QueryWorkspace() {
 
     void ensureTablesCached(resolvedConnectionId, engine, schemaLabel).catch(() => null);
   }, [engine, resolvedConnectionId, runtimeStatus, schemaLabel]);
+
+  useEffect(() => {
+    if (!monacoRef.current) {
+      return;
+    }
+
+    const editorTheme = ensureConfiguredMonacoTheme(monacoRef.current, monacoThemeName, themeId);
+    monacoRef.current.editor.setTheme(editorTheme);
+  }, [monacoThemeName, themeId]);
 
   useEffect(() => () => {
     autocompleteDisposableRef.current?.dispose();
@@ -275,20 +313,7 @@ export default function QueryWorkspace() {
     }, durationMs);
   }, [setSemanticBackgroundState]);
 
-  const syncTransactionState = useCallback((connectionId: string, payload: ExecuteQueryPayload) => {
-    setAutocommitEnabled(connectionId, payload.autocommit_enabled);
-    setTransactionOpen(connectionId, payload.transaction_open);
-  }, [setAutocommitEnabled, setTransactionOpen]);
-
-  const runQueryBatch = useCallback(async (queries: string[], connectionId: string) => {
-    const statements = queries.map((item) => item.trim()).filter(Boolean);
-    if (!statements.length || !connectionId) {
-      return;
-    }
-    const targetConnection = connections.find((item) => item.id === connectionId) ?? null;
-    const targetEngine = targetConnection?.engine;
-    const targetSchema = activeSchemaByConnection[connectionId] ?? targetConnection?.preferredSchema;
-    
+  const startExecutionFeedback = useCallback(() => {
     if (semanticResetTimeoutRef.current) {
       window.clearTimeout(semanticResetTimeoutRef.current);
       semanticResetTimeoutRef.current = null;
@@ -298,6 +323,31 @@ export default function QueryWorkspace() {
     setLoading(true);
     setError(null);
     setActivePanel('results');
+    return window.performance.now();
+  }, [setSemanticBackgroundState]);
+
+  const syncTransactionState = useCallback((connectionId: string, payload: ExecuteQueryPayload) => {
+    setAutocommitEnabled(connectionId, payload.autocommit_enabled);
+    setTransactionOpen(connectionId, payload.transaction_open);
+  }, [setAutocommitEnabled, setTransactionOpen]);
+
+  const runQueryBatch = useCallback(async (queries: string[], connectionId: string, options?: { feedbackStartedAt?: number }) => {
+    const statements = queries.map((item) => item.trim()).filter(Boolean);
+    if (!statements.length || !connectionId) {
+      if (options?.feedbackStartedAt) {
+        setLoading(false);
+        setSemanticBackgroundState('idle');
+      }
+      return;
+    }
+    const targetConnection = connections.find((item) => item.id === connectionId) ?? null;
+    const targetEngine = targetConnection?.engine;
+    const targetSchema = activeSchemaByConnection[connectionId] ?? targetConnection?.preferredSchema;
+    
+    const runningStartedAt = options?.feedbackStartedAt ?? startExecutionFeedback();
+    if (!options?.feedbackStartedAt) {
+      await waitForNextPaint();
+    }
 
     try {
       const nextResults: QueryExecutionResult[] = [];
@@ -334,6 +384,7 @@ export default function QueryWorkspace() {
 
       setResults(nextResults);
       setActiveResultIndex(0);
+      await waitForMinimumRunning(runningStartedAt);
       setSemanticBackgroundState('success');
       scheduleSemanticReset(SEMANTIC_SUCCESS_DURATION_MS);
     } catch (e: any) {
@@ -346,12 +397,13 @@ export default function QueryWorkspace() {
       });
       setError(nextError);
       appendLog(connectionId, `Erro de query: ${extractErrorMessage(e).trim()}`);
+      await waitForMinimumRunning(runningStartedAt);
       setSemanticBackgroundState('error');
       scheduleSemanticReset(SEMANTIC_ERROR_DURATION_MS);
     } finally {
       setLoading(false);
     }
-  }, [activeSchemaByConnection, appendLog, connections, metadataByConnection, resultPageSize, scheduleSemanticReset, setSemanticBackgroundState]);
+  }, [activeSchemaByConnection, appendLog, connections, metadataByConnection, resultPageSize, scheduleSemanticReset, setSemanticBackgroundState, startExecutionFeedback]);
 
   const ensureExecutionConnectionReady = useCallback(async (connectionId: string) => {
     const connection = connections.find((item) => item.id === connectionId);
@@ -392,9 +444,41 @@ export default function QueryWorkspace() {
       return;
     }
 
-    await ensureExecutionConnectionReady(resolvedConnectionId);
-    await runQueryBatch(statements, resolvedConnectionId);
-  }, [ensureExecutionConnectionReady, resolvedConnectionId, runQueryBatch]);
+    const runningStartedAt = startExecutionFeedback();
+    await waitForNextPaint();
+
+    try {
+      await ensureExecutionConnectionReady(resolvedConnectionId);
+      await runQueryBatch(statements, resolvedConnectionId, { feedbackStartedAt: runningStartedAt });
+    } catch (executionError) {
+      const connection = connections.find((item) => item.id === resolvedConnectionId) ?? null;
+      setError(
+        buildQueryErrorPresentation({
+          error: executionError,
+          engine: connection?.engine ?? engine,
+          statement: statements[0] ?? null,
+          activeSchema: activeSchemaByConnection[resolvedConnectionId] ?? connection?.preferredSchema ?? schemaLabel,
+          metadataConnection: metadataByConnection[resolvedConnectionId],
+        }),
+      );
+      await waitForMinimumRunning(runningStartedAt);
+      setSemanticBackgroundState('error');
+      scheduleSemanticReset(SEMANTIC_ERROR_DURATION_MS);
+      setLoading(false);
+    }
+  }, [
+    activeSchemaByConnection,
+    connections,
+    engine,
+    ensureExecutionConnectionReady,
+    metadataByConnection,
+    resolvedConnectionId,
+    runQueryBatch,
+    scheduleSemanticReset,
+    schemaLabel,
+    setSemanticBackgroundState,
+    startExecutionFeedback,
+  ]);
 
   const executeQuery = useCallback(async (options?: { skipRiskConfirmation?: boolean }) => {
     if (!activeTab || !resolvedConnectionId) return;
@@ -438,9 +522,12 @@ export default function QueryWorkspace() {
       addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId);
     }
 
+    const runningStartedAt = startExecutionFeedback();
+    await waitForNextPaint();
+
     try {
       await ensureExecutionConnectionReady(connection.id);
-      await runQueryBatch(splitSqlStatements(item.queryText), connection.id);
+      await runQueryBatch(splitSqlStatements(item.queryText), connection.id, { feedbackStartedAt: runningStartedAt });
     } catch (runError) {
       setError(
         buildQueryErrorPresentation({
@@ -450,8 +537,22 @@ export default function QueryWorkspace() {
           activeSchema: connection.preferredSchema ?? schemaLabel,
         }),
       );
+      await waitForMinimumRunning(runningStartedAt);
+      setSemanticBackgroundState('error');
+      scheduleSemanticReset(SEMANTIC_ERROR_DURATION_MS);
+      setLoading(false);
     }
-  }, [addTabWithContent, connections, ensureExecutionConnectionReady, replaceActiveTabContent, runQueryBatch, schemaLabel]);
+  }, [
+    addTabWithContent,
+    connections,
+    ensureExecutionConnectionReady,
+    replaceActiveTabContent,
+    runQueryBatch,
+    scheduleSemanticReset,
+    schemaLabel,
+    setSemanticBackgroundState,
+    startExecutionFeedback,
+  ]);
 
   const openHistoryInNewTab = useCallback((item: QueryHistoryItem) => {
     addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId);
@@ -931,6 +1032,61 @@ export default function QueryWorkspace() {
     setConnectionMenuOpen((current) => !current);
   }, []);
 
+  const handleTabPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>, tabId: string) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest('button')) {
+      return;
+    }
+
+    tabDragRef.current = { tabId, startX: event.clientX, dragging: false };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, []);
+
+  const handleTabPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = tabDragRef.current;
+    if (!drag) {
+      return;
+    }
+
+    if (!drag.dragging && Math.abs(event.clientX - drag.startX) < 5) {
+      return;
+    }
+
+    drag.dragging = true;
+    suppressTabClickRef.current = true;
+    setDraggedTabId(drag.tabId);
+
+    const target = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>('[data-query-tab-id]');
+    const targetTabId = target?.dataset.queryTabId;
+
+    if (!targetTabId || targetTabId === drag.tabId) {
+      return;
+    }
+
+    setDragOverTabId(targetTabId);
+    const fromIndex = tabs.findIndex((tab) => tab.id === drag.tabId);
+    const toIndex = tabs.findIndex((tab) => tab.id === targetTabId);
+
+    if (fromIndex !== -1 && toIndex !== -1 && fromIndex !== toIndex) {
+      reorderTab(fromIndex, toIndex);
+    }
+  }, [reorderTab, tabs]);
+
+  const handleTabPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (tabDragRef.current && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    tabDragRef.current = null;
+    setDraggedTabId(null);
+    setDragOverTabId(null);
+
+    window.setTimeout(() => {
+      suppressTabClickRef.current = false;
+    }, 0);
+  }, []);
+
   useEffect(() => {
     if (!activeTab || activeTab.connectionId !== undefined || !activeConnectionId) {
       return;
@@ -941,16 +1097,16 @@ export default function QueryWorkspace() {
 
   const renderResultsPanel = (fullscreen = false) => (
     <div
-      className={`rounded-lg border border-border/80 glass-panel flex flex-col relative overflow-hidden shadow-[0_18px_48px_rgba(0,0,0,0.24)] ${
+      className={`border-border/80 flex flex-col relative overflow-hidden ${
         fullscreen
-          ? 'h-full min-h-0'
-          : 'min-h-[190px] max-h-[58%] shrink-0 flex-grow-0 max-[720px]:h-[40%]'
+          ? 'h-full min-h-0 border'
+          : 'min-h-[190px] max-h-[58%] shrink-0 flex-grow-0 border-t max-[720px]:h-[40%]'
       }`}
-      style={fullscreen ? undefined : { height: `${resultsHeight}%` }}
+      style={fullscreen ? { background: 'rgba(8, 17, 27, 0.88)' } : { height: `${resultsHeight}%`, background: 'rgba(8, 17, 27, 0.88)' }}
     >
       <div
         className="flex flex-wrap items-center gap-2 border-b border-border/80 px-3"
-        style={{ background: 'var(--bt-surface)', paddingTop: 8, paddingBottom: 8 }}
+        style={{ background: 'rgba(11, 23, 36, 0.92)', paddingTop: 8, paddingBottom: 8 }}
       >
         {/* Pill tabs */}
         <div style={{ display: 'flex', gap: 2, padding: 2, background: 'var(--bt-background)', borderRadius: 7, border: '1px solid var(--bt-border)', flexShrink: 0 }}>
@@ -1215,44 +1371,59 @@ export default function QueryWorkspace() {
 
   return (
     <div className="flex flex-col h-full bg-transparent overflow-hidden relative min-h-0">
-      <div
-        className={`sql-workspace-shell ${semanticBackgroundEnabled ? `sql-workspace-shell--${semanticBackgroundState}` : ''}`}
-      >
-        {semanticBackgroundEnabled ? (
-          <div
-            key={`${semanticBackgroundState}-${semanticBackgroundVersion}`}
-            className={`sql-workspace-shell__ambient semantic-ambient semantic-ambient--${semanticBackgroundState}`}
-          />
-        ) : null}
-
-        <div className="relative z-10 flex h-full min-h-0 flex-col gap-3">
+      <div className="sql-workspace-shell">
+        <div className="relative z-10 flex h-full min-h-0 flex-col">
           <div className="shrink-0 overflow-hidden">
-            <div className="flex items-stretch" style={{ background: 'rgba(10,20,32,0.4)' }}>
+            <div
+              className="flex items-stretch border-b border-border/80"
+              style={{
+                background: 'rgba(6, 14, 22, 0.94)',
+                borderTopLeftRadius: 10,
+                borderTopRightRadius: 10,
+              }}
+            >
               <div className="flex flex-1 min-w-0 items-stretch overflow-x-auto scrollbar-hide">
                 {tabs.map(tab => {
                   const tabColor = getConnectionColor(connections, tab.connectionId ?? activeConnectionId);
+                  const isActiveTab = activeTabId === tab.id;
+                  const isDraggedTab = draggedTabId === tab.id;
+                  const isDragOverTab = dragOverTabId === tab.id && !isDraggedTab;
                   return (
                   <div
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`group relative flex items-center gap-2 px-3 py-2.5 border-r border-border/60 min-w-[148px] max-w-[240px] cursor-pointer select-none transition-colors ${
-                      activeTabId === tab.id ? 'text-text' : 'text-muted hover:bg-white/4'
+                    data-query-tab-id={tab.id}
+                    onClick={() => {
+                      if (suppressTabClickRef.current) {
+                        return;
+                      }
+                      setActiveTab(tab.id);
+                    }}
+                    onPointerDown={(event) => handleTabPointerDown(event, tab.id)}
+                    onPointerMove={handleTabPointerMove}
+                    onPointerUp={handleTabPointerUp}
+                    onPointerCancel={handleTabPointerUp}
+                    className={`group relative flex min-w-[148px] max-w-[240px] cursor-grab touch-none select-none items-center gap-2 px-3 py-2.5 transition-all active:cursor-grabbing ${
+                      isActiveTab ? 'text-text' : 'text-muted hover:bg-white/4'
                     }`}
                     style={{
-                      background: activeTabId === tab.id ? 'var(--bt-surface)' : 'transparent',
-                      borderBottom: activeTabId === tab.id ? '1px solid var(--bt-surface)' : '1px solid var(--bt-border)',
+                      background: isActiveTab ? 'rgba(10, 22, 34, 0.96)' : 'transparent',
+                      borderTop: isActiveTab ? `1px solid ${hexToRgba(tabColor, 0.82)}` : '1px solid transparent',
+                      borderRight: isActiveTab ? `1px solid var(--bt-border)` : '1px solid var(--bt-border)',
+                      borderBottom: isActiveTab ? '1px solid rgba(10, 22, 34, 0.96)' : '1px solid transparent',
+                      borderLeft: isDragOverTab ? `1px solid ${hexToRgba(tabColor, 0.9)}` : '1px solid transparent',
+                      borderTopLeftRadius: isActiveTab ? 7 : 0,
+                      borderTopRightRadius: isActiveTab ? 7 : 0,
+                      boxShadow: isActiveTab
+                        ? `inset 0 1px 0 ${hexToRgba(tabColor, 0.55)}, inset 10px 0 10px -12px ${hexToRgba(tabColor, 0.85)}, inset -10px 0 10px -12px ${hexToRgba(tabColor, 0.85)}`
+                        : undefined,
+                      opacity: isDraggedTab ? 0.48 : 1,
                     }}
                   >
-                    {activeTabId === tab.id && (
-                      <div style={{
-                        position: 'absolute', top: 0, left: 0, right: 0, height: 2,
-                        background: tabColor, boxShadow: `0 0 10px ${tabColor}`,
-                      }} />
-                    )}
-                    <span style={{ width: 6, height: 6, borderRadius: 2, flexShrink: 0, background: tabColor, opacity: activeTabId === tab.id ? 1 : 0.5 }} />
+                    <span style={{ width: 6, height: 6, borderRadius: 2, flexShrink: 0, background: tabColor, opacity: isActiveTab ? 1 : 0.55 }} />
                     <span className="text-sm truncate flex-1">{tab.title}</span>
                     <button
                       onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                      onPointerDown={(event) => event.stopPropagation()}
                       className={`p-1 rounded hover:bg-border/50 text-muted transition-opacity flex-shrink-0 ${
                         activeTabId === tab.id ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'
                       }`}
@@ -1277,7 +1448,7 @@ export default function QueryWorkspace() {
                 onClick={(e) => openConnectionMenu(e.currentTarget.getBoundingClientRect())}
                 className="shrink-0 flex items-center gap-2 border-l border-border/60 px-3 text-muted hover:text-text transition-colors"
                 style={{
-                  borderBottom: connectionMenuOpen ? `1px solid ${connectionColor}` : '1px solid var(--bt-border)',
+                  borderBottom: connectionMenuOpen ? `1px solid ${connectionColor}` : '1px solid transparent',
                   background: connectionMenuOpen ? hexToRgba(connectionColor, 0.08) : undefined,
                   color: connectionMenuOpen ? connectionColor : undefined,
                 }}
@@ -1292,27 +1463,37 @@ export default function QueryWorkspace() {
               </button>
             </div>
 
-            <div className="px-3 py-2.5 flex flex-wrap items-center gap-2" style={{ background: 'var(--bt-surface)', borderBottom: '1px solid var(--bt-border)' }}>
+            <div
+              className="flex flex-wrap items-center gap-2 px-3 py-2.5"
+              style={{
+                background: 'rgba(9, 19, 30, 0.92)',
+                borderBottom: '1px solid var(--bt-border)',
+              }}
+            >
               <button
                 onClick={() => void executeQuery()}
                 disabled={loading || !activeTab || !resolvedConnectionId}
-                className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                className={`flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-bold transition-all ${
+                  loading ? 'cursor-wait opacity-100' : 'disabled:cursor-not-allowed disabled:opacity-40'
+                }`}
                 style={{
                   background: connectionColor,
                   color: '#08111A',
                   border: 'none',
                   letterSpacing: 0.4,
-                  boxShadow: `0 0 18px ${hexToRgba(connectionColor, 0.50)}, inset 0 1px 0 rgba(255,255,255,0.20)`,
+                  boxShadow: `0 0 18px ${hexToRgba(connectionColor, 0.5)}, inset 0 1px 0 rgba(255,255,255,0.20)`,
                 }}
               >
                 {loading
                   ? <LoaderCircle size={14} className="animate-spin" style={{ color: '#08111A' }} />
                   : <Play size={14} style={{ fill: '#08111A', opacity: 0.75 }} />
                 }
-                {t('run')}
+                {loading ? t('statusRunning') : t('run')}
                 <span style={{ opacity: 0.5, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}>⌘↵</span>
               </button>
+
               <button
+                type="button"
                 onClick={toggleHistory}
                 className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
                 style={{
@@ -1324,10 +1505,12 @@ export default function QueryWorkspace() {
                 <Clock3 size={13} />
                 {t('history')}
               </button>
+
               <button
+                type="button"
                 onClick={handleFormat}
                 disabled={!activeTab}
-                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                 style={{
                   background: 'var(--bt-surface)',
                   border: '1px solid var(--bt-border)',
@@ -1337,10 +1520,12 @@ export default function QueryWorkspace() {
                 <AlignLeft size={13} />
                 {t('format')}
               </button>
+
               <button
+                type="button"
                 disabled
                 title={t('explainComingSoon')}
-                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium opacity-40 cursor-not-allowed"
+                className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium opacity-40"
                 style={{
                   background: 'var(--bt-surface)',
                   border: '1px solid var(--bt-border)',
@@ -1350,6 +1535,7 @@ export default function QueryWorkspace() {
                 <Sparkles size={13} />
                 {t('explain')}
               </button>
+
               {toolbarStatus ? (
                 <span
                   className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] transition-colors${toolbarStatus.pulse ? ' animate-pulse' : ''}`}
@@ -1366,23 +1552,22 @@ export default function QueryWorkspace() {
           </div>
 
           <div
-            className="flex-1 relative min-h-0 flex flex-col overflow-hidden rounded-lg glass-panel shadow-[0_18px_48px_rgba(0,0,0,0.24)]"
+            className="flex-1 relative min-h-0 flex flex-col overflow-hidden bg-background/18"
             style={{
-              border: `1px solid ${hexToRgba(connectionColor, 0.28)}`,
               borderLeft: `2px solid ${connectionColor}`,
-              boxShadow: `0 18px 48px rgba(0,0,0,0.24), inset 4px 0 18px -4px ${hexToRgba(connectionColor, 0.10)}`,
+              boxShadow: `inset 7px 0 18px -12px ${hexToRgba(connectionColor, 0.55)}`,
             }}
           >
             {activeTab ? (
-              <div className="flex-1 min-h-[220px] overflow-hidden rounded-lg bg-background/30">
+              <div className="flex-1 min-h-[220px] overflow-hidden bg-background/30">
                 <Editor
                   height="100%"
                   language="sql"
-                  theme={resolveMonacoTheme(themeId)}
+                  theme={resolveConfiguredMonacoTheme(monacoThemeName, themeId)}
                   value={activeTab.content}
                   onChange={(val) => updateTabContent(activeTab.id, val || "")}
                   beforeMount={(monaco) => {
-                    ensureMonacoThemes(monaco);
+                    ensureConfiguredMonacoTheme(monaco, monacoThemeName, themeId);
                     if (!sqlFormatterRegistered) {
                       monaco.languages.registerDocumentFormattingEditProvider('sql', {
                         provideDocumentFormattingEdits(model: import('monaco-editor').editor.ITextModel) {
@@ -1398,7 +1583,7 @@ export default function QueryWorkspace() {
                     }
                   }}
                   options={{
-                    minimap: { enabled: false },
+                    minimap: { enabled: true },
                     padding: { top: 18 },
                     fontSize: editorFontSize,
                     fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
@@ -1426,6 +1611,8 @@ export default function QueryWorkspace() {
                   }}
                   onMount={(editor, monaco) => {
                     editorRef.current = editor;
+                    monacoRef.current = monaco;
+                    monaco.editor.setTheme(ensureConfiguredMonacoTheme(monaco, monacoThemeName, themeId));
                     // Tauri WKWebView blocks navigator.clipboard; intercept copy/cut/paste
                     // via onKeyDown and use the official Tauri clipboard plugin.
                     editor.onKeyDown((e) => {
@@ -1533,12 +1720,11 @@ export default function QueryWorkspace() {
                 aria-orientation="horizontal"
                 aria-label="Resize results panel"
                 onPointerDown={() => setResultsResizing(true)}
-                className="shrink-0 px-3"
+                className="shrink-0"
               >
-                <div className={`h-1 cursor-row-resize rounded-full bg-transparent transition-colors ${
-                  resultsResizing ? 'bg-primary/40' : 'hover:bg-primary/25'
+                <div className={`h-1 cursor-row-resize transition-colors ${
+                  resultsResizing ? 'bg-primary/40' : 'bg-border/40 hover:bg-primary/25'
                 }`}>
-                  <div className="mx-auto h-full w-24 rounded-full bg-border/70" />
                 </div>
               </div>
               {renderResultsPanel(false)}
@@ -1550,7 +1736,8 @@ export default function QueryWorkspace() {
       <QueryHistoryDrawer
         open={historyOpen}
         locale={locale}
-        connections={connections}
+        activeConnectionId={resolvedConnectionId}
+        activeConnectionName={selectedConnection?.name ?? null}
         refreshToken={historyRefreshToken}
         onClose={() => setHistoryOpen(false)}
         onOpenInNewTab={openHistoryInNewTab}
