@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { format as sqlFormat } from 'sql-formatter';
-import { readText as clipboardReadText } from '@tauri-apps/plugin-clipboard-manager';
+import { readText as clipboardReadText, writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 import { useQueriesStore } from '../../store/queries';
 import { type DatabaseEngine, useConnectionsStore, getConnectionColor, hexToRgba } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
@@ -1437,15 +1437,42 @@ export default function QueryWorkspace() {
                   }}
                   onMount={(editor, monaco) => {
                     editorRef.current = editor;
-                    // Tauri WKWebView blocks navigator.clipboard; intercept Cmd+V via onKeyDown
-                    // and read clipboard through the official Tauri plugin.
+                    // Tauri WKWebView blocks navigator.clipboard; intercept copy/cut/paste
+                    // via onKeyDown and use the official Tauri clipboard plugin.
                     editor.onKeyDown((e) => {
-                      if (e.keyCode === monaco.KeyCode.KeyV && (e.ctrlKey || e.metaKey)) {
+                      const model = editor.getModel();
+                      const sel = editor.getSelection();
+                      if (!model || !sel) return;
+
+                      if (e.keyCode === monaco.KeyCode.KeyC && (e.ctrlKey || e.metaKey)) {
                         e.preventDefault();
                         e.stopPropagation();
-                        const sel = editor.getSelection();
-                        const model = editor.getModel();
-                        if (!sel || !model) return;
+                        const text = sel.isEmpty()
+                          ? model.getLineContent(sel.startLineNumber)
+                          : model.getValueInRange(sel);
+                        void clipboardWriteText(text);
+                      } else if (e.keyCode === monaco.KeyCode.KeyX && (e.ctrlKey || e.metaKey)) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (sel.isEmpty()) {
+                          const line = sel.startLineNumber;
+                          void clipboardWriteText(model.getLineContent(line));
+                          editor.pushUndoStop();
+                          editor.executeEdits('cut', [{
+                            range: new monaco.Range(line, 1, line + 1, 1),
+                            text: '',
+                            forceMoveMarkers: true,
+                          }]);
+                          editor.pushUndoStop();
+                        } else {
+                          void clipboardWriteText(model.getValueInRange(sel));
+                          editor.pushUndoStop();
+                          editor.executeEdits('cut', [{ range: sel, text: '', forceMoveMarkers: true }]);
+                          editor.pushUndoStop();
+                        }
+                      } else if (e.keyCode === monaco.KeyCode.KeyV && (e.ctrlKey || e.metaKey)) {
+                        e.preventDefault();
+                        e.stopPropagation();
                         void clipboardReadText().then((text) => {
                           if (!text) return;
                           editor.pushUndoStop();
