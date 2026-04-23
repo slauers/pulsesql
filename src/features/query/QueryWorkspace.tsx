@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Editor from '@monaco-editor/react';
+import { format as sqlFormat } from 'sql-formatter';
 import { useQueriesStore } from '../../store/queries';
 import { type DatabaseEngine, useConnectionsStore, getConnectionColor, hexToRgba } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
@@ -25,6 +26,8 @@ import {
   Trash2,
   Maximize2,
   Minimize2,
+  AlignLeft,
+  Sparkles,
 } from 'lucide-react';
 import ResultGrid from './ResultGrid';
 import QueryHistoryDrawer from '../history/components/QueryHistoryDrawer';
@@ -79,6 +82,7 @@ const SEMANTIC_SUCCESS_DURATION_MS = 3600;
 const SEMANTIC_ERROR_DURATION_MS = 6200;
 const SEMANTIC_WARNING_DURATION_MS = 6200;
 const CONNECTION_MENU_WIDTH = 340;
+let sqlFormatterRegistered = false;
 
 export default function QueryWorkspace() {
   const {
@@ -128,6 +132,16 @@ export default function QueryWorkspace() {
   const isConnectionReady = runtimeStatus === 'connected';
   const transactionOpen = resolvedConnectionId ? transactionOpenByConnection[resolvedConnectionId] === true : false;
   const activeConnectionLogCount = resolvedConnectionId ? (connectionLogs[resolvedConnectionId]?.length ?? 0) : 0;
+
+  const toolbarStatus: { label: string; color: string; pulse: boolean } | null = useMemo(() => {
+    const tr = (key: Parameters<typeof translate>[1]) => translate(locale, key);
+    if (semanticBackgroundState === 'running') return { label: tr('statusRunning'), color: connectionColor, pulse: true };
+    if (semanticBackgroundState === 'success') return { label: tr('statusSuccess'), color: '#4ade80', pulse: false };
+    if (semanticBackgroundState === 'error') return { label: tr('statusError'), color: '#f87171', pulse: false };
+    if (semanticBackgroundState === 'warning') return { label: tr('statusWarning'), color: '#fb923c', pulse: false };
+    if (resolvedConnectionId && isConnectionReady) return { label: tr('statusConnected'), color: connectionColor, pulse: false };
+    return null;
+  }, [semanticBackgroundState, isConnectionReady, resolvedConnectionId, connectionColor, locale]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<QueryErrorPresentation | null>(null);
@@ -244,6 +258,10 @@ export default function QueryWorkspace() {
       window.removeEventListener('keydown', handleEscape);
     };
   }, [connectionMenuOpen]);
+
+  const handleFormat = useCallback(() => {
+    editorRef.current?.getAction('editor.action.formatDocument')?.run();
+  }, []);
 
   const scheduleSemanticReset = useCallback((durationMs: number) => {
     if (semanticResetTimeoutRef.current) {
@@ -1289,7 +1307,45 @@ export default function QueryWorkspace() {
                 <Clock3 size={13} />
                 {t('history')}
               </button>
+              <button
+                onClick={handleFormat}
+                disabled={!activeTab}
+                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  background: 'var(--bt-surface)',
+                  border: '1px solid var(--bt-border)',
+                  color: 'var(--bt-muted)',
+                }}
+              >
+                <AlignLeft size={13} />
+                {t('format')}
+              </button>
+              <button
+                disabled
+                title={t('explainComingSoon')}
+                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium opacity-40 cursor-not-allowed"
+                style={{
+                  background: 'var(--bt-surface)',
+                  border: '1px solid var(--bt-border)',
+                  color: 'var(--bt-muted)',
+                }}
+              >
+                <Sparkles size={13} />
+                {t('explain')}
+              </button>
               <div className="ml-auto flex min-w-0 w-full sm:w-auto items-center gap-2">
+                {toolbarStatus ? (
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] transition-colors${toolbarStatus.pulse ? ' animate-pulse' : ''}`}
+                    style={{
+                      borderColor: hexToRgba(toolbarStatus.color, 0.35),
+                      background: hexToRgba(toolbarStatus.color, 0.10),
+                      color: toolbarStatus.color,
+                    }}
+                  >
+                    {toolbarStatus.label}
+                  </span>
+                ) : null}
                 <button
                   ref={connectionMenuButtonRef}
                   type="button"
@@ -1337,6 +1393,19 @@ export default function QueryWorkspace() {
                   onChange={(val) => updateTabContent(activeTab.id, val || "")}
                   beforeMount={(monaco) => {
                     ensureMonacoThemes(monaco);
+                    if (!sqlFormatterRegistered) {
+                      monaco.languages.registerDocumentFormattingEditProvider('sql', {
+                        provideDocumentFormattingEdits(model: import('monaco-editor').editor.ITextModel) {
+                          try {
+                            const formatted = sqlFormat(model.getValue(), { language: 'sql', tabWidth: 2 });
+                            return [{ range: model.getFullModelRange(), text: formatted }];
+                          } catch {
+                            return [];
+                          }
+                        },
+                      });
+                      sqlFormatterRegistered = true;
+                    }
                   }}
                   options={{
                     minimap: { enabled: false },
@@ -1367,6 +1436,20 @@ export default function QueryWorkspace() {
                   }}
                   onMount={(editor, monaco) => {
                     editorRef.current = editor;
+                    // Tauri WKWebView blocks navigator.clipboard.readText(); intercept native paste events directly
+                    const domNode = editor.getDomNode();
+                    if (domNode) {
+                      domNode.addEventListener('paste', (e: ClipboardEvent) => {
+                        const text = e.clipboardData?.getData('text/plain');
+                        if (!text) return;
+                        e.stopPropagation();
+                        e.preventDefault();
+                        const sel = editor.getSelection();
+                        const model = editor.getModel();
+                        if (!model) return;
+                        editor.executeEdits('paste', [{ range: sel ?? model.getFullModelRange(), text, forceMoveMarkers: true }]);
+                      }, true);
+                    }
                     autocompleteDisposableRef.current?.dispose();
                     autocompleteDisposableRef.current = registerSqlAutocomplete(monaco, () => autocompleteContextRef.current);
                     lastCursorPositionRef.current = editor.getPosition();

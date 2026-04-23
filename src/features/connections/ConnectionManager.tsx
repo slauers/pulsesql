@@ -23,7 +23,7 @@ import tauriConfig from '../../../src-tauri/tauri.conf.json';
 import changelog from '../../../CHANGELOG.md?raw';
 import oracleMark from '../../assets/oracle-mark.svg';
 import postgresMark from '../../assets/postgres-mark.svg';
-import { ConnectionConfig, useConnectionsStore, getConnectionColor, hexToRgba } from '../../store/connections';
+import { ConnectionConfig, CONNECTION_COLOR_PALETTE, useConnectionsStore, getConnectionColor, hexToRgba } from '../../store/connections';
 import { useConnectionRuntimeStore, type RuntimeConnectionState } from '../../store/connectionRuntime';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
@@ -61,7 +61,7 @@ type WorkspaceMetricsPayload = {
 };
 
 export default function ConnectionManager() {
-  const { connections, activeConnectionId, favoriteConnectionId, addConnection, removeConnection, setActiveConnection, setFavoriteConnection } =
+  const { connections, activeConnectionId, favoriteConnectionId, addConnection, updateConnection, removeConnection, setActiveConnection, setFavoriteConnection } =
     useConnectionsStore();
   const activeSchema = useDatabaseSessionStore(
     (state) => (activeConnectionId ? state.activeSchemaByConnection[activeConnectionId] ?? null : null),
@@ -116,6 +116,7 @@ export default function ConnectionManager() {
   const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(new Set());
   const [exportSavedPath, setExportSavedPath] = useState<string | null>(null);
   const [removeConfirmConn, setRemoveConfirmConn] = useState<ConnectionConfig | null>(null);
+  const [colorPickerConnId, setColorPickerConnId] = useState<string | null>(null);
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
@@ -533,6 +534,9 @@ export default function ConnectionManager() {
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden">
+      {colorPickerConnId ? (
+        <div className="fixed inset-0 z-40" onMouseDown={() => setColorPickerConnId(null)} />
+      ) : null}
       <div
         style={{
           position: 'absolute',
@@ -745,21 +749,60 @@ export default function ConnectionManager() {
                                 {conn.host}{conn.database ? `/${conn.database}` : ''}
                               </div>
                             </div>
-                            <span
-                              style={{
-                                padding: '2px 6px',
-                                borderRadius: 5,
-                                fontSize: 9,
-                                fontWeight: 700,
-                                letterSpacing: 0.5,
-                                color: connColor,
-                                border: `1px solid ${hexToRgba(connColor, 0.3)}`,
-                                background: hexToRgba(connColor, 0.1),
-                                flexShrink: 0,
-                              }}
-                            >
-                              {conn.engine === 'oracle' ? 'ORA' : conn.engine === 'mysql' ? 'MY' : 'PG'}
-                            </span>
+                            <div className="relative flex-shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setColorPickerConnId(colorPickerConnId === conn.id ? null : conn.id); }}
+                                title="Change connection color"
+                                style={{
+                                  padding: '2px 6px',
+                                  borderRadius: 5,
+                                  fontSize: 9,
+                                  fontWeight: 700,
+                                  letterSpacing: 0.5,
+                                  color: connColor,
+                                  border: `1px solid ${hexToRgba(connColor, 0.3)}`,
+                                  background: hexToRgba(connColor, 0.1),
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {conn.engine === 'oracle' ? 'ORA' : conn.engine === 'mysql' ? 'MY' : 'PG'}
+                              </button>
+                              {colorPickerConnId === conn.id && (
+                                <div
+                                  className="absolute right-0 top-7 z-50 rounded-lg border border-border bg-surface p-2 shadow-xl"
+                                  style={{ width: 160 }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                >
+                                  <div className="flex flex-wrap gap-1.5 mb-2">
+                                    {CONNECTION_COLOR_PALETTE.map((c) => (
+                                      <button
+                                        key={c}
+                                        type="button"
+                                        onClick={() => { updateConnection({ ...conn, color: c }); setColorPickerConnId(null); }}
+                                        className="w-6 h-6 rounded-md transition-transform hover:scale-110"
+                                        style={{
+                                          background: c,
+                                          outline: connColor === c ? `2px solid ${c}` : 'none',
+                                          outlineOffset: 2,
+                                        }}
+                                      />
+                                    ))}
+                                  </div>
+                                  <div className="relative flex items-center gap-1.5 rounded-md border border-border px-2 py-1 cursor-pointer hover:bg-background/40">
+                                    <div className="w-4 h-4 rounded-sm flex-shrink-0" style={{ background: connColor }} />
+                                    <span className="text-xs text-muted font-mono flex-1">{connColor}</span>
+                                    <input
+                                      type="color"
+                                      value={connColor}
+                                      onChange={(e) => updateConnection({ ...conn, color: e.target.value })}
+                                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </button>
                       );
@@ -900,6 +943,21 @@ export default function ConnectionManager() {
           >
             <PlugZap size={14} className="text-muted" />
             <span>{t('disconnect')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const connId = connectionContextMenu.connId;
+              setConnectionContextMenu(null);
+              setColorPickerConnId(connId);
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+          >
+            <span
+              className="h-3.5 w-3.5 rounded-sm flex-shrink-0"
+              style={{ background: getConnectionColor(connections, connectionContextMenu.connId) }}
+            />
+            <span>Change color…</span>
           </button>
           <div className="my-1 border-t border-border/70" />
           <button

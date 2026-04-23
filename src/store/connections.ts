@@ -33,6 +33,7 @@ export interface ConnectionConfig {
   oracleDriverProperties?: string;
   preferredSchema?: string;
   ssh?: SshConfig;
+  color?: string;
 }
 
 export const CONNECTION_COLOR_PALETTE = [
@@ -48,8 +49,11 @@ export const CONNECTION_COLOR_PALETTE = [
 
 export function getConnectionColor(connections: ConnectionConfig[], connId: string | null | undefined): string {
   if (!connId) return '#47C4E8';
+  const conn = connections.find((c) => c.id === connId);
+  if (!conn) return '#47C4E8';
+  if (conn.color) return conn.color;
   const idx = connections.findIndex((c) => c.id === connId);
-  return idx === -1 ? '#47C4E8' : CONNECTION_COLOR_PALETTE[idx % CONNECTION_COLOR_PALETTE.length];
+  return CONNECTION_COLOR_PALETTE[idx % CONNECTION_COLOR_PALETTE.length];
 }
 
 export function hexToRgba(hex: string, alpha: number): string {
@@ -237,6 +241,7 @@ function normalizeConnection(input: unknown): ConnectionConfig | null {
     oracleConnectionType: raw.oracleConnectionType === 'sid' ? 'sid' : 'serviceName',
     oracleDriverProperties: asOptionalString(raw.oracleDriverProperties),
     preferredSchema: asOptionalString(raw.preferredSchema),
+    color: asOptionalString(raw.color),
     ssh: {
       enabled: sshEnabled,
       host: asOptionalString(ssh?.host ?? raw.sshHost),
