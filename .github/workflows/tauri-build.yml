@@ -103,7 +103,7 @@ jobs:
 
       - name: Publish release
         run: |
-          if [[ "${{ github.ref_name }}" == *"-rc"* ]] || [[ "${{ github.ref_name }}" == *"-beta"* ]]; then
+          if [[ "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-.+ ]]; then
             gh release edit "${{ github.ref_name }}" --draft=false --prerelease
           else
             gh release edit "${{ github.ref_name }}" --draft=false
