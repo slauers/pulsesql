@@ -22,15 +22,14 @@ export const APP_THEMES: AppThemeDefinition[] = [
     label: 'PulseSQL Dark',
     mode: 'dark',
     colors: {
-      background: '#0B0F14',
-      surface: '#10171F',
-      border: '#1D2A34',
-      primary: '#2BD3C9',
-      text: '#E6EDF3',
-      muted: '#88A0AF',
-      bodyBackground:
-        'radial-gradient(circle at top center, rgba(43, 211, 201, 0.16), transparent 34%), radial-gradient(circle at 16% 18%, rgba(43, 211, 201, 0.08), transparent 22%), linear-gradient(180deg, #0d1218 0%, #0b0f14 54%, #090d11 100%)',
-      glassPanel: 'rgba(16, 23, 31, 0.8)',
+      background: '#08111A',
+      surface: '#0D1824',
+      border: '#1A2C3C',
+      primary: '#47C4E8',
+      text: '#EDF4FB',
+      muted: '#8AA3B6',
+      bodyBackground: '#08111A',
+      glassPanel: 'rgba(13, 24, 36, 0.85)',
     },
   },
   {

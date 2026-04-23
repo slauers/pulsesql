@@ -182,8 +182,11 @@ export default function ResultGrid({
           position: 'relative',
         }}
       >
-        <div className="flex bg-surface/95 backdrop-blur text-xs text-muted sticky top-0 z-10 border-b border-border/90 shadow-[0_8px_24px_rgba(0,0,0,0.18)]" style={{ height: headerHeight }}>
-          <div className="w-14 px-2 py-2 text-center sticky left-0 bg-surface/95 select-none opacity-50 shrink-0 border-r border-border/50">
+        <div
+          className="sticky top-0 z-10 flex border-b border-border/80 bg-[#0c1621]/95 text-[11px] text-muted shadow-[0_8px_24px_rgba(0,0,0,0.18)] backdrop-blur"
+          style={{ height: headerHeight }}
+        >
+          <div className="sticky left-0 w-12 shrink-0 select-none border-r border-border/35 bg-[#0c1621]/95 px-2 py-2 text-center opacity-45">
             #
           </div>
           {columns.map((col, idx) => {
@@ -191,16 +194,16 @@ export default function ResultGrid({
             return (
               <div
                 key={idx}
-                className="relative border-r border-border/50"
+                className="relative border-r border-border/35"
                 style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
               >
                 <div
-                  className="px-3 py-1.5 leading-tight whitespace-nowrap overflow-hidden text-ellipsis cursor-pointer select-none hover:bg-border/20"
+                  className="cursor-pointer select-none overflow-hidden whitespace-nowrap px-3 py-1.5 leading-tight text-ellipsis hover:bg-background/28"
                   onClick={() => handleSortToggle(col.name)}
                   title={`Ordenar por ${col.name}`}
                 >
                   <div className="flex items-center gap-1.5 overflow-hidden">
-                    <span className={`overflow-hidden text-ellipsis text-sm font-medium normal-case tracking-normal ${isSorted ? 'text-primary' : 'text-text'}`}>
+                    <span className={`overflow-hidden text-ellipsis font-mono text-[12px] normal-case tracking-normal ${isSorted ? 'text-primary' : 'text-text/92'}`}>
                       {col.name}
                     </span>
                     {isSorted ? (
@@ -246,17 +249,21 @@ export default function ResultGrid({
           })}
         </div>
         
-        <div className="absolute w-full divide-y divide-border/30" style={{ top: `${headerHeight}px` }}>
+        <div className="absolute w-full" style={{ top: `${headerHeight}px` }}>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const row = sortedRows[virtualRow.index];
-            const rowTone = virtualRow.index % 2 === 0 ? 'bg-[#0A1321]' : 'bg-[#0D1726]';
+            const rowTone = virtualRow.index % 2 === 0 ? 'bg-[#09131d]' : 'bg-[#0b1520]';
             const isThisRowLocked = lockedRowIndex === virtualRow.index;
             const isSelectedRow = selectedRowIndex === virtualRow.index;
             return (
               <div
                 key={virtualRow.key}
-                className={`group absolute w-full flex text-sm transition-colors ${rowTone} ${
-                  isSelectedRow ? 'ring-1 ring-inset ring-sky-400/45 bg-sky-400/8' : isThisRowLocked ? 'ring-1 ring-inset ring-primary/30' : 'hover:bg-primary/10'
+                className={`group absolute flex w-full border-b border-border/20 text-sm transition-colors ${rowTone} ${
+                  isSelectedRow
+                    ? 'ring-1 ring-inset ring-primary/35 bg-primary/6'
+                    : isThisRowLocked
+                      ? 'ring-1 ring-inset ring-primary/25'
+                      : 'hover:bg-[#0e1a27]'
                 }`}
                 style={{
                   height: `${virtualRow.size}px`,
@@ -266,10 +273,10 @@ export default function ResultGrid({
                 <button
                   type="button"
                   onClick={() => onRowSelect?.(virtualRow.index, row as Record<string, unknown>)}
-                  className={`w-14 px-2 flex items-center justify-center border-r border-border/20 text-xs font-mono sticky left-0 shrink-0 transition-colors ${
+                  className={`sticky left-0 flex w-12 shrink-0 items-center justify-center border-r border-border/25 px-2 text-xs font-mono transition-colors ${
                     isSelectedRow
-                      ? 'text-sky-200 bg-sky-400/10'
-                      : `${rowTone} text-muted/50 ${isThisRowLocked ? '' : 'group-hover:bg-primary/10'}`
+                      ? 'bg-primary/8 text-primary'
+                      : `${rowTone} text-muted/45 ${isThisRowLocked ? '' : 'group-hover:bg-[#0e1a27]'}`
                   }`}
                   title="Selecionar linha"
                 >
@@ -289,7 +296,7 @@ export default function ResultGrid({
                       key={cIdx}
                       onClick={() => handleCellClick(cellKey, val, virtualRow.index)}
                       onDoubleClick={() => openEdit(cellKey, val)}
-                      className={`px-3 flex items-center gap-1.5 whitespace-nowrap overflow-hidden border-r border-border/20 font-mono transition-colors ${
+                      className={`flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-r border-border/20 px-3.5 font-mono text-[13px] transition-colors ${
                         isEditing
                           ? 'bg-primary/10 outline outline-1 outline-primary/60 p-0'
                           : isPendingEdit
@@ -297,10 +304,10 @@ export default function ResultGrid({
                             : hasEditError
                               ? 'bg-red-400/12 text-red-100'
                               : isInactiveCell
-                                ? 'opacity-35 pointer-events-none select-none text-text'
+                                ? 'pointer-events-none select-none text-text opacity-35'
                                 : isCopied
                                   ? 'bg-emerald-400/16 text-emerald-100'
-                                  : 'text-text cursor-pointer text-ellipsis'
+                                  : 'cursor-pointer text-ellipsis text-text/94'
                       }`}
                       style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
                       title={hasEditError ? editError : displayValue}

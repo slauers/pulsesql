@@ -35,6 +35,30 @@ export interface ConnectionConfig {
   ssh?: SshConfig;
 }
 
+export const CONNECTION_COLOR_PALETTE = [
+  '#3ECF8E',
+  '#47C4E8',
+  '#7B6BFF',
+  '#FFB547',
+  '#E86A4E',
+  '#FF6B9D',
+  '#4ECDC4',
+  '#95E06C',
+];
+
+export function getConnectionColor(connections: ConnectionConfig[], connId: string | null | undefined): string {
+  if (!connId) return '#47C4E8';
+  const idx = connections.findIndex((c) => c.id === connId);
+  return idx === -1 ? '#47C4E8' : CONNECTION_COLOR_PALETTE[idx % CONNECTION_COLOR_PALETTE.length];
+}
+
+export function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 interface ConnectionsState {
   connections: ConnectionConfig[];
   activeConnectionId: string | null;
