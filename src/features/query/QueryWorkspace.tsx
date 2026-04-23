@@ -923,12 +923,7 @@ export default function QueryWorkspace() {
     setConnectionMenuOpen(false);
   }, [activeTab, setActiveConnection, setTabConnection]);
 
-  const toggleConnectionMenu = useCallback(() => {
-    const rect = connectionMenuButtonRef.current?.getBoundingClientRect();
-    if (!rect) {
-      return;
-    }
-
+  const openConnectionMenu = useCallback((rect: DOMRect) => {
     setConnectionMenuPosition({
       x: Math.round(Math.max(8, Math.min(rect.right - CONNECTION_MENU_WIDTH, window.innerWidth - CONNECTION_MENU_WIDTH - 8))),
       y: Math.round(Math.min(rect.bottom + 8, window.innerHeight - 220)),
@@ -1279,7 +1274,7 @@ export default function QueryWorkspace() {
               <button
                 ref={connectionMenuButtonRef}
                 type="button"
-                onClick={toggleConnectionMenu}
+                onClick={(e) => openConnectionMenu(e.currentTarget.getBoundingClientRect())}
                 className="shrink-0 flex items-center gap-2 border-l border-border/60 px-3 text-muted hover:text-text transition-colors"
                 style={{
                   borderBottom: connectionMenuOpen ? `1px solid ${connectionColor}` : '1px solid var(--bt-border)',
