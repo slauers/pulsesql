@@ -640,15 +640,14 @@ body[data-density='compact'] .bt-density-chip {
   position: relative;
   z-index: 1;
   display: flex;
-  width: 300px;
+  width: 450px;
   max-width: calc(100vw - 24px);
   flex-direction: column;
-  gap: 14px;
+  gap: 24px;
   border: 1px solid rgba(var(--bt-border-rgb), 0.78);
-  border-radius: 12px;
-  padding: 20px 20px 16px;
-  background:
-    linear-gradient(180deg, rgba(var(--bt-surface-rgb), 0.96), rgba(var(--bt-background-rgb), 0.98));
+  border-radius: 16px;
+  padding: 36px 28px 32px;
+  background: var(--bt-background);
   box-shadow:
     0 24px 54px rgba(0, 0, 0, 0.36),
     inset 0 1px 0 rgba(255, 255, 255, 0.035);
@@ -691,16 +690,16 @@ body[data-density='compact'] .bt-density-chip {
 }
 
 .splash-screen__title {
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--bt-text);
   line-height: 1.1;
 }
 
 .splash-screen__subtitle {
   font-size: 10px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: rgba(var(--bt-muted-rgb), 0.72);
 }
