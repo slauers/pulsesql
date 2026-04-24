@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, ArrowDown, Check, LoaderCircle } from 'lucide-react';
+import { ArrowUp, ArrowDown, Check } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface ResultGridProps {
@@ -8,13 +8,15 @@ interface ResultGridProps {
     subtitle?: string | null;
     isPrimaryKey?: boolean;
     isForeignKey?: boolean;
+    isAutoIncrement?: boolean;
   }>;
   rows: any[];
   rowNumberOffset?: number;
   density?: 'compact' | 'comfortable';
-  onCellEdit?: (colName: string, rowIndex: number, newValue: string | null, row: Record<string, unknown>) => Promise<void>;
-  editingCell?: string | null;
-  editError?: string | null;
+  onCellChange?: (colName: string, rowIndex: number, newValue: string | null, row: Record<string, unknown>) => void;
+  pendingRowEdits?: Map<object, Record<string, string | null>>;
+  pendingNewRows?: Record<string, unknown>[];
+  focusNewRowToken?: number;
   selectedRowIndex?: number | null;
   onRowSelect?: (rowIndex: number, row: Record<string, unknown>) => void;
 }
@@ -24,9 +26,10 @@ export default function ResultGrid({
   rows,
   rowNumberOffset = 0,
   density = 'comfortable',
-  onCellEdit,
-  editingCell,
-  editError,
+  onCellChange,
+  pendingRowEdits,
+  pendingNewRows,
+  focusNewRowToken,
   selectedRowIndex = null,
   onRowSelect,
 }: ResultGridProps) {
@@ -41,8 +44,8 @@ export default function ResultGrid({
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
   const copyTimeoutRef = useRef<number | null>(null);
   const [activeEditCell, setActiveEditCell] = useState<string | null>(null);
-  const [pendingEditCell, setPendingEditCell] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
+  const skipNextBlurRef = useRef(false);
   const editInputRef = useRef<HTMLInputElement>(null);
 
   const resolvedWidths = useMemo(
@@ -80,9 +83,10 @@ export default function ResultGrid({
 
   const rowHeight = density === 'compact' ? 26 : 30;
   const headerHeight = density === 'compact' ? 40 : 44;
+  const allRows = [...sortedRows, ...(pendingNewRows ?? [])];
 
   const rowVirtualizer = useVirtualizer({
-    count: sortedRows.length,
+    count: allRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
     overscan: 20,
@@ -118,12 +122,41 @@ export default function ResultGrid({
     if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
   }, []);
 
-  const anyEditActive = activeEditCell !== null || editingCell !== null || pendingEditCell !== null;
+  // Safety net: if activeEditCell is set but the input never mounted, reset after 120ms
+  useEffect(() => {
+    if (!activeEditCell) return;
+    const tid = window.setTimeout(() => {
+      if (!editInputRef.current) setActiveEditCell(null);
+    }, 120);
+    return () => window.clearTimeout(tid);
+  }, [activeEditCell]);
+
+  useEffect(() => {
+    if (!focusNewRowToken) return;
+    const newRowIndex = allRows.length - 1;
+    if (newRowIndex < 0) return;
+
+    const firstEditableCol = columns.find((c) => !c.isAutoIncrement);
+    if (!firstEditableCol) return;
+
+    const cellKey = `${newRowIndex}-${firstEditableCol.name}`;
+
+    // scrollToIndex is synchronous — virtualizer renders the row before the rAF fires
+    rowVirtualizer.scrollToIndex(newRowIndex, { behavior: 'auto' });
+
+    const raf = window.requestAnimationFrame(() => {
+      setActiveEditCell(cellKey);
+      setEditDraft('');
+    });
+    return () => cancelAnimationFrame(raf);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusNewRowToken]);
+
+  const anyEditActive = activeEditCell !== null;
 
   const lockedRowIndex = (() => {
-    const key = activeEditCell ?? editingCell ?? pendingEditCell;
-    if (!key) return null;
-    const idx = parseInt(key, 10);
+    if (!activeEditCell) return null;
+    const idx = parseInt(activeEditCell, 10);
     return Number.isNaN(idx) ? null : idx;
   })();
 
@@ -138,23 +171,17 @@ export default function ResultGrid({
   };
 
   const openEdit = (cellKey: string, value: unknown) => {
-    if (!onCellEdit || anyEditActive) return;
+    if (!onCellChange || anyEditActive) return;
     setActiveEditCell(cellKey);
     setEditDraft(value === null ? '' : formatCellValue(value));
     if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
     setCopiedCell(null);
   };
 
-  const commitEdit = async (colName: string, rowIndex: number, row: Record<string, unknown>) => {
-    if (!onCellEdit || !activeEditCell) return;
-    const cellKey = activeEditCell;
-    setPendingEditCell(cellKey);
+  const commitEdit = (colName: string, rowIndex: number, row: Record<string, unknown>) => {
+    if (!activeEditCell) return;
     setActiveEditCell(null);
-    try {
-      await onCellEdit(colName, rowIndex, editDraft === '' ? null : editDraft, row);
-    } finally {
-      setPendingEditCell((current) => (current === cellKey ? null : current));
-    }
+    onCellChange?.(colName, rowIndex, editDraft === '' ? null : editDraft, row);
   };
 
   const cancelEdit = () => {
@@ -170,23 +197,23 @@ export default function ResultGrid({
 
   return (
     <div ref={parentRef} className="h-full w-full overflow-auto bg-transparent relative">
-      {!sortedRows.length ? (
+      {!allRows.length ? (
         <div className="h-full flex items-center justify-center text-sm text-muted/60">
           Nenhum resultado para o filtro aplicado.
         </div>
       ) : null}
       <div
-        className={`min-w-fit ${sortedRows.length ? '' : 'hidden'}`}
+        className={`min-w-fit ${allRows.length ? '' : 'hidden'}`}
         style={{
           height: `${rowVirtualizer.getTotalSize() + headerHeight}px`,
           position: 'relative',
         }}
       >
         <div
-          className="sticky top-0 z-10 flex border-b border-border/80 bg-[#0c1621]/95 text-[11px] text-muted shadow-[0_8px_24px_rgba(0,0,0,0.18)] backdrop-blur"
+          className="sticky top-0 z-10 flex border-b border-border/80 bg-surface/95 text-[11px] text-muted backdrop-blur"
           style={{ height: headerHeight }}
         >
-          <div className="sticky left-0 w-12 shrink-0 select-none border-r border-border/35 bg-[#0c1621]/95 px-2 py-2 text-center opacity-45">
+          <div className="sticky left-0 w-12 shrink-0 select-none border-r border-border/35 bg-surface/95 px-2 py-2 text-center opacity-45">
             #
           </div>
           {columns.map((col, idx) => {
@@ -241,7 +268,7 @@ export default function ResultGrid({
                     });
                   }}
                   className={`absolute right-0 top-0 h-full w-1 cursor-col-resize transition-colors ${
-                    activeResize?.column === col.name ? 'bg-primary/40' : 'hover:bg-primary/25'
+                    activeResize?.column === col.name ? 'bg-primary/25' : 'hover:bg-primary/15'
                   }`}
                 />
               </div>
@@ -251,19 +278,28 @@ export default function ResultGrid({
         
         <div className="absolute w-full" style={{ top: `${headerHeight}px` }}>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const row = sortedRows[virtualRow.index];
-            const rowTone = virtualRow.index % 2 === 0 ? 'bg-[#09131d]' : 'bg-[#0b1520]';
+            const row = allRows[virtualRow.index] as Record<string, unknown>;
+            const isNewRow = virtualRow.index >= sortedRows.length;
+            const rowPendingEdits = isNewRow ? null : (pendingRowEdits?.get(row) ?? null);
+            const isDirtyRow = !isNewRow && rowPendingEdits != null;
+            const rowTone = virtualRow.index % 2 === 0 ? 'bg-background/70' : 'bg-surface/26';
             const isThisRowLocked = lockedRowIndex === virtualRow.index;
             const isSelectedRow = selectedRowIndex === virtualRow.index;
             return (
               <div
                 key={virtualRow.key}
-                className={`group absolute flex w-full border-b border-border/20 text-sm transition-colors ${rowTone} ${
+                className={`group absolute flex w-full border-b text-sm transition-colors ${
+                  isNewRow
+                    ? 'border-emerald-400/20 bg-emerald-400/6'
+                    : isDirtyRow
+                      ? 'border-amber-400/20 bg-amber-400/6'
+                      : `border-border/20 ${rowTone}`
+                } ${
                   isSelectedRow
-                    ? 'ring-1 ring-inset ring-primary/35 bg-primary/6'
+                    ? 'ring-1 ring-inset ring-primary/20 bg-primary/5'
                     : isThisRowLocked
-                      ? 'ring-1 ring-inset ring-primary/25'
-                      : 'hover:bg-[#0e1a27]'
+                      ? 'ring-1 ring-inset ring-primary/20'
+                      : 'hover:bg-surface/55'
                 }`}
                 style={{
                   height: `${virtualRow.size}px`,
@@ -272,45 +308,55 @@ export default function ResultGrid({
               >
                 <button
                   type="button"
-                  onClick={() => onRowSelect?.(virtualRow.index, row as Record<string, unknown>)}
-                  className={`sticky left-0 flex w-12 shrink-0 items-center justify-center border-r border-border/25 px-2 text-xs font-mono transition-colors ${
-                    isSelectedRow
-                      ? 'bg-primary/8 text-primary'
-                      : `${rowTone} text-muted/45 ${isThisRowLocked ? '' : 'group-hover:bg-[#0e1a27]'}`
+                  onClick={() => onRowSelect?.(virtualRow.index, row)}
+                  className={`sticky left-0 flex w-12 shrink-0 items-center justify-center border-r px-2 text-xs font-mono transition-colors ${
+                    isNewRow
+                      ? 'border-emerald-400/20 bg-emerald-400/6 text-emerald-300/60'
+                      : isDirtyRow
+                        ? 'border-amber-400/20 bg-amber-400/6 text-amber-300/60'
+                        : isSelectedRow
+                          ? `bg-primary/5 text-text border-border/25`
+                          : `${rowTone} text-muted/45 border-border/25 ${isThisRowLocked ? '' : 'group-hover:bg-surface/55'}`
                   }`}
                   title="Selecionar linha"
                 >
-                  {rowNumberOffset + virtualRow.index + 1}
+                  {isNewRow ? '+' : rowNumberOffset + virtualRow.index + 1}
                 </button>
                 {columns.map((col, cIdx) => {
-                  const val = row[col.name];
+                  const stagedValue = rowPendingEdits?.[col.name];
+                  const hasStagedValue = col.name in (rowPendingEdits ?? {});
+                  const val = hasStagedValue ? stagedValue : row[col.name];
                   const displayValue = formatCellValue(val);
                   const cellKey = `${virtualRow.index}-${col.name}`;
                   const isCopied = copiedCell === cellKey;
                   const isEditing = activeEditCell === cellKey;
-                  const isPendingEdit = editingCell === cellKey || pendingEditCell === cellKey;
-                  const hasEditError = editError != null && editingCell === cellKey;
-                  const isInactiveCell = isThisRowLocked && !isEditing && !isPendingEdit && !hasEditError;
+                  const isInactiveCell = isThisRowLocked && !isEditing;
                   return (
                     <div
                       key={cIdx}
-                      onClick={() => handleCellClick(cellKey, val, virtualRow.index)}
-                      onDoubleClick={() => openEdit(cellKey, val)}
+                      onClick={() => {
+                        if (isNewRow && !isEditing) {
+                          openEdit(cellKey, val);
+                          return;
+                        }
+                        handleCellClick(cellKey, val, virtualRow.index);
+                      }}
+                      onDoubleClick={() => {
+                        if (!isNewRow) openEdit(cellKey, val);
+                      }}
                       className={`flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-r border-border/20 px-3.5 font-mono text-[13px] transition-colors ${
                         isEditing
                           ? 'bg-primary/10 outline outline-1 outline-primary/60 p-0'
-                          : isPendingEdit
-                            ? 'bg-sky-400/10 text-sky-100'
-                            : hasEditError
-                              ? 'bg-red-400/12 text-red-100'
-                              : isInactiveCell
-                                ? 'pointer-events-none select-none text-text opacity-35'
-                                : isCopied
-                                  ? 'bg-emerald-400/16 text-emerald-100'
-                                  : 'cursor-pointer text-ellipsis text-text/94'
+                          : hasStagedValue
+                            ? 'bg-amber-400/10 text-amber-100'
+                            : isInactiveCell
+                              ? 'pointer-events-none select-none text-text opacity-35'
+                              : isCopied
+                                ? 'bg-emerald-400/16 text-emerald-100'
+                                : 'cursor-pointer text-ellipsis text-text/94'
                       }`}
                       style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
-                      title={hasEditError ? editError : displayValue}
+                      title={displayValue}
                     >
                       {isEditing ? (
                         <input
@@ -320,19 +366,43 @@ export default function ResultGrid({
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                               e.preventDefault();
-                              void commitEdit(col.name, virtualRow.index, row as Record<string, unknown>);
+                              commitEdit(col.name, virtualRow.index, row);
+                            } else if (e.key === 'Tab') {
+                              e.preventDefault();
+                              const newValue = editDraft === '' ? null : editDraft;
+                              onCellChange?.(col.name, virtualRow.index, newValue, row);
+                              skipNextBlurRef.current = true;
+
+                              const editableCols = isNewRow
+                                ? columns.filter((c) => !c.isAutoIncrement)
+                                : columns;
+                              const editableIdx = editableCols.findIndex((c) => c.name === col.name);
+                              const nextIdx = editableIdx + (e.shiftKey ? -1 : 1);
+
+                              if (nextIdx >= 0 && nextIdx < editableCols.length) {
+                                const nextCol = editableCols[nextIdx];
+                                const stagedEdits = pendingRowEdits?.get(row) ?? {};
+                                const nextRaw = nextCol.name in stagedEdits
+                                  ? stagedEdits[nextCol.name]
+                                  : row[nextCol.name];
+                                setActiveEditCell(`${virtualRow.index}-${nextCol.name}`);
+                                setEditDraft(nextRaw === null ? '' : formatCellValue(nextRaw as unknown));
+                              } else {
+                                setActiveEditCell(null);
+                              }
                             } else if (e.key === 'Escape') {
                               cancelEdit();
                             }
                           }}
-                          onBlur={() => void commitEdit(col.name, virtualRow.index, row as Record<string, unknown>)}
+                          onBlur={() => {
+                            if (skipNextBlurRef.current) {
+                              skipNextBlurRef.current = false;
+                              return;
+                            }
+                            commitEdit(col.name, virtualRow.index, row);
+                          }}
                           className="w-full h-full px-3 bg-transparent text-text font-mono text-sm outline-none"
                         />
-                      ) : isPendingEdit ? (
-                        <>
-                          <LoaderCircle size={11} className="shrink-0 text-sky-400 animate-spin" />
-                          <span className="overflow-hidden text-ellipsis opacity-50">{val === null ? <span className="italic">null</span> : displayValue}</span>
-                        </>
                       ) : isCopied ? (
                         <>
                           <Check size={11} className="shrink-0 text-emerald-400" />

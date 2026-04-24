@@ -21,12 +21,11 @@ import {
 import { marked } from 'marked';
 import tauriConfig from '../../../src-tauri/tauri.conf.json';
 import changelog from '../../../CHANGELOG.md?raw';
-import oracleMark from '../../assets/oracle-mark.svg';
-import postgresMark from '../../assets/postgres-mark.svg';
 import { ConnectionConfig, CONNECTION_COLOR_PALETTE, useConnectionsStore, getConnectionColor, hexToRgba } from '../../store/connections';
 import { useConnectionRuntimeStore, type RuntimeConnectionState } from '../../store/connectionRuntime';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
+import { useQueriesStore } from '../../store/queries';
 import { invalidateMetadataCache } from '../database/metadata-cache';
 import { DatabaseExplorer } from '../database/Explorer';
 import QueryWorkspace from '../query/QueryWorkspace';
@@ -66,6 +65,7 @@ export default function ConnectionManager() {
   const activeSchema = useDatabaseSessionStore(
     (state) => (activeConnectionId ? state.activeSchemaByConnection[activeConnectionId] ?? null : null),
   );
+  const activeSchemaByConnection = useDatabaseSessionStore((state) => state.activeSchemaByConnection);
   const metadataActivity = useDatabaseSessionStore(
     (state) => (activeConnectionId ? state.metadataActivityByConnection[activeConnectionId] : undefined),
   );
@@ -91,6 +91,8 @@ export default function ConnectionManager() {
   const setSidebarWidth = useUiPreferencesStore((state) => state.setSidebarWidth);
   const sidebarCollapsed = useUiPreferencesStore((state) => state.sidebarCollapsed);
   const setSidebarCollapsed = useUiPreferencesStore((state) => state.setSidebarCollapsed);
+  const tabs = useQueriesStore((state) => state.tabs);
+  const activeTabId = useQueriesStore((state) => state.activeTabId);
   const [showForm, setShowForm] = useState(false);
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
@@ -120,11 +122,24 @@ export default function ConnectionManager() {
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+  const visualConnectionId = activeTab
+    ? activeTab.connectionId ?? null
+    : activeConnectionId ?? selectedConnectionId ?? null;
+  const visualConnection =
+    connections.find((connection) => connection.id === visualConnectionId) ?? null;
+  const visualConnectionColor = getConnectionColor(connections, visualConnectionId);
+  const visualConnectionSchema =
+    visualConnectionId
+      ? activeSchemaByConnection[visualConnectionId] ?? visualConnection?.preferredSchema ?? null
+      : null;
+  const visualConnectionState =
+    visualConnectionId ? resolveRuntimeConnectionState(runtimeStatus, visualConnectionId) : 'disconnected';
   const editingConnection =
     connections.find((connection) => connection.id === editingConnectionId) ?? null;
   const selectedConnection =
     connections.find((connection) => connection.id === selectedConnectionId) ?? null;
-  const statusBarConnection = activeConnection ?? selectedConnection ?? null;
+  const statusBarConnection = visualConnection ?? activeConnection ?? selectedConnection ?? null;
   const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
     translate(locale, key, params);
   const tLog = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
@@ -163,7 +178,7 @@ export default function ConnectionManager() {
     ? resolveRuntimeConnectionState(runtimeStatus, contextMenuConnection.id)
     : 'disconnected';
   const effectiveSidebarWidth = sidebarCollapsed ? 68 : compactViewport ? Math.min(sidebarWidth, 300) : sidebarWidth;
-  const statusBarColor = getConnectionColor(connections, statusBarConnection?.id);
+  const statusBarColor = getConnectionColor(connections, visualConnectionId ?? statusBarConnection?.id);
   const statusBarEngine =
     statusBarConnection?.engine === 'oracle'
       ? 'ORA'
@@ -541,44 +556,45 @@ export default function ConnectionManager() {
           top: 0,
           left: 0,
           right: 0,
-          height: 160,
-          background: `radial-gradient(ellipse 60% 100% at 20% 0%, ${getConnectionColor(connections, activeConnectionId)}18, transparent 60%)`,
+          height: 1,
+          background: visualConnectionColor,
+          opacity: visualConnectionId ? 0.34 : 0,
           pointerEvents: 'none',
           zIndex: 0,
         }}
       />
       <TitleBar
-        connectionColor={getConnectionColor(connections, activeConnectionId)}
-        connectionName={activeConnection?.name ?? null}
-        schema={activeSchema}
-        isConnected={activeConnectionState === 'connected'}
+        connectionColor={visualConnectionColor}
+        connectionName={visualConnection?.name ?? null}
+        schema={visualConnectionSchema}
+        isConnected={visualConnectionState === 'connected'}
       />
       <div className="relative z-10 flex min-h-0 flex-1 w-full">
         <div
-          className="shrink-0 border-r border-border/80 bg-surface/92 flex flex-col overflow-hidden"
+          className="shrink-0 border-r border-border/80 bg-surface/95 flex flex-col overflow-hidden"
           style={{ width: `${effectiveSidebarWidth}px` }}
         >
           <div className="border-b border-border/60 sticky top-0 bg-surface/95 z-10" style={{ padding: sidebarCollapsed ? '10px 8px' : '11px 14px 9px' }}>
             {sidebarCollapsed ? (
-              <div className="flex w-full flex-col items-center gap-3">
-                <button
-                  type="button"
-                  onClick={toggleSidebarCollapsed}
-                  className="p-2 text-muted hover:bg-background/45 hover:text-text"
-                  title={t('expandSidebar')}
-                >
-                  <ChevronsRight size={16} />
-                </button>
+              <div className="flex w-full items-center justify-center gap-1">
                 <button
                   type="button"
                   onClick={() => {
                     setEditingConnectionId(null);
                     setShowForm(true);
                   }}
-                  className="p-2 text-muted hover:bg-background/45 hover:text-text"
+                  className="rounded-md p-1.5 text-muted transition-colors hover:bg-background/45 hover:text-text"
                   title={t('newConnection')}
                 >
-                  <Plus size={16} />
+                  <Plus size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleSidebarCollapsed}
+                  className="rounded-md p-1.5 text-muted transition-colors hover:bg-background/45 hover:text-text"
+                  title={t('expandSidebar')}
+                >
+                  <ChevronsRight size={14} />
                 </button>
               </div>
             ) : (
@@ -622,10 +638,11 @@ export default function ConnectionManager() {
           </div>
 
           {sidebarCollapsed ? (
-            <div className="flex-1 overflow-y-auto p-2 space-y-1 min-h-0">
+            <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1 min-h-0">
               {connections.map((conn) => {
                 const isSelected = selectedConnectionId === conn.id || activeConnectionId === conn.id;
                 const state = resolveConnectionState(conn.id);
+                const connColor = getConnectionColor(connections, conn.id);
                 return (
                   <button
                     key={conn.id}
@@ -635,27 +652,28 @@ export default function ConnectionManager() {
                       setSidebarCollapsed(false);
                     }}
                     title={`${conn.name} • ${state}`}
-                    className={`relative flex w-full items-center justify-center border px-0 py-1.5 text-xs transition-colors ${
-                      isSelected
-                        ? 'border-primary/40 bg-primary/16 text-text'
-                        : 'border-transparent bg-transparent rounded-lg text-muted hover:bg-background/45 hover:text-text'
-                    }`}
+                    className="group relative flex h-9 w-full items-center justify-center rounded-lg text-xs transition-colors hover:bg-background/45"
+                    style={{
+                      background: 'transparent',
+                      color: isSelected ? 'var(--bt-text)' : 'var(--bt-muted)',
+                    }}
                   >
-                    {collapsedConnectionMark(conn.engine) ? (
-                      <img
-                        src={collapsedConnectionMark(conn.engine) as string}
-                        alt={conn.engine}
-                        className="h-8 w-8 object-contain"
-                      />
-                    ) : (
-                      <span className="max-w-[42px] truncate font-semibold">
-                        {connectionShortLabel(conn.name)}
-                      </span>
-                    )}
                     <span
-                      className={`absolute left-2 top-2 h-2.5 w-2.5 rounded-full ${connectionStateDot(state)}`}
+                      className={`mr-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${connectionStateDot(state)}`}
+                      style={state === 'connected' ? { background: connColor, opacity: 0.72 } : { opacity: 0.55 }}
                       title={translate(locale, connectionStatusLabelKey(state))}
                     />
+                    <span
+                      className="max-w-[34px] truncate font-mono text-[10.5px] font-semibold leading-none opacity-80 transition-opacity group-hover:opacity-100"
+                    >
+                      {connectionEngineLabel(conn.engine)}
+                    </span>
+                    {isSelected ? (
+                      <span
+                        className="absolute bottom-0 left-2 right-2 h-px rounded-full"
+                        style={{ background: hexToRgba(connColor, 0.62) }}
+                      />
+                    ) : null}
                   </button>
                 );
               })}
@@ -674,7 +692,7 @@ export default function ConnectionManager() {
                   <button
                     type="button"
                     onClick={() => setShowForm(true)}
-                    className="inline-flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/12 px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/18"
+                    className="inline-flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2 text-sm font-medium text-text transition-colors hover:bg-primary/10"
                   >
                     <Plus size={15} />
                     {t('newConnection')}
@@ -721,11 +739,11 @@ export default function ConnectionManager() {
                           style={{
                             padding: '10px 10px 10px 14px',
                             background: isExpanded
-                              ? hexToRgba(connColor, 0.13)
+                              ? hexToRgba(connColor, 0.045)
                               : isHighlighted
-                                ? hexToRgba(connColor, isActiveCard ? 0.12 : 0.08)
+                                ? hexToRgba(connColor, isActiveCard ? 0.042 : 0.028)
                                 : 'transparent',
-                            border: `1px solid ${isExpanded ? hexToRgba(connColor, 0.40) : isHighlighted ? hexToRgba(connColor, isActiveCard ? 0.38 : 0.18) : 'transparent'}`,
+                            border: `1px solid ${isExpanded ? hexToRgba(connColor, 0.18) : isHighlighted ? hexToRgba(connColor, isActiveCard ? 0.16 : 0.1) : 'transparent'}`,
                             borderRadius: isExpanded ? '8px 8px 0 0' : 8,
                           }}
                         >
@@ -739,14 +757,14 @@ export default function ConnectionManager() {
                               height: 26,
                               borderRadius: 2,
                               background: connColor,
-                              opacity: isHighlighted || isExpanded ? 1 : 0.55,
-                              boxShadow: isActiveCard || isExpanded ? `0 0 10px ${connColor}` : 'none',
+                              opacity: isHighlighted || isExpanded ? 0.7 : 0.34,
+                              boxShadow: 'none',
                             }}
                           />
                           <div className="flex items-start gap-3 min-w-0">
                             <span
                               className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${connectionStateDot(connectionState)}`}
-                              style={connectionState === 'connected' ? { background: connColor, boxShadow: `0 0 8px ${hexToRgba(connColor, 0.6)}` } : undefined}
+                              style={connectionState === 'connected' ? { background: connColor, opacity: 0.78 } : undefined}
                               title={translate(locale, connectionStatusLabelKey(connectionState))}
                             />
                             <div className="min-w-0 flex-1">
@@ -760,7 +778,7 @@ export default function ConnectionManager() {
                                   marginTop: 3,
                                   fontSize: 10.5,
                                   color: isActiveCard || isExpanded ? connColor : 'var(--bt-muted)',
-                                  opacity: isActiveCard || isExpanded ? 1 : 0.92,
+                                  opacity: isActiveCard || isExpanded ? 0.9 : 0.82,
                                 }}
                               >
                                 {conn.host}{conn.database ? `/${conn.database}` : ''}
@@ -773,9 +791,9 @@ export default function ConnectionManager() {
                                 fontSize: 9,
                                 fontWeight: 700,
                                 letterSpacing: 0.5,
-                                color: connColor,
-                                border: `1px solid ${hexToRgba(connColor, 0.3)}`,
-                                background: hexToRgba(connColor, 0.1),
+                                color: 'var(--bt-muted)',
+                                border: `1px solid ${hexToRgba(connColor, 0.14)}`,
+                                background: hexToRgba(connColor, 0.035),
                                 flexShrink: 0,
                               }}
                             >
@@ -789,10 +807,10 @@ export default function ConnectionManager() {
                             style={{
                               height: 260,
                               borderRadius: '0 0 8px 8px',
-                              border: `1px solid ${hexToRgba(connColor, 0.30)}`,
+                              border: `1px solid ${hexToRgba(connColor, 0.16)}`,
                               borderTop: 'none',
                               overflow: 'hidden',
-                              background: hexToRgba(connColor, 0.04),
+                              background: 'rgba(var(--bt-background-rgb), 0.36)',
                             }}
                           >
                             <DatabaseExplorer
@@ -800,6 +818,7 @@ export default function ConnectionManager() {
                               dbName={conn.database}
                               engine={conn.engine}
                               showRefreshButton
+                              onConnect={() => void openConnection(conn)}
                             />
                           </div>
                         ) : null}
@@ -814,7 +833,7 @@ export default function ConnectionManager() {
                       setEditingConnectionId(null);
                       setShowForm(true);
                     }}
-                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 px-4 py-3 text-sm text-muted transition-colors hover:border-primary/45 hover:bg-primary/6 hover:text-text"
+                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border/50 px-4 py-2.5 text-sm text-muted transition-colors hover:border-primary/20 hover:bg-primary/5 hover:text-text"
                     title={t('newConnection')}
                   >
                     <Plus size={14} />
@@ -1124,7 +1143,7 @@ export default function ConnectionManager() {
                     borderRadius: 999,
                     display: 'inline-block',
                     background: statusBarColor,
-                    boxShadow: `0 0 8px ${statusBarColor}`,
+                    opacity: 0.75,
                   }}
                 />
                 <span className="whitespace-nowrap" style={{ color: statusBarColor, textTransform: 'uppercase' }}>
@@ -1315,27 +1334,16 @@ function ConnectionColorQuickActions({
   );
 }
 
-function connectionShortLabel(name: string): string {
-  const compact = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? '')
-    .join('');
-
-  return compact || name.slice(0, 2).toUpperCase();
-}
-
-function collapsedConnectionMark(engine: ConnectionConfig['engine']) {
+function connectionEngineLabel(engine: ConnectionConfig['engine']): string {
   if (engine === 'oracle') {
-    return oracleMark;
+    return 'ORCL';
   }
 
-  if (engine === 'postgres') {
-    return postgresMark;
+  if (engine === 'mysql') {
+    return 'MYSQL';
   }
 
-  return null;
+  return 'PSQL';
 }
 
 function connectionStateDot(state: RuntimeConnectionState): string {

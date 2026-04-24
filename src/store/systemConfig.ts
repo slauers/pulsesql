@@ -73,7 +73,7 @@ export function defaultSystemConfig(): SystemConfig {
       showServerTimeInStatusBar: false,
       showAutocommitInStatusBar: true,
       resultPageSize: 100,
-      themeId: 'solarized-dark',
+      themeId: 'pulsesql-minimal-dark',
       monacoThemeName: 'default',
       density: 'comfortable',
       editorFontSize: 14,
@@ -188,11 +188,16 @@ function normalizeLocale(value: unknown): 'pt-BR' | 'en-US' {
 }
 
 function normalizeThemeId(value: unknown) {
-  if (value === 'pulsesql-dark' || value === 'teal-grid' || value === 'solarized-dark') {
+  if (
+    value === 'pulsesql-minimal-dark' ||
+    value === 'pulsesql-dark' ||
+    value === 'teal-grid' ||
+    value === 'solarized-dark'
+  ) {
     return value;
   }
 
-  return 'pulsesql-dark';
+  return 'pulsesql-minimal-dark';
 }
 
 function normalizeMonacoThemeName(value: unknown) {

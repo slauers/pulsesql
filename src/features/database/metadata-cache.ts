@@ -23,6 +23,28 @@ export async function ensureSchemasCached(
 
   const key = `schemas:${connectionId}`;
   return reuseRequest(key, async () => {
+    // Try SQLite local cache first (skip on force refresh)
+    if (!options?.force) {
+      try {
+        const localSchemas = await invoke<string[]>('get_local_schemas', { configId: connectionId });
+        if (localSchemas.length > 0) {
+          useDatabaseSessionStore.getState().cacheSchemas(connectionId, engine, localSchemas);
+          const activeSchema = useDatabaseSessionStore.getState().activeSchemaByConnection[connectionId];
+          if ((options?.markActive || !activeSchema) && localSchemas.length) {
+            useDatabaseSessionStore
+              .getState()
+              .setActiveSchema(connectionId, activeSchema ?? resolvePreferredSchema(connectionId, localSchemas));
+          }
+          useConnectionRuntimeStore
+            .getState()
+            .appendLog(connectionId, `Schema metadata loaded from local cache (${localSchemas.length} schemas).`);
+          return localSchemas;
+        }
+      } catch {
+        // SQLite unavailable — fall through to remote
+      }
+    }
+
     const startedAt = performance.now();
     useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
       phase: 'loadingSchemas',
@@ -39,6 +61,9 @@ export async function ensureSchemasCached(
           .getState()
           .setActiveSchema(connectionId, activeSchema ?? resolvePreferredSchema(connectionId, schemas));
       }
+
+      // Persist to SQLite (fire-and-forget)
+      void invoke('save_local_schemas', { configId: connectionId, schemas });
 
       useConnectionRuntimeStore
         .getState()
@@ -95,6 +120,27 @@ export async function ensureTablesCached(
 
   const key = `tables:${connectionId}:${schemaName}`;
   return reuseRequest(key, async () => {
+    // Try SQLite local cache first (skip on force refresh)
+    if (!options?.force) {
+      try {
+        const localTables = await invoke<string[]>('get_local_tables', {
+          configId: connectionId,
+          schemaName,
+        });
+        if (localTables.length > 0) {
+          useDatabaseSessionStore.getState().cacheTables(connectionId, engine, schemaName, localTables);
+          useConnectionRuntimeStore
+            .getState()
+            .appendLog(connectionId, `Table metadata for ${schemaName} loaded from local cache (${localTables.length} tables).`);
+          // Prefetch columns from SQLite/remote in background for autocomplete
+          void prefetchColumnsBackground(connectionId, engine, schemaName, localTables);
+          return localTables;
+        }
+      } catch {
+        // SQLite unavailable — fall through to remote
+      }
+    }
+
     const startedAt = performance.now();
     useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
       phase: 'loadingTables',
@@ -105,12 +151,20 @@ export async function ensureTablesCached(
     try {
       const tables = await invoke<string[]>('list_tables', { connId: connectionId, schema: schemaName });
       useDatabaseSessionStore.getState().cacheTables(connectionId, engine, schemaName, tables);
+
+      // Persist to SQLite (fire-and-forget)
+      void invoke('save_local_tables', { configId: connectionId, schemaName, tables });
+
       useConnectionRuntimeStore
         .getState()
         .appendLog(connectionId, `Table metadata for ${schemaName} loaded in ${Math.round(performance.now() - startedAt)}ms.`);
       useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
         phase: 'idle',
       });
+
+      // Prefetch columns from remote in background for autocomplete
+      void prefetchColumnsBackground(connectionId, engine, schemaName, tables);
+
       return tables;
     } catch (error) {
       const message = formatMetadataError(error, `Failed to load tables for ${schemaName}.`);
@@ -141,6 +195,27 @@ export async function ensureColumnsCached(
 
   const key = `columns:${connectionId}:${schemaName}:${tableName}`;
   return reuseRequest(key, async () => {
+    // Try SQLite local cache first (skip on force refresh)
+    if (!options?.force) {
+      try {
+        const localColumns = await invoke<ColumnDef[]>('get_local_columns', {
+          configId: connectionId,
+          schemaName,
+          tableName,
+        });
+        if (localColumns.length > 0) {
+          const normalized = localColumns.map(normalizeColumnDef);
+          useDatabaseSessionStore.getState().cacheColumns(connectionId, engine, schemaName, tableName, normalized);
+          useConnectionRuntimeStore
+            .getState()
+            .appendLog(connectionId, `Column metadata for ${schemaName}.${tableName} loaded from local cache.`);
+          return normalized;
+        }
+      } catch {
+        // SQLite unavailable — fall through to remote
+      }
+    }
+
     const startedAt = performance.now();
     useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
       phase: 'loadingColumns',
@@ -157,6 +232,10 @@ export async function ensureColumnsCached(
       });
       const normalized = columns.map(normalizeColumnDef);
       useDatabaseSessionStore.getState().cacheColumns(connectionId, engine, schemaName, tableName, normalized);
+
+      // Persist raw columns to SQLite (fire-and-forget)
+      void invoke('save_local_columns', { configId: connectionId, schemaName, tableName, columns });
+
       useConnectionRuntimeStore
         .getState()
         .appendLog(connectionId, `Column metadata for ${schemaName}.${tableName} loaded in ${Math.round(performance.now() - startedAt)}ms.`);
@@ -181,6 +260,8 @@ export async function ensureColumnsCached(
 
 export function invalidateMetadataCache(connectionId: string) {
   useDatabaseSessionStore.getState().invalidateConnection(connectionId);
+  // Clear SQLite cache (fire-and-forget)
+  void invoke('invalidate_local_metadata', { configId: connectionId });
   useConnectionRuntimeStore.getState().appendLog(connectionId, 'Metadata cache invalidated.');
 }
 
@@ -216,6 +297,32 @@ export function getCachedTableNames(connectionId: string, activeSchema?: string 
   }
 
   return values;
+}
+
+export function getCachedColumns(
+  connectionId: string,
+  schemaName: string,
+  tableName: string,
+): MetadataColumn[] {
+  return (
+    useDatabaseSessionStore.getState().metadataByConnection[connectionId]?.schemasByName[schemaName]
+      ?.tablesByName[tableName]?.columns ?? []
+  );
+}
+
+async function prefetchColumnsBackground(
+  connectionId: string,
+  engine: DatabaseEngine,
+  schemaName: string,
+  tables: string[],
+): Promise<void> {
+  for (const tableName of tables.slice(0, 60)) {
+    try {
+      await ensureColumnsCached(connectionId, engine, schemaName, tableName);
+    } catch {
+      // ignore individual failures
+    }
+  }
 }
 
 function reuseRequest<T>(key: string, factory: () => Promise<T>): Promise<T> {

@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import brandLogo from './assets/pulsesql-logo.svg';
 import { getInitialLocale, translate } from './i18n';
 import { LOCK_SPLASH_FOR_DEV } from './devFlags';
+import EcgMonitor from './components/ui/EcgMonitor';
+import { useConnectionsStore, getConnectionColor, hexToRgba } from './store/connections';
+import tauriConfig from '../src-tauri/tauri.conf.json';
+
+const MIN_SPLASH_MS = 5000;
 
 interface SplashProgressPayload {
   progress: number;
@@ -17,59 +21,68 @@ export default function SplashScreen() {
   const [progress, setProgress] = useState(8);
   const [label, setLabel] = useState(DEFAULT_LABEL);
   const [finishing, setFinishing] = useState(false);
+  const mountTimeRef = useRef(Date.now());
+
+  const monitorRef = useRef<HTMLDivElement>(null);
+  const [monitorWidth, setMonitorWidth] = useState(260);
+
+  useLayoutEffect(() => {
+    if (monitorRef.current) {
+      setMonitorWidth(monitorRef.current.offsetWidth);
+    }
+  }, []);
+
+  const favoriteConnectionId = useConnectionsStore((s) => s.favoriteConnectionId);
+  const connections = useConnectionsStore((s) => s.connections);
+  const ecgColor = useMemo(
+    () => getConnectionColor(connections, favoriteConnectionId),
+    [connections, favoriteConnectionId],
+  );
 
   const normalizedProgress = useMemo(() => Math.max(0, Math.min(progress, 100)), [progress]);
+
+  const closeAfterMinimum = () => {
+    const elapsed = Date.now() - mountTimeRef.current;
+    const remaining = MIN_SPLASH_MS - elapsed;
+    window.setTimeout(() => {
+      void invoke('close_splash_window').catch(() => null);
+    }, Math.max(0, remaining));
+  };
 
   useEffect(() => {
     void invoke('show_splash_window').catch(() => null);
   }, []);
 
   useEffect(() => {
-    if (LOCK_SPLASH_FOR_DEV) {
-      return;
-    }
+    if (LOCK_SPLASH_FOR_DEV) return;
 
     let cancelled = false;
 
     const syncInitialState = async () => {
       try {
         const currentState = await invoke<SplashProgressPayload & { finished?: boolean }>('get_splash_state');
-        if (cancelled) {
-          return;
-        }
-
+        if (cancelled) return;
         setProgress(currentState.progress);
         setLabel(currentState.label?.trim() || DEFAULT_LABEL);
-
         if (currentState.finished) {
           setFinishing(true);
-          window.setTimeout(() => {
-            void invoke('close_splash_window').catch(() => null);
-          }, 210);
+          closeAfterMinimum();
         }
       } catch {
-        // Ignore when running outside Tauri.
+        // Outside Tauri
       }
     };
 
     const unlistenProgressPromise = listen<SplashProgressPayload>('splash:progress', (event) => {
-      if (cancelled) {
-        return;
-      }
-
+      if (cancelled) return;
       setProgress(event.payload.progress);
       setLabel(event.payload.label?.trim() || DEFAULT_LABEL);
     });
 
     const unlistenFinishPromise = listen('splash:finish', () => {
-      if (cancelled) {
-        return;
-      }
-
+      if (cancelled) return;
       setFinishing(true);
-      window.setTimeout(() => {
-        void invoke('close_splash_window').catch(() => null);
-      }, 210);
+      closeAfterMinimum();
     });
 
     void syncInitialState();
@@ -79,6 +92,7 @@ export default function SplashScreen() {
       void unlistenProgressPromise.then((unlisten) => unlisten());
       void unlistenFinishPromise.then((unlisten) => unlisten());
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -96,39 +110,35 @@ export default function SplashScreen() {
 
     const timer = window.setInterval(() => {
       setProgress((current) => {
-        if (current >= 94) {
-          return current;
-        }
-
-        if (current < 36) {
-          return current + 4;
-        }
-
-        if (current < 68) {
-          return current + 2;
-        }
-
+        if (current >= 94) return current;
+        if (current < 36) return current + 4;
+        if (current < 68) return current + 2;
         return current + 1;
       });
     }, 120);
 
-    return () => {
-      window.clearInterval(timer);
-    };
+    return () => window.clearInterval(timer);
   }, [finishing]);
 
   return (
-    <div className={`splash-screen__card ${finishing ? 'splash-screen__card--closing' : ''}`}>
-      <img src={brandLogo} alt="PulseSQL" className="splash-screen__logo splash-screen__logo--wide" />
+    <div
+      className={`splash-screen__card ${finishing ? 'splash-screen__card--closing' : ''}`}
+      style={{
+        '--splash-color-a': hexToRgba(ecgColor, 0.82),
+        '--splash-color-b': hexToRgba(ecgColor, 0.72),
+        '--splash-glow':    hexToRgba(ecgColor, 0.18),
+      } as React.CSSProperties}
+    >
+      <div ref={monitorRef} style={{ width: '100%', height: 64, borderRadius: 8, background: '#010a0e', overflow: 'hidden', marginBottom: 24 }}>
+        <EcgMonitor color={ecgColor} width={monitorWidth} height={64} speed={finishing ? 0.0025 : 0.004} />
+      </div>
 
       <div className="splash-screen__copy">
         <div className="splash-screen__title">PulseSQL</div>
         <div className="splash-screen__subtitle">{translate(locale, 'aboutSubtitle')}</div>
-      </div>
-
-      <div className="splash-screen__status">
-        <span>{label}</span>
-        <span>{normalizedProgress}%</span>
+        <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--bt-muted)', letterSpacing: '0.8px', marginTop: 4 }}>
+          v{tauriConfig.version}
+        </div>
       </div>
 
       <div className="splash-screen__progress">
@@ -136,6 +146,11 @@ export default function SplashScreen() {
           className="splash-screen__progress-bar"
           style={{ transform: `scaleX(${normalizedProgress / 100})` }}
         />
+      </div>
+
+      <div className="splash-screen__status">
+        <span>{label}</span>
+        <span>{normalizedProgress}%</span>
       </div>
     </div>
   );

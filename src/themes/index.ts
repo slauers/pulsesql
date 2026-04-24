@@ -18,6 +18,21 @@ export interface AppThemeDefinition {
 
 export const APP_THEMES: AppThemeDefinition[] = [
   {
+    id: 'pulsesql-minimal-dark',
+    label: 'PulseSQL Minimal Dark',
+    mode: 'dark',
+    colors: {
+      background: '#05080B',
+      surface: '#090F15',
+      border: '#17222D',
+      primary: '#0E7490',
+      text: '#E6EDF3',
+      muted: '#6E7B88',
+      bodyBackground: '#05080B',
+      glassPanel: 'rgba(9, 15, 21, 0.94)',
+    },
+  },
+  {
     id: 'pulsesql-dark',
     label: 'PulseSQL Dark',
     mode: 'dark',
