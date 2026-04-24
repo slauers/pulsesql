@@ -155,7 +155,7 @@ fn create_splash_window(app: &AppHandle) -> Result<(), String> {
         WebviewUrl::App("splash.html".into()),
     )
         .title("PulseSQL")
-        .inner_size(490.0, 420.0)
+        .inner_size(490.0, 480.0)
         .resizable(false)
         .maximizable(false)
         .minimizable(false)

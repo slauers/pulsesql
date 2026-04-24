@@ -5,7 +5,6 @@ import { getInitialLocale, translate } from './i18n';
 import { LOCK_SPLASH_FOR_DEV } from './devFlags';
 import EcgMonitor from './components/ui/EcgMonitor';
 import { useConnectionsStore, getConnectionColor, hexToRgba } from './store/connections';
-import tauriConfig from '../src-tauri/tauri.conf.json';
 
 const MIN_SPLASH_MS = 5000;
 
@@ -129,16 +128,13 @@ export default function SplashScreen() {
         '--splash-glow':    hexToRgba(ecgColor, 0.18),
       } as React.CSSProperties}
     >
-      <div ref={monitorRef} style={{ width: '100%', height: 64, borderRadius: 8, background: '#010a0e', overflow: 'hidden', marginBottom: 24 }}>
-        <EcgMonitor color={ecgColor} width={monitorWidth} height={64} speed={finishing ? 0.0025 : 0.004} />
+      <div ref={monitorRef} style={{ width: '100%', height: 160, overflow: 'hidden' }}>
+        <EcgMonitor color={ecgColor} width={monitorWidth} height={160} speed={finishing ? 0.0025 : 0.004} transparent />
       </div>
 
       <div className="splash-screen__copy">
         <div className="splash-screen__title">PulseSQL</div>
         <div className="splash-screen__subtitle">{translate(locale, 'aboutSubtitle')}</div>
-        <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--bt-muted)', letterSpacing: '0.8px', marginTop: 4 }}>
-          v{tauriConfig.version}
-        </div>
       </div>
 
       <div className="splash-screen__progress">
