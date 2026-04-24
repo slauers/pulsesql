@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, ArrowDown, Check } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 
 interface ResultGridProps {
   columns: Array<{
@@ -164,7 +165,7 @@ export default function ResultGrid({
     if (anyEditActive && lockedRowIndex === rowIndex) return;
     if (activeEditCell) return;
     const text = value === null ? '' : formatCellValue(value);
-    navigator.clipboard.writeText(text).catch(() => null);
+    void clipboardWriteText(text);
     if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
     setCopiedCell(cellKey);
     copyTimeoutRef.current = window.setTimeout(() => setCopiedCell(null), 1200);

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import EcgLine from '../../components/ui/EcgLine';
+import PulseLoader from '../../components/ui/PulseLoader';
 import type * as Monaco from 'monaco-editor';
 import Editor from '@monaco-editor/react';
 import { format as sqlFormat } from 'sql-formatter';
@@ -9,7 +9,7 @@ import { useQueriesStore } from '../../store/queries';
 import { type DatabaseEngine, useConnectionsStore, getConnectionColor, hexToRgba } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
 import { createPortal } from 'react-dom';
-import { ensureColumnsCached, ensureSchemasCached, ensureTablesCached, invalidateMetadataCache } from '../database/metadata-cache';
+import { ensureColumnsCached, ensureTablesCached, warmMetadataAfterConnect } from '../database/metadata-cache';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
 import type { MetadataColumn } from '../database/types';
 import {
@@ -75,6 +75,7 @@ interface ResultGridColumn {
 interface QueryExecutionResult extends QueryResult {
   statement: string;
   title: string;
+  pageCache?: Record<number, QueryResult>;
 }
 
 interface ExecuteQueryPayload {
@@ -82,6 +83,7 @@ interface ExecuteQueryPayload {
   history_item_id: string;
   autocommit_enabled: boolean;
   transaction_open: boolean;
+  diagnostics?: string[];
 }
 
 const SEMANTIC_SUCCESS_DURATION_MS = 3600;
@@ -212,6 +214,7 @@ export default function QueryWorkspace() {
   const autocompleteDisposableRef = useRef<{ dispose(): void } | null>(null);
   const suggestTimeoutRef = useRef<number | null>(null);
   const semanticResetTimeoutRef = useRef<number | null>(null);
+  const pagePrefetchKeysRef = useRef<Set<string>>(new Set());
   const autocompleteContextRef = useRef<{
     connectionId?: string | null;
     activeSchema?: string | null;
@@ -389,6 +392,71 @@ export default function QueryWorkspace() {
     setTransactionOpen(connectionId, payload.transaction_open);
   }, [setAutocommitEnabled, setTransactionOpen]);
 
+  const appendDiagnostics = useCallback((connectionId: string, diagnostics?: string[]) => {
+    diagnostics?.forEach((entry) => appendLog(connectionId, entry));
+  }, [appendLog]);
+
+  const prefetchNextResultPage = useCallback(async ({
+    tabId,
+    resultIndex,
+    connectionId,
+    statement,
+    result,
+  }: {
+    tabId: string | null | undefined;
+    resultIndex: number;
+    connectionId: string;
+    statement: string;
+    result: QueryResult;
+  }) => {
+    if (!tabId || result.page == null || result.page_size == null || result.total_rows == null) {
+      return;
+    }
+
+    const nextPage = result.page + 1;
+    const totalPagesForResult = Math.ceil(result.total_rows / Math.max(result.page_size, 1));
+    if (nextPage > totalPagesForResult) {
+      return;
+    }
+
+    const key = `${tabId}:${resultIndex}:${nextPage}:${statement}`;
+    if (pagePrefetchKeysRef.current.has(key)) {
+      return;
+    }
+
+    pagePrefetchKeysRef.current.add(key);
+    try {
+      const payload = await invoke<ExecuteQueryPayload>('execute_query', {
+        connId: connectionId,
+        query: statement,
+        page: nextPage,
+        pageSize: result.page_size,
+        knownTotalRows: result.total_rows,
+      });
+      appendDiagnostics(connectionId, payload.diagnostics);
+
+      setTabResults(tabId, (current) =>
+        current.map((item, index) => {
+          if (index !== resultIndex || item.statement !== statement) {
+            return item;
+          }
+
+          return {
+            ...item,
+            pageCache: {
+              ...(item.pageCache ?? {}),
+              [nextPage]: payload.result,
+            },
+          };
+        }),
+      );
+    } catch (error) {
+      appendLog(connectionId, `Erro ao pre-carregar pagina ${nextPage}: ${extractErrorMessage(error).trim()}`);
+    } finally {
+      pagePrefetchKeysRef.current.delete(key);
+    }
+  }, [appendDiagnostics, appendLog, setTabResults]);
+
   const runQueryBatch = useCallback(async (queries: string[], connectionId: string, options?: { feedbackStartedAt?: number; tabId?: string | null }) => {
     const statements = queries.map((item) => item.trim()).filter(Boolean);
     if (!statements.length || !connectionId) {
@@ -420,11 +488,21 @@ export default function QueryWorkspace() {
           pageSize: resultPageSize,
         });
         syncTransactionState(connectionId, payload);
+        appendDiagnostics(connectionId, payload.diagnostics);
 
         nextResults.push({
           ...payload.result,
           statement,
           title: `Result ${index + 1}`,
+          pageCache: payload.result.page ? { [payload.result.page]: payload.result } : undefined,
+        });
+
+        void prefetchNextResultPage({
+          tabId: targetTabId,
+          resultIndex: index,
+          connectionId,
+          statement,
+          result: payload.result,
         });
 
         appendLog(
@@ -436,7 +514,7 @@ export default function QueryWorkspace() {
         if (sourceTable?.tableName && targetEngine) {
           const schemaForFetch = sourceTable.schemaName ?? targetSchema ?? null;
           if (schemaForFetch) {
-            void ensureColumnsCached(connectionId, targetEngine, schemaForFetch, sourceTable.tableName).catch(() => null);
+            void ensureColumnsCached(connectionId, targetEngine, schemaForFetch, sourceTable.tableName, { priority: true }).catch(() => null);
           }
         }
       }
@@ -462,7 +540,7 @@ export default function QueryWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [activeSchemaByConnection, activeTabId, appendLog, connections, metadataByConnection, resultPageSize, scheduleSemanticReset, setSemanticBackgroundState, setTabActiveResultIndex, setTabError, setTabResults, startExecutionFeedback]);
+  }, [activeSchemaByConnection, activeTabId, appendDiagnostics, appendLog, connections, metadataByConnection, prefetchNextResultPage, resultPageSize, scheduleSemanticReset, setSemanticBackgroundState, setTabActiveResultIndex, setTabError, setTabResults, startExecutionFeedback]);
 
   const ensureExecutionConnectionReady = useCallback(async (connectionId: string) => {
     const connection = connections.find((item) => item.id === connectionId);
@@ -486,9 +564,8 @@ export default function QueryWorkspace() {
       await invoke('open_connection', { config: connection });
       setRuntimeStatus(connectionId, 'connected');
       setActiveConnection(connectionId);
-      invalidateMetadataCache(connectionId);
       appendLog(connectionId, t('connectionOpenedSuccessfully'));
-      void ensureSchemasCached(connectionId, connection.engine, { markActive: true }).catch(() => null);
+      void warmMetadataAfterConnect(connectionId, connection.engine).catch(() => null);
       return connection;
     } catch (openError) {
       const message = openError instanceof Error ? openError.message : String(openError);
@@ -511,6 +588,7 @@ export default function QueryWorkspace() {
       await runQueryBatch(statements, resolvedConnectionId, { feedbackStartedAt: runningStartedAt, tabId: activeTabId });
     } catch (executionError) {
       const connection = connections.find((item) => item.id === resolvedConnectionId) ?? null;
+      appendLog(resolvedConnectionId, `Erro de query: ${extractErrorMessage(executionError).trim()}`);
       setTabError(
         activeTabId,
         buildQueryErrorPresentation({
@@ -529,6 +607,7 @@ export default function QueryWorkspace() {
   }, [
     activeSchemaByConnection,
     activeTabId,
+    appendLog,
     connections,
     engine,
     ensureExecutionConnectionReady,
@@ -659,6 +738,30 @@ export default function QueryWorkspace() {
       return;
     }
     const targetTabId = activeTabId;
+    const cachedPage = targetResult.pageCache?.[nextPage];
+    if (cachedPage) {
+      setTabResults(targetTabId, (current) =>
+        current.map((item, index) =>
+          index === resultIndex
+            ? {
+                ...cachedPage,
+                statement: item.statement,
+                title: item.title,
+                pageCache: item.pageCache,
+              }
+            : item,
+        ),
+      );
+      setTabActiveResultIndex(targetTabId, resultIndex);
+      void prefetchNextResultPage({
+        tabId: targetTabId,
+        resultIndex,
+        connectionId: resolvedConnectionId,
+        statement: targetResult.statement,
+        result: cachedPage,
+      });
+      return;
+    }
 
     setLoading(true);
     setTabError(targetTabId, null);
@@ -674,6 +777,7 @@ export default function QueryWorkspace() {
         knownTotalRows: targetResult.total_rows ?? undefined,
       });
       syncTransactionState(resolvedConnectionId, payload);
+      appendDiagnostics(resolvedConnectionId, payload.diagnostics);
 
       setTabResults(targetTabId, (current) =>
         current.map((item, index) =>
@@ -682,12 +786,24 @@ export default function QueryWorkspace() {
                 ...payload.result,
                 statement: item.statement,
                 title: item.title,
+                pageCache: {
+                  ...(item.pageCache ?? {}),
+                  [nextPage]: payload.result,
+                },
               }
             : item,
         ),
       );
       setTabActiveResultIndex(targetTabId, resultIndex);
+      void prefetchNextResultPage({
+        tabId: targetTabId,
+        resultIndex,
+        connectionId: resolvedConnectionId,
+        statement: targetResult.statement,
+        result: payload.result,
+      });
     } catch (pageError) {
+      appendLog(resolvedConnectionId, `Erro ao carregar pagina: ${extractErrorMessage(pageError).trim()}`);
       setTabError(
         targetTabId,
         buildQueryErrorPresentation({
@@ -701,7 +817,7 @@ export default function QueryWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [activeTabId, ensureExecutionConnectionReady, engine, metadataByConnection, resolvedConnectionId, resultPageSize, results, schemaLabel, setTabActiveResultIndex, setTabError, setTabResults]);
+  }, [activeTabId, appendDiagnostics, appendLog, ensureExecutionConnectionReady, engine, metadataByConnection, prefetchNextResultPage, resolvedConnectionId, resultPageSize, results, schemaLabel, setTabActiveResultIndex, setTabError, setTabResults]);
 
   useEffect(() => {
     setPageSizeDraft(String(resultPageSize));
@@ -844,7 +960,7 @@ export default function QueryWorkspace() {
       return;
     }
 
-    void ensureColumnsCached(resolvedConnectionId, engine, activeSourceTable.schemaName, activeSourceTable.tableName).catch(() => null);
+    void ensureColumnsCached(resolvedConnectionId, engine, activeSourceTable.schemaName, activeSourceTable.tableName, { priority: true }).catch(() => null);
   }, [activeSourceTable, cachedSourceColumns, engine, resolvedConnectionId, runtimeStatus]);
 
   const applyPageSize = useCallback(async () => {
@@ -870,6 +986,7 @@ export default function QueryWorkspace() {
         pageSize: normalized,
       });
       syncTransactionState(resolvedConnectionId, payload);
+      appendDiagnostics(resolvedConnectionId, payload.diagnostics);
 
       setTabResults(targetTabId, (current) =>
         current.map((item, index) =>
@@ -878,11 +995,13 @@ export default function QueryWorkspace() {
                 ...payload.result,
                 statement: item.statement,
                 title: item.title,
+                pageCache: payload.result.page ? { [payload.result.page]: payload.result } : undefined,
               }
             : item,
         ),
       );
     } catch (pageSizeError) {
+      appendLog(resolvedConnectionId, `Erro ao aplicar limite de linhas: ${extractErrorMessage(pageSizeError).trim()}`);
       setTabError(
         targetTabId,
         buildQueryErrorPresentation({
@@ -896,7 +1015,7 @@ export default function QueryWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [activeResult, activeResultIndex, activeTabId, ensureExecutionConnectionReady, engine, metadataByConnection, pageSizeDraft, resolvedConnectionId, resultPageSize, schemaLabel, setResultPageSize, setTabError, setTabResults]);
+  }, [activeResult, activeResultIndex, activeTabId, appendDiagnostics, appendLog, ensureExecutionConnectionReady, engine, metadataByConnection, pageSizeDraft, resolvedConnectionId, resultPageSize, schemaLabel, setResultPageSize, setTabError, setTabResults]);
 
   const handleCellChange = useCallback((
     colName: string,
@@ -947,6 +1066,7 @@ export default function QueryWorkspace() {
           pageSize: 1,
         });
         syncTransactionState(resolvedConnectionId, payload);
+        appendDiagnostics(resolvedConnectionId, payload.diagnostics);
       }
 
       for (const newRow of pendingNewRows) {
@@ -964,6 +1084,7 @@ export default function QueryWorkspace() {
           pageSize: 1,
         });
         syncTransactionState(resolvedConnectionId, payload);
+        appendDiagnostics(resolvedConnectionId, payload.diagnostics);
       }
 
       setTabResults(targetTabId, (current) =>
@@ -1008,6 +1129,7 @@ export default function QueryWorkspace() {
     activeTabId,
     activeResultIndex,
     engine,
+    appendDiagnostics,
     ensureExecutionConnectionReady,
     syncTransactionState,
     setTabResults,
@@ -1069,6 +1191,7 @@ export default function QueryWorkspace() {
         pageSize: 1,
       });
       syncTransactionState(resolvedConnectionId, payload);
+      appendDiagnostics(resolvedConnectionId, payload.diagnostics);
 
       setHistoryRefreshToken((current) => current + 1);
       setTabResults(targetTabId, (current) =>
@@ -1102,6 +1225,7 @@ export default function QueryWorkspace() {
     activeResultIndex,
     activeSourceTable,
     activeTabId,
+    appendDiagnostics,
     cachedSourceColumns,
     engine,
     ensureExecutionConnectionReady,
@@ -1123,6 +1247,7 @@ export default function QueryWorkspace() {
       pageSize: 1,
     });
     syncTransactionState(resolvedConnectionId, payload);
+    appendDiagnostics(resolvedConnectionId, payload.diagnostics);
     setTabResults(activeTabId, [
       {
         ...payload.result,
@@ -1132,7 +1257,7 @@ export default function QueryWorkspace() {
     ]);
     setTabActiveResultIndex(activeTabId, 0);
     setHistoryRefreshToken((current) => current + 1);
-  }, [activeTabId, ensureExecutionConnectionReady, resolvedConnectionId, setTabActiveResultIndex, setTabResults, syncTransactionState, t]);
+  }, [activeTabId, appendDiagnostics, ensureExecutionConnectionReady, resolvedConnectionId, setTabActiveResultIndex, setTabResults, syncTransactionState, t]);
 
   const handleConnectionChange = useCallback((nextConnectionId: string) => {
     if (!activeTab) {
@@ -1307,7 +1432,11 @@ export default function QueryWorkspace() {
                   <span style={{ color: 'var(--bt-muted)' }}>✓</span>
                   <span>
                     {formatNumber(locale, filteredRows.length)}
-                    {quickFilter ? ` / ${formatNumber(locale, activeResult.rows.length)}` : ''} {t('rowsLabel')}
+                    {' / '}
+                    {formatNumber(locale, quickFilter ? activeResult.rows.length : totalRows)}
+                    {quickFilter && totalRows !== activeResult.rows.length ? ` / ${formatNumber(locale, totalRows)}` : ''}
+                    {' '}
+                    {t('rowsLabel')}
                   </span>
                   {canPaginate ? (
                     <>
@@ -1512,11 +1641,13 @@ export default function QueryWorkspace() {
           </div>
         ) : null}
         {activePanel === 'results' && loading ? (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background/35">
-            <EcgLine color={connectionColor} size="md" />
-            <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: connectionColor, opacity: 0.7 }}>
-              {t('loadingResults')}
-            </span>
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/55">
+            <PulseLoader
+              color={connectionColor}
+              message={t('loadingResults')}
+              size="md"
+              surface="card"
+            />
           </div>
         ) : null}
         {activePanel === 'results' && error && !loading ? (
@@ -1890,6 +2021,17 @@ export default function QueryWorkspace() {
                         executeQueryRef.current();
                       },
                     });
+                    editor.addAction({
+                      id: 'pulsesql.triggerAutocomplete',
+                      label: 'Abrir autocomplete',
+                      keybindings: [
+                        monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space,
+                        monaco.KeyMod.WinCtrl | monaco.KeyCode.Space,
+                      ],
+                      run: () => {
+                        editor.trigger('pulsesql', 'editor.action.triggerSuggest', {});
+                      },
+                    });
                     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.NumpadEnter, () => {
                       executeQueryRef.current();
                     });
@@ -2098,8 +2240,7 @@ function resolveLogTone(entry: string): LogTone {
     normalized.includes('opened successfully') ||
     normalized.includes('connection opened') ||
     normalized.includes('restored') ||
-    normalized.includes('copied') ||
-    normalized.includes('loaded')
+    normalized.includes('copied')
   ) {
     return {
       kind: 'SUCCESS',

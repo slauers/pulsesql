@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { CheckCircle, Eye, EyeOff, LoaderCircle } from 'lucide-react';
+import { CheckCircle, Eye, EyeOff } from 'lucide-react';
 import { createDefaultConnectionForm, ENGINE_DEFINITIONS } from './connection-engines';
 import { CONNECTION_COLOR_PALETTE, ConnectionConfig, DatabaseEngine, OracleConnectionType, PostgresSslMode, SshAuthMethod, useConnectionsStore } from '../../store/connections';
 import AppSelect from '../../components/ui/AppSelect';
 import JdkSetupBanner from './JdkSetupBanner';
+import PulseLoader from '../../components/ui/PulseLoader';
 
 type DefaultableField = 'name' | 'host' | 'port' | 'database' | 'user';
 
@@ -579,7 +580,7 @@ export default function ConnectionForm({
             disabled={testState === 'testing'}
             className="inline-flex items-center gap-2 px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40 transition-colors disabled:opacity-50"
           >
-            {testState === 'testing' ? <LoaderCircle size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+            {testState === 'testing' ? <PulseLoader size="xs" surface="transparent" /> : <CheckCircle size={14} />}
             Test Connection
           </button>
           <button

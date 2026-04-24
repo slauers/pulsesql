@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { createPortal } from 'react-dom';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Menu, MenuItem, Submenu, PredefinedMenuItem } from '@tauri-apps/api/menu';
+import { readText as clipboardReadText, writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 import tauriConfig from '../src-tauri/tauri.conf.json';
 import ConnectionManager from './features/connections/ConnectionManager';
 import ConfigurationDialog from './features/settings/ConfigurationDialog';
@@ -63,6 +64,58 @@ function App() {
       try { await getCurrentWindow().close(); } catch { window.close(); }
     },
   });
+
+  useEffect(() => {
+    const handleClipboardShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key !== 'c' && key !== 'x' && key !== 'v') {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      if (!target || target.closest('.monaco-editor')) {
+        return;
+      }
+
+      const editable = resolveClipboardEditable(target);
+      if (!editable) {
+        if (key === 'c') {
+          const selectedText = window.getSelection()?.toString() ?? '';
+          if (selectedText) {
+            event.preventDefault();
+            void clipboardWriteText(selectedText);
+          }
+        }
+        return;
+      }
+
+      event.preventDefault();
+
+      if (key === 'c' || key === 'x') {
+        const value = editable.getSelectedText();
+        void clipboardWriteText(value);
+        if (key === 'x' && !editable.readOnly) {
+          editable.replaceSelection('');
+        }
+        return;
+      }
+
+      if (key === 'v' && !editable.readOnly) {
+        void clipboardReadText().then((text) => {
+          if (text) {
+            editable.replaceSelection(text);
+          }
+        });
+      }
+    };
+
+    window.addEventListener('keydown', handleClipboardShortcut, true);
+    return () => window.removeEventListener('keydown', handleClipboardShortcut, true);
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -660,6 +713,56 @@ function matchesShortcut(event: KeyboardEvent, shortcut: string) {
   if (modifiers.has('alt') ? !event.altKey : event.altKey) return false;
 
   return event.key.toLowerCase() === mainKey.toLowerCase();
+}
+
+type ClipboardEditable = {
+  readOnly: boolean;
+  getSelectedText: () => string;
+  replaceSelection: (text: string) => void;
+};
+
+function resolveClipboardEditable(target: HTMLElement): ClipboardEditable | null {
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    const input = target;
+    return {
+      readOnly: input.readOnly || input.disabled,
+      getSelectedText: () => {
+        const start = input.selectionStart ?? 0;
+        const end = input.selectionEnd ?? start;
+        return input.value.slice(start, end);
+      },
+      replaceSelection: (text) => {
+        const start = input.selectionStart ?? input.value.length;
+        const end = input.selectionEnd ?? start;
+        const nextValue = `${input.value.slice(0, start)}${text}${input.value.slice(end)}`;
+        input.value = nextValue;
+        input.setSelectionRange(start + text.length, start + text.length);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      },
+    };
+  }
+
+  const contentEditable = target.closest('[contenteditable="true"]') as HTMLElement | null;
+  if (!contentEditable) {
+    return null;
+  }
+
+  return {
+    readOnly: false,
+    getSelectedText: () => window.getSelection()?.toString() ?? '',
+    replaceSelection: (text) => {
+      const selection = window.getSelection();
+      if (!selection?.rangeCount) return;
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(text));
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      contentEditable.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    },
+  };
 }
 
 function toRgbChannels(color: string) {

@@ -14,7 +14,7 @@ import {
   Rows4,
   Table2,
 } from 'lucide-react';
-import EcgMonitor from '../../components/ui/EcgMonitor';
+import PulseLoader from '../../components/ui/PulseLoader';
 import { type DatabaseEngine, useConnectionsStore, getConnectionColor } from '../../store/connections';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
 import { useConnectionRuntimeStore } from '../../store/connectionRuntime';
@@ -207,7 +207,7 @@ export function DatabaseExplorer({
   const openQueryFromExplorer = async (action: ExplorerActionId, schema: string, table: string) => {
     const columns =
       action === 'insert' || action === 'update' || action === 'describeTable'
-        ? await ensureColumnsCached(connId, engine, schema, table).catch(() => [])
+        ? await ensureColumnsCached(connId, engine, schema, table, { priority: true }).catch(() => [])
         : undefined;
 
     if (action === 'describeTable') {
@@ -441,9 +441,8 @@ export function DatabaseExplorer({
 
 function HeartbeatLoader({ color }: { color: string }) {
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-3 py-8">
-      <EcgMonitor color={color} width={160} height={32} transparent />
-      <span className="text-[11px] text-muted/70">Carregando...</span>
+    <div className="flex h-full items-center justify-center py-8">
+      <PulseLoader color={color} message="Carregando..." size="md" surface="transparent" />
     </div>
   );
 }
@@ -542,7 +541,7 @@ function FlatTableItem({
     let cancelled = false;
     setLoadingColumns(true);
 
-    ensureColumnsCached(connId, engine, schema, table)
+    ensureColumnsCached(connId, engine, schema, table, { priority: true })
       .catch(() => null)
       .finally(() => {
         if (!cancelled) {
@@ -597,8 +596,7 @@ function FlatTableItem({
         <div className="ml-5 border-l border-border/40 pl-3">
           {loadingColumns && !columns.length ? (
             <div className="flex items-center gap-2 py-2 text-[11px] text-muted">
-              <EcgMonitor color={connectionColor} width={80} height={18} transparent />
-              Carregando colunas...
+              <PulseLoader color={connectionColor} message="Carregando colunas..." size="sm" surface="transparent" />
             </div>
           ) : tableEntry?.columnsError ? (
             <div className="py-2 text-[11px] text-red-300">{tableEntry.columnsError}</div>

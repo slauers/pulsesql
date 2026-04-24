@@ -592,7 +592,7 @@ body[data-density='compact'] .bt-density-chip {
 
 @keyframes ecg-line-scroll {
   from { transform: translateX(0px); }
-  to   { transform: translateX(-120px); }
+  to   { transform: translateX(120px); }
 }
 
 @keyframes editor-glow-pulse {
