@@ -1,5 +1,6 @@
 import { Clock3, RefreshCcw, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 import { useQueryHistory } from '../hooks/useQueryHistory';
 import type { QueryHistoryItem } from '../types';
 import QueryHistoryFilters from './QueryHistoryFilters';
@@ -33,7 +34,7 @@ export default function QueryHistoryDrawer({
   const [resizing, setResizing] = useState(false);
 
   const handleCopySql = async (item: QueryHistoryItem) => {
-    await navigator.clipboard.writeText(item.queryText);
+    await clipboardWriteText(item.queryText);
   };
 
   const handleDelete = async (item: QueryHistoryItem) => {

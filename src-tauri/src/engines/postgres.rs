@@ -184,7 +184,6 @@ async fn execute_query_on_pool(
 
             // Run COUNT and data queries in parallel.
             // When total rows is already known (page navigation), skip the COUNT query.
-            let t_queries = Instant::now();
             let (total_rows, rows_raw) = tokio::try_join!(
                 async {
                     match known_total_rows {
@@ -199,12 +198,9 @@ async fn execute_query_on_pool(
                         .map_err(|error| error.to_string())
                 },
             )?;
-            eprintln!("[pg] parallel COUNT+data: {}ms", t_queries.elapsed().as_millis());
 
-            let t_decode = Instant::now();
             let (columns, column_meta) = extract_columns_and_meta_from_jsonb(&rows_raw);
             let rows = decode_jsonb_rows(rows_raw)?;
-            eprintln!("[pg] decode+meta: {}ms | total: {}ms", t_decode.elapsed().as_millis(), started_at.elapsed().as_millis());
 
             Ok(QueryResult {
                 columns,
@@ -222,12 +218,10 @@ async fn execute_query_on_pool(
                  FROM ({trimmed}) AS blacktable_row"
             );
 
-            let t_query = Instant::now();
             let rows_raw = raw_sql(&data_sql)
                 .fetch_all(pool)
                 .await
                 .map_err(|error| error.to_string())?;
-            eprintln!("[pg] SHOW/EXPLAIN data: {}ms", t_query.elapsed().as_millis());
 
             let (columns, column_meta) = extract_columns_and_meta_from_jsonb(&rows_raw);
             let rows = decode_jsonb_rows(rows_raw)?;

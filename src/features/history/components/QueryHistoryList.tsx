@@ -2,6 +2,7 @@ import type { QueryHistoryItem } from '../types';
 import QueryHistoryItemCard from './QueryHistoryItem';
 import type { AppLocale } from '../../../i18n';
 import { translate } from '../../../i18n';
+import PulseLoader from '../../../components/ui/PulseLoader';
 
 export default function QueryHistoryList({
   locale,
@@ -25,7 +26,11 @@ export default function QueryHistoryList({
   onDelete: (item: QueryHistoryItem) => void;
 }) {
   if (loading) {
-    return <div className="px-4 py-6 text-sm text-muted">{translate(locale, 'loadingHistory')}</div>;
+    return (
+      <div className="flex justify-center px-4 py-8">
+        <PulseLoader message={translate(locale, 'loadingHistory')} size="sm" surface="transparent" />
+      </div>
+    );
   }
 
   if (error) {

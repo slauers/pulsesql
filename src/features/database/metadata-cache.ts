@@ -6,6 +6,13 @@ import type { ColumnDef, MetadataColumn } from './types';
 import { normalizeColumnDef } from './types';
 
 const inFlightRequests = new Map<string, Promise<unknown>>();
+let priorityColumnRequests = 0;
+
+const PREFETCH_COLUMN_LIMIT: Record<DatabaseEngine, number> = {
+  postgres: 2,
+  mysql: 2,
+  oracle: 1,
+};
 
 export async function ensureSchemasCached(
   connectionId: string,
@@ -80,7 +87,7 @@ export async function ensureSchemasCached(
         phase: 'idle',
         message,
       });
-      useConnectionRuntimeStore.getState().appendLog(connectionId, message);
+      useConnectionRuntimeStore.getState().appendLog(connectionId, `Error loading schema metadata: ${message}`);
       throw new Error(message);
     }
   }) as Promise<string[]>;
@@ -174,10 +181,24 @@ export async function ensureTablesCached(
         schemaName,
         message,
       });
-      useConnectionRuntimeStore.getState().appendLog(connectionId, message);
+      useConnectionRuntimeStore.getState().appendLog(connectionId, `Error loading table metadata for ${schemaName}: ${message}`);
       throw new Error(message);
     }
   }) as Promise<string[]>;
+}
+
+export async function warmMetadataAfterConnect(
+  connectionId: string,
+  engine: DatabaseEngine,
+): Promise<void> {
+  const schemas = await ensureSchemasCached(connectionId, engine, { markActive: true });
+  const activeSchema = useDatabaseSessionStore.getState().activeSchemaByConnection[connectionId];
+  const schemaName = activeSchema ?? resolvePreferredSchema(connectionId, schemas);
+  if (!schemaName) {
+    return;
+  }
+
+  await ensureTablesCached(connectionId, engine, schemaName);
 }
 
 export async function ensureColumnsCached(
@@ -185,7 +206,7 @@ export async function ensureColumnsCached(
   engine: DatabaseEngine,
   schemaName: string,
   tableName: string,
-  options?: { force?: boolean },
+  options?: { force?: boolean; priority?: boolean },
 ): Promise<MetadataColumn[]> {
   const state = useDatabaseSessionStore.getState();
   const cachedColumns = state.metadataByConnection[connectionId]?.schemasByName[schemaName]?.tablesByName[tableName]?.columns;
@@ -194,68 +215,85 @@ export async function ensureColumnsCached(
   }
 
   const key = `columns:${connectionId}:${schemaName}:${tableName}`;
-  return reuseRequest(key, async () => {
-    // Try SQLite local cache first (skip on force refresh)
-    if (!options?.force) {
-      try {
-        const localColumns = await invoke<ColumnDef[]>('get_local_columns', {
-          configId: connectionId,
-          schemaName,
-          tableName,
-        });
-        if (localColumns.length > 0) {
-          const normalized = localColumns.map(normalizeColumnDef);
-          useDatabaseSessionStore.getState().cacheColumns(connectionId, engine, schemaName, tableName, normalized);
-          useConnectionRuntimeStore
-            .getState()
-            .appendLog(connectionId, `Column metadata for ${schemaName}.${tableName} loaded from local cache.`);
-          return normalized;
-        }
-      } catch {
-        // SQLite unavailable — fall through to remote
-      }
-    }
-
-    const startedAt = performance.now();
-    useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
-      phase: 'loadingColumns',
-      schemaName,
-      tableName,
-      message: `Carregando colunas de ${schemaName}.${tableName}`,
-    });
-
+  if (options?.priority) {
+    priorityColumnRequests += 1;
     try {
-      const columns = await invoke<ColumnDef[]>('list_columns', {
-        connId: connectionId,
-        schema: schemaName,
-        table: tableName,
-      });
-      const normalized = columns.map(normalizeColumnDef);
-      useDatabaseSessionStore.getState().cacheColumns(connectionId, engine, schemaName, tableName, normalized);
+      return await reuseRequest(key, () => loadColumns(connectionId, engine, schemaName, tableName, options));
+    } finally {
+      priorityColumnRequests = Math.max(0, priorityColumnRequests - 1);
+    }
+  }
 
-      // Persist raw columns to SQLite (fire-and-forget)
-      void invoke('save_local_columns', { configId: connectionId, schemaName, tableName, columns });
+  return reuseRequest(key, () => loadColumns(connectionId, engine, schemaName, tableName, options)) as Promise<MetadataColumn[]>;
+}
 
-      useConnectionRuntimeStore
-        .getState()
-        .appendLog(connectionId, `Column metadata for ${schemaName}.${tableName} loaded in ${Math.round(performance.now() - startedAt)}ms.`);
-      useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
-        phase: 'idle',
-      });
-      return normalized;
-    } catch (error) {
-      const message = formatMetadataError(error, `Failed to load columns for ${schemaName}.${tableName}.`);
-      useDatabaseSessionStore.getState().setColumnsError(connectionId, engine, schemaName, tableName, message);
-      useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
-        phase: 'idle',
+async function loadColumns(
+  connectionId: string,
+  engine: DatabaseEngine,
+  schemaName: string,
+  tableName: string,
+  options?: { force?: boolean; priority?: boolean },
+): Promise<MetadataColumn[]> {
+  // Try SQLite local cache first (skip on force refresh)
+  if (!options?.force) {
+    try {
+      const localColumns = await invoke<ColumnDef[]>('get_local_columns', {
+        configId: connectionId,
         schemaName,
         tableName,
-        message,
       });
-      useConnectionRuntimeStore.getState().appendLog(connectionId, message);
-      throw new Error(message);
+      if (localColumns.length > 0) {
+        const normalized = localColumns.map(normalizeColumnDef);
+        useDatabaseSessionStore.getState().cacheColumns(connectionId, engine, schemaName, tableName, normalized);
+        useConnectionRuntimeStore
+          .getState()
+          .appendLog(connectionId, `Column metadata for ${schemaName}.${tableName} loaded from local cache.`);
+        return normalized;
+      }
+    } catch {
+      // SQLite unavailable — fall through to remote
     }
-  }) as Promise<MetadataColumn[]>;
+  }
+
+  const startedAt = performance.now();
+  useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
+    phase: 'loadingColumns',
+    schemaName,
+    tableName,
+    message: `Carregando colunas de ${schemaName}.${tableName}`,
+  });
+
+  try {
+    const columns = await invoke<ColumnDef[]>('list_columns', {
+      connId: connectionId,
+      schema: schemaName,
+      table: tableName,
+    });
+    const normalized = columns.map(normalizeColumnDef);
+    useDatabaseSessionStore.getState().cacheColumns(connectionId, engine, schemaName, tableName, normalized);
+
+    // Persist raw columns to SQLite (fire-and-forget)
+    void invoke('save_local_columns', { configId: connectionId, schemaName, tableName, columns });
+
+    useConnectionRuntimeStore
+      .getState()
+      .appendLog(connectionId, `Column metadata for ${schemaName}.${tableName} loaded in ${Math.round(performance.now() - startedAt)}ms.`);
+    useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
+      phase: 'idle',
+    });
+    return normalized;
+  } catch (error) {
+    const message = formatMetadataError(error, `Failed to load columns for ${schemaName}.${tableName}.`);
+    useDatabaseSessionStore.getState().setColumnsError(connectionId, engine, schemaName, tableName, message);
+    useDatabaseSessionStore.getState().setMetadataActivity(connectionId, {
+      phase: 'idle',
+      schemaName,
+      tableName,
+      message,
+    });
+    useConnectionRuntimeStore.getState().appendLog(connectionId, `Error loading column metadata for ${schemaName}.${tableName}: ${message}`);
+    throw new Error(message);
+  }
 }
 
 export function invalidateMetadataCache(connectionId: string) {
@@ -316,12 +354,29 @@ async function prefetchColumnsBackground(
   schemaName: string,
   tables: string[],
 ): Promise<void> {
-  for (const tableName of tables.slice(0, 60)) {
-    try {
-      await ensureColumnsCached(connectionId, engine, schemaName, tableName);
-    } catch {
-      // ignore individual failures
-    }
+  const limit = PREFETCH_COLUMN_LIMIT[engine] ?? 2;
+  const queue = tables.slice(0, 80);
+
+  for (let index = 0; index < queue.length; index += limit) {
+    await waitForPriorityColumnRequests();
+    const batch = queue.slice(index, index + limit);
+    await Promise.all(
+      batch.map(async (tableName) => {
+        try {
+          await ensureColumnsCached(connectionId, engine, schemaName, tableName);
+        } catch (error) {
+          useConnectionRuntimeStore
+            .getState()
+            .appendLog(connectionId, `Error prefetching column metadata for ${schemaName}.${tableName}: ${formatMetadataError(error, 'Unknown metadata error.')}`);
+        }
+      }),
+    );
+  }
+}
+
+async function waitForPriorityColumnRequests() {
+  while (priorityColumnRequests > 0) {
+    await new Promise((resolve) => window.setTimeout(resolve, 120));
   }
 }
 

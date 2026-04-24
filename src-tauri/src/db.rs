@@ -93,6 +93,7 @@ pub struct ExecuteQueryPayload {
     pub history_item_id: String,
     pub autocommit_enabled: bool,
     pub transaction_open: bool,
+    pub diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -317,7 +318,7 @@ pub fn execute_query(
         // query completes just to look up the connection name.
         let t_meta = Instant::now();
         let connection_details = resolve_connection_history_details(&state, &conn_id).await?;
-        eprintln!("[db] resolve_connection_details: {}ms", t_meta.elapsed().as_millis());
+        let resolve_ms = t_meta.elapsed().as_millis();
 
         let t_exec = Instant::now();
         let execution = execute_query_on_managed_connection(
@@ -329,7 +330,7 @@ pub fn execute_query(
             known_total_rows,
         )
         .await;
-        eprintln!("[db] execute_query_on_managed_connection: {}ms", t_exec.elapsed().as_millis());
+        let execute_ms = t_exec.elapsed().as_millis();
 
         let now = now_iso_like();
         let history_item_id = new_history_id();
@@ -362,8 +363,12 @@ pub fn execute_query(
                     history_item_id,
                     autocommit_enabled: result.autocommit_enabled,
                     transaction_open: result.transaction_open,
+                    diagnostics: vec![
+                        format!("[db] resolve_connection_details: {resolve_ms}ms"),
+                        format!("[db] execute_query_on_managed_connection: {execute_ms}ms"),
+                        format!("[db] total execute_query command: {}ms", t_total.elapsed().as_millis()),
+                    ],
                 };
-                eprintln!("[db] total execute_query command: {}ms", t_total.elapsed().as_millis());
                 Ok(payload)
             }
             Err(error) => {

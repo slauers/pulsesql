@@ -86,7 +86,7 @@ export default function EcgLine({ color, size = 'md', className, style }: EcgLin
         style={{
           position: 'absolute',
           top: 0,
-          left: 0,
+          left: -CYCLE_W,
           willChange: 'transform',
           animation: 'ecg-line-scroll 1.4s linear infinite',
         }}

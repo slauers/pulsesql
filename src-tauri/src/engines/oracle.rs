@@ -283,16 +283,18 @@ fn call_persistent_sidecar(
         .and_then(|_| proc.stdin.flush())
         .map_err(|error| format!("Failed to write to Oracle sidecar: {error}"))?;
 
-    // Read response line.
-    let mut response_line = String::new();
+    // Read response line. Some JDBC/runtime diagnostics can contain non-UTF8 bytes;
+    // decode lossy so one bad byte does not break the whole sidecar protocol.
+    let mut response_bytes = Vec::new();
     proc.stdout
-        .read_line(&mut response_line)
+        .read_until(b'\n', &mut response_bytes)
         .map_err(|error| format!("Failed to read from Oracle sidecar: {error}"))?;
 
-    if response_line.is_empty() {
+    if response_bytes.is_empty() {
         return Err("Oracle sidecar closed its stdout unexpectedly".to_string());
     }
 
+    let response_line = String::from_utf8_lossy(&response_bytes);
     let response_json: Value = serde_json::from_str(response_line.trim())
         .map_err(|error| format!("Failed to decode Oracle sidecar response: {error}"))?;
 

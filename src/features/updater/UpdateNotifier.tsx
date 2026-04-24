@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { ArrowUpCircle } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { marked } from 'marked';
+import PulseLoader from '../../components/ui/PulseLoader';
 
 export interface UpdateInfo {
   version: string;
@@ -132,13 +133,13 @@ export function UpdateButton({ update }: { update: UpdateInfo }) {
 
               {installState === 'downloading' ? (
                 <div className="mx-4 mb-3">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[11px] text-muted">Downloading…</span>
+                  <div className="flex items-center justify-between">
+                    <PulseLoader message="Downloading..." size="sm" surface="transparent" />
                     {progressLabel ? (
                       <span className="text-[11px] text-primary/80">{progressLabel}</span>
                     ) : null}
                   </div>
-                  <div className="h-1 w-full overflow-hidden rounded-full bg-border/50">
+                  <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-border/50">
                     <div
                       className="h-full rounded-full bg-primary transition-all duration-300"
                       style={{ width: progressPercent !== null ? `${progressPercent}%` : '100%' }}
@@ -167,7 +168,7 @@ export function UpdateButton({ update }: { update: UpdateInfo }) {
                 >
                   {installState !== 'idle' ? (
                     <>
-                      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                      <PulseLoader color="#ffffff" size="xs" surface="transparent" />
                       {installState === 'downloading' ? 'Downloading…' : 'Installing…'}
                     </>
                   ) : (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
+import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 import {
   ChevronsLeft,
   ChevronsRight,
@@ -26,7 +27,7 @@ import { useConnectionRuntimeStore, type RuntimeConnectionState } from '../../st
 import { useDatabaseSessionStore } from '../../store/databaseSession';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
 import { useQueriesStore } from '../../store/queries';
-import { invalidateMetadataCache } from '../database/metadata-cache';
+import { invalidateMetadataCache, warmMetadataAfterConnect } from '../database/metadata-cache';
 import { DatabaseExplorer } from '../database/Explorer';
 import QueryWorkspace from '../query/QueryWorkspace';
 import ConnectionForm from './ConnectionForm';
@@ -340,7 +341,7 @@ export default function ConnectionManager() {
       return;
     }
 
-    await navigator.clipboard.writeText(entries.join('\n'));
+    await clipboardWriteText(entries.join('\n'));
     appendLog(connId, t('logsCopied'));
     if (copiedLogsTimeoutRef.current) window.clearTimeout(copiedLogsTimeoutRef.current);
     setCopiedLogsId(connId);
@@ -443,7 +444,6 @@ export default function ConnectionManager() {
         initializeConnectionRuntime(conn.id, true);
         setAutocommitEnabled(conn.id, true);
         setTransactionOpen(conn.id, false);
-        invalidateMetadataCache(conn.id);
         setActiveConnection(conn.id);
         appendLog(
           conn.id,
@@ -451,6 +451,9 @@ export default function ConnectionManager() {
             ? tLog('connectionRestoredOnAttempt', { attempt })
             : tLog('connectionOpenedSuccessfully'),
         );
+        void warmMetadataAfterConnect(conn.id, conn.engine).catch((error) => {
+          appendLog(conn.id, `Error warming metadata after connect: ${extractErrorMessage(error)}`);
+        });
         return;
       } catch (error) {
         const message = formatConnectionError(error, 'en-US');
@@ -1471,7 +1474,7 @@ function ConnectionLogEntry({
   const copyTimeoutRef = useRef<number | null>(null);
 
   const handleCopyLine = () => {
-    navigator.clipboard.writeText(message).catch(() => null);
+    clipboardWriteText(message).catch(() => null);
     if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
     setCopied(true);
     copyTimeoutRef.current = window.setTimeout(() => setCopied(false), 1200);
