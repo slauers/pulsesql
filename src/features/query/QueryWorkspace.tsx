@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
+import EcgLine from '../../components/ui/EcgLine';
 import type * as Monaco from 'monaco-editor';
 import Editor from '@monaco-editor/react';
 import { format as sqlFormat } from 'sql-formatter';
@@ -29,6 +30,7 @@ import {
   Check,
   RotateCcw,
   Trash2,
+  Save,
   Maximize2,
   Minimize2,
 } from 'lucide-react';
@@ -67,6 +69,7 @@ interface ResultGridColumn {
   subtitle?: string | null;
   isPrimaryKey?: boolean;
   isForeignKey?: boolean;
+  isAutoIncrement?: boolean;
 }
 
 interface QueryExecutionResult extends QueryResult {
@@ -135,6 +138,7 @@ export default function QueryWorkspace() {
   const setTransactionOpen = useConnectionRuntimeStore((state) => state.setTransactionOpen);
   const locale = useUiPreferencesStore((state) => state.locale);
   const semanticBackgroundState = useUiPreferencesStore((state) => state.semanticBackgroundState);
+  const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
   const setSemanticBackgroundState = useUiPreferencesStore((state) => state.setSemanticBackgroundState);
   const resultPageSize = useUiPreferencesStore((state) => state.resultPageSize);
   const setResultPageSize = useUiPreferencesStore((state) => state.setResultPageSize);
@@ -169,9 +173,9 @@ export default function QueryWorkspace() {
   }, [semanticBackgroundState, connectionColor, locale]);
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<QueryErrorPresentation | null>(null);
-  const [results, setResults] = useState<QueryExecutionResult[]>([]);
-  const [activeResultIndex, setActiveResultIndex] = useState(0);
+  const [errorByTabId, setErrorByTabId] = useState<Record<string, QueryErrorPresentation | null>>({});
+  const [resultsByTabId, setResultsByTabId] = useState<Record<string, QueryExecutionResult[]>>({});
+  const [activeResultIndexByTabId, setActiveResultIndexByTabId] = useState<Record<string, number>>({});
   const [historyOpen, setHistoryOpen] = useState(false);
   const [quickFilterInput, setQuickFilterInput] = useState('');
   const [quickFilter, setQuickFilter] = useState('');
@@ -189,9 +193,11 @@ export default function QueryWorkspace() {
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [exportedFormat, setExportedFormat] = useState<'csv' | 'json' | null>(null);
   const exportFeedbackRef = useRef<number | null>(null);
-  const [editingCell, setEditingCell] = useState<string | null>(null);
-  const [editError, setEditError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [selectedSourceRowIndex, setSelectedSourceRowIndex] = useState<number | null>(null);
+  const [pendingRowEdits, setPendingRowEdits] = useState<Map<object, Record<string, string | null>>>(new Map());
+  const [pendingNewRows, setPendingNewRows] = useState<Record<string, unknown>[]>([]);
+  const [focusNewRowToken, setFocusNewRowToken] = useState(0);
   const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
   const [gridFullscreen, setGridFullscreen] = useState(false);
   const [activePanel, setActivePanel] = useState<'results' | 'logs'>('results');
@@ -215,6 +221,58 @@ export default function QueryWorkspace() {
     activeSchema: schemaLabel,
     engine,
   });
+
+  const setTabResults = useCallback((
+    tabId: string | null | undefined,
+    value: QueryExecutionResult[] | ((current: QueryExecutionResult[]) => QueryExecutionResult[]),
+  ) => {
+    if (!tabId) {
+      return;
+    }
+
+    setResultsByTabId((current) => {
+      const currentResults = current[tabId] ?? [];
+      const nextResults = typeof value === 'function' ? value(currentResults) : value;
+      return {
+        ...current,
+        [tabId]: nextResults,
+      };
+    });
+  }, []);
+
+  const setTabActiveResultIndex = useCallback((
+    tabId: string | null | undefined,
+    value: number | ((current: number) => number),
+  ) => {
+    if (!tabId) {
+      return;
+    }
+
+    setActiveResultIndexByTabId((current) => {
+      const currentIndex = current[tabId] ?? 0;
+      const nextIndex = typeof value === 'function' ? value(currentIndex) : value;
+      return {
+        ...current,
+        [tabId]: nextIndex,
+      };
+    });
+  }, []);
+
+  const setTabError = useCallback((tabId: string | null | undefined, value: QueryErrorPresentation | null) => {
+    if (!tabId) {
+      return;
+    }
+
+    setErrorByTabId((current) => ({
+      ...current,
+      [tabId]: value,
+    }));
+  }, []);
+
+  const results = activeTabId ? resultsByTabId[activeTabId] ?? [] : [];
+  const storedActiveResultIndex = activeTabId ? activeResultIndexByTabId[activeTabId] ?? 0 : 0;
+  const activeResultIndex = results.length ? Math.min(storedActiveResultIndex, results.length - 1) : 0;
+  const error = activeTabId ? errorByTabId[activeTabId] ?? null : null;
 
   useEffect(() => {
     autocompleteContextRef.current = {
@@ -321,17 +379,17 @@ export default function QueryWorkspace() {
 
     setSemanticBackgroundState('running');
     setLoading(true);
-    setError(null);
+    setTabError(activeTabId, null);
     setActivePanel('results');
     return window.performance.now();
-  }, [setSemanticBackgroundState]);
+  }, [activeTabId, setSemanticBackgroundState, setTabError]);
 
   const syncTransactionState = useCallback((connectionId: string, payload: ExecuteQueryPayload) => {
     setAutocommitEnabled(connectionId, payload.autocommit_enabled);
     setTransactionOpen(connectionId, payload.transaction_open);
   }, [setAutocommitEnabled, setTransactionOpen]);
 
-  const runQueryBatch = useCallback(async (queries: string[], connectionId: string, options?: { feedbackStartedAt?: number }) => {
+  const runQueryBatch = useCallback(async (queries: string[], connectionId: string, options?: { feedbackStartedAt?: number; tabId?: string | null }) => {
     const statements = queries.map((item) => item.trim()).filter(Boolean);
     if (!statements.length || !connectionId) {
       if (options?.feedbackStartedAt) {
@@ -343,6 +401,7 @@ export default function QueryWorkspace() {
     const targetConnection = connections.find((item) => item.id === connectionId) ?? null;
     const targetEngine = targetConnection?.engine;
     const targetSchema = activeSchemaByConnection[connectionId] ?? targetConnection?.preferredSchema;
+    const targetTabId = options?.tabId ?? activeTabId;
     
     const runningStartedAt = options?.feedbackStartedAt ?? startExecutionFeedback();
     if (!options?.feedbackStartedAt) {
@@ -382,8 +441,8 @@ export default function QueryWorkspace() {
         }
       }
 
-      setResults(nextResults);
-      setActiveResultIndex(0);
+      setTabResults(targetTabId, nextResults);
+      setTabActiveResultIndex(targetTabId, 0);
       await waitForMinimumRunning(runningStartedAt);
       setSemanticBackgroundState('success');
       scheduleSemanticReset(SEMANTIC_SUCCESS_DURATION_MS);
@@ -395,7 +454,7 @@ export default function QueryWorkspace() {
         activeSchema: targetSchema,
         metadataConnection: metadataByConnection[connectionId],
       });
-      setError(nextError);
+      setTabError(targetTabId, nextError);
       appendLog(connectionId, `Erro de query: ${extractErrorMessage(e).trim()}`);
       await waitForMinimumRunning(runningStartedAt);
       setSemanticBackgroundState('error');
@@ -403,7 +462,7 @@ export default function QueryWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [activeSchemaByConnection, appendLog, connections, metadataByConnection, resultPageSize, scheduleSemanticReset, setSemanticBackgroundState, startExecutionFeedback]);
+  }, [activeSchemaByConnection, activeTabId, appendLog, connections, metadataByConnection, resultPageSize, scheduleSemanticReset, setSemanticBackgroundState, setTabActiveResultIndex, setTabError, setTabResults, startExecutionFeedback]);
 
   const ensureExecutionConnectionReady = useCallback(async (connectionId: string) => {
     const connection = connections.find((item) => item.id === connectionId);
@@ -449,10 +508,11 @@ export default function QueryWorkspace() {
 
     try {
       await ensureExecutionConnectionReady(resolvedConnectionId);
-      await runQueryBatch(statements, resolvedConnectionId, { feedbackStartedAt: runningStartedAt });
+      await runQueryBatch(statements, resolvedConnectionId, { feedbackStartedAt: runningStartedAt, tabId: activeTabId });
     } catch (executionError) {
       const connection = connections.find((item) => item.id === resolvedConnectionId) ?? null;
-      setError(
+      setTabError(
+        activeTabId,
         buildQueryErrorPresentation({
           error: executionError,
           engine: connection?.engine ?? engine,
@@ -468,6 +528,7 @@ export default function QueryWorkspace() {
     }
   }, [
     activeSchemaByConnection,
+    activeTabId,
     connections,
     engine,
     ensureExecutionConnectionReady,
@@ -477,6 +538,7 @@ export default function QueryWorkspace() {
     scheduleSemanticReset,
     schemaLabel,
     setSemanticBackgroundState,
+    setTabError,
     startExecutionFeedback,
   ]);
 
@@ -507,7 +569,7 @@ export default function QueryWorkspace() {
     const connection = connections.find((current) => current.id === item.connectionId);
 
     if (!connection) {
-      setError({
+      setTabError(activeTabId, {
         title: 'Falha ao abrir o histórico',
         summary: 'A conexão salva para este item de histórico não existe mais.',
         technicalMessage: 'A configuração da conexão vinculada ao item de histórico não foi encontrada.',
@@ -516,20 +578,19 @@ export default function QueryWorkspace() {
       return;
     }
 
-    if (replaceCurrent) {
-      replaceActiveTabContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId);
-    } else {
-      addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId);
-    }
+    const targetTabId = replaceCurrent
+      ? replaceActiveTabContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId)
+      : addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId);
 
     const runningStartedAt = startExecutionFeedback();
     await waitForNextPaint();
 
     try {
       await ensureExecutionConnectionReady(connection.id);
-      await runQueryBatch(splitSqlStatements(item.queryText), connection.id, { feedbackStartedAt: runningStartedAt });
+      await runQueryBatch(splitSqlStatements(item.queryText), connection.id, { feedbackStartedAt: runningStartedAt, tabId: targetTabId });
     } catch (runError) {
-      setError(
+      setTabError(
+        targetTabId,
         buildQueryErrorPresentation({
           error: runError,
           engine: connection.engine,
@@ -544,6 +605,7 @@ export default function QueryWorkspace() {
     }
   }, [
     addTabWithContent,
+    activeTabId,
     connections,
     ensureExecutionConnectionReady,
     replaceActiveTabContent,
@@ -551,6 +613,7 @@ export default function QueryWorkspace() {
     scheduleSemanticReset,
     schemaLabel,
     setSemanticBackgroundState,
+    setTabError,
     startExecutionFeedback,
   ]);
 
@@ -567,10 +630,10 @@ export default function QueryWorkspace() {
   }, []);
 
   const closeResultTab = useCallback((indexToClose: number) => {
-    setResults((current) => {
+    setTabResults(activeTabId, (current) => {
       const next = current.filter((_, index) => index !== indexToClose);
 
-      setActiveResultIndex((currentIndex) => {
+      setTabActiveResultIndex(activeTabId, (currentIndex) => {
         if (!next.length) {
           return 0;
         }
@@ -588,16 +651,17 @@ export default function QueryWorkspace() {
 
       return next;
     });
-  }, []);
+  }, [activeTabId, setTabActiveResultIndex, setTabResults]);
 
   const loadResultPage = useCallback(async (resultIndex: number, nextPage: number) => {
     const targetResult = results[resultIndex];
     if (!targetResult || !resolvedConnectionId) {
       return;
     }
+    const targetTabId = activeTabId;
 
     setLoading(true);
-    setError(null);
+    setTabError(targetTabId, null);
 
     try {
       await ensureExecutionConnectionReady(resolvedConnectionId);
@@ -611,7 +675,7 @@ export default function QueryWorkspace() {
       });
       syncTransactionState(resolvedConnectionId, payload);
 
-      setResults((current) =>
+      setTabResults(targetTabId, (current) =>
         current.map((item, index) =>
           index === resultIndex
             ? {
@@ -622,9 +686,10 @@ export default function QueryWorkspace() {
             : item,
         ),
       );
-      setActiveResultIndex(resultIndex);
+      setTabActiveResultIndex(targetTabId, resultIndex);
     } catch (pageError) {
-      setError(
+      setTabError(
+        targetTabId,
         buildQueryErrorPresentation({
           error: pageError,
           engine,
@@ -636,7 +701,7 @@ export default function QueryWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [ensureExecutionConnectionReady, engine, metadataByConnection, resolvedConnectionId, resultPageSize, results, schemaLabel]);
+  }, [activeTabId, ensureExecutionConnectionReady, engine, metadataByConnection, resolvedConnectionId, resultPageSize, results, schemaLabel, setTabActiveResultIndex, setTabError, setTabResults]);
 
   useEffect(() => {
     setPageSizeDraft(String(resultPageSize));
@@ -734,9 +799,15 @@ export default function QueryWorkspace() {
     [activeResult, cachedSourceColumns],
   );
 
+  const pkCols = cachedSourceColumns?.filter((c) => c.isPrimaryKey) ?? [];
+  const canEditGrid = !!activeSourceTable && pkCols.length > 0;
+  const hasPendingChanges = pendingRowEdits.size > 0 || pendingNewRows.length > 0;
+
   useEffect(() => {
     setSelectedSourceRowIndex(null);
-  }, [activeResultIndex, resolvedConnectionId, quickFilter, activeResult?.statement]);
+    setPendingRowEdits(new Map());
+    setPendingNewRows([]);
+  }, [activeResultIndex, resolvedConnectionId, activeResult?.statement, activeTabId]);
 
   useEffect(() => {
     window.dispatchEvent(
@@ -785,9 +856,10 @@ export default function QueryWorkspace() {
     if (!activeResult || !resolvedConnectionId) {
       return;
     }
+    const targetTabId = activeTabId;
 
     setLoading(true);
-    setError(null);
+    setTabError(targetTabId, null);
 
     try {
       await ensureExecutionConnectionReady(resolvedConnectionId);
@@ -799,7 +871,7 @@ export default function QueryWorkspace() {
       });
       syncTransactionState(resolvedConnectionId, payload);
 
-      setResults((current) =>
+      setTabResults(targetTabId, (current) =>
         current.map((item, index) =>
           index === activeResultIndex
             ? {
@@ -811,7 +883,8 @@ export default function QueryWorkspace() {
         ),
       );
     } catch (pageSizeError) {
-      setError(
+      setTabError(
+        targetTabId,
         buildQueryErrorPresentation({
           error: pageSizeError,
           engine,
@@ -823,77 +896,122 @@ export default function QueryWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [activeResult, activeResultIndex, ensureExecutionConnectionReady, engine, metadataByConnection, pageSizeDraft, resolvedConnectionId, resultPageSize, schemaLabel, setResultPageSize]);
+  }, [activeResult, activeResultIndex, activeTabId, ensureExecutionConnectionReady, engine, metadataByConnection, pageSizeDraft, resolvedConnectionId, resultPageSize, schemaLabel, setResultPageSize, setTabError, setTabResults]);
 
-  const handleCellEdit = useCallback(async (
+  const handleCellChange = useCallback((
     colName: string,
-    rowIndex: number,
+    _rowIndex: number,
     newValue: string | null,
     row: Record<string, unknown>,
   ) => {
-    if (!resolvedConnectionId || !activeSourceTable?.tableName) return;
+    setPendingRowEdits((current) => {
+      const next = new Map(current);
+      const existing = next.get(row) ?? {};
+      next.set(row, { ...existing, [colName]: newValue });
+      return next;
+    });
+  }, []);
 
-    const pkCols = cachedSourceColumns?.filter((c) => c.isPrimaryKey) ?? [];
-    if (!pkCols.length) {
-      setEditError('No primary key detected — cannot safely update this row.');
-      setEditingCell(`${rowIndex}-${colName}`);
-      if (editErrorTimeoutRef.current) window.clearTimeout(editErrorTimeoutRef.current);
-      editErrorTimeoutRef.current = window.setTimeout(() => {
-        setEditError(null);
-        setEditingCell(null);
-      }, 3500);
-      return;
-    }
+  const handleAddNewRow = useCallback(() => {
+    if (!activeResult) return;
+    const emptyRow = Object.fromEntries(activeResult.columns.map((c) => [c, null]));
+    setPendingNewRows((current) => [...current, emptyRow]);
+    setFocusNewRowToken((t) => t + 1);
+  }, [activeResult]);
 
-    const cellKey = `${rowIndex}-${colName}`;
-    setEditingCell(cellKey);
-    setEditError(null);
+  const handleSaveChanges = useCallback(async () => {
+    if (!resolvedConnectionId || !activeSourceTable?.tableName || !activeResult) return;
+    if (!canEditGrid && pendingNewRows.length === 0) return;
+
+    setLoading(true);
+    setSaveError(null);
+    const targetTabId = activeTabId;
 
     try {
       await ensureExecutionConnectionReady(resolvedConnectionId);
-      const sourceRowIndex = activeResult?.rows.indexOf(row) ?? -1;
-      const sql = buildUpdateSql(
-        activeSourceTable.schemaName,
-        activeSourceTable.tableName,
-        colName,
-        newValue,
-        row,
-        pkCols,
-        engine ?? 'postgres',
+
+      for (const [row, changes] of pendingRowEdits.entries()) {
+        if (!pkCols.length) continue;
+        const sql = buildMultiColUpdateSql(
+          activeSourceTable.schemaName,
+          activeSourceTable.tableName,
+          changes,
+          row as Record<string, unknown>,
+          pkCols,
+          engine ?? 'postgres',
+        );
+        const payload = await invoke<ExecuteQueryPayload>('execute_query', {
+          connId: resolvedConnectionId,
+          query: sql,
+          page: 1,
+          pageSize: 1,
+        });
+        syncTransactionState(resolvedConnectionId, payload);
+      }
+
+      for (const newRow of pendingNewRows) {
+        const sql = buildInsertSql(
+          activeSourceTable.schemaName,
+          activeSourceTable.tableName,
+          newRow,
+          activeResult.column_meta ?? [],
+          engine ?? 'postgres',
+        );
+        const payload = await invoke<ExecuteQueryPayload>('execute_query', {
+          connId: resolvedConnectionId,
+          query: sql,
+          page: 1,
+          pageSize: 1,
+        });
+        syncTransactionState(resolvedConnectionId, payload);
+      }
+
+      setTabResults(targetTabId, (current) =>
+        current.map((item, idx) => {
+          if (idx !== activeResultIndex) return item;
+          const updatedRows = item.rows.map((r) => {
+            const changes = pendingRowEdits.get(r as object);
+            return changes ? { ...r, ...changes } : r;
+          });
+          return {
+            ...item,
+            rows: [...updatedRows, ...pendingNewRows],
+            total_rows: typeof item.total_rows === 'number'
+              ? item.total_rows + pendingNewRows.length
+              : item.total_rows,
+          };
+        }),
       );
-      const payload = await invoke<ExecuteQueryPayload>('execute_query', {
-        connId: resolvedConnectionId,
-        query: sql,
-        page: 1,
-        pageSize: 1,
-      });
-      syncTransactionState(resolvedConnectionId, payload);
+
+      setPendingRowEdits(new Map());
+      setPendingNewRows([]);
       setHistoryRefreshToken((current) => current + 1);
-      setResults((current) =>
-        current.map((item, idx) =>
-          idx === activeResultIndex
-            ? {
-                ...item,
-                rows: item.rows.map((r, rIdx) =>
-                  rIdx === sourceRowIndex ? { ...r, [colName]: newValue } : r,
-                ),
-              }
-            : item,
-        ),
-      );
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err);
-      setEditError(msg);
+      setSaveError(msg);
       if (editErrorTimeoutRef.current) window.clearTimeout(editErrorTimeoutRef.current);
       editErrorTimeoutRef.current = window.setTimeout(() => {
-        setEditError(null);
-        setEditingCell(null);
+        setSaveError(null);
+        
       }, 3500);
-      return;
+    } finally {
+      setLoading(false);
     }
-
-    setEditingCell(null);
-  }, [activeResult, activeResultIndex, activeSourceTable, cachedSourceColumns, engine, ensureExecutionConnectionReady, resolvedConnectionId]);
+  }, [
+    resolvedConnectionId,
+    activeSourceTable,
+    activeResult,
+    canEditGrid,
+    pendingRowEdits,
+    pendingNewRows,
+    pkCols,
+    activeTabId,
+    activeResultIndex,
+    engine,
+    ensureExecutionConnectionReady,
+    syncTransactionState,
+    setTabResults,
+  ]);
 
   const handleRowSelect = useCallback((_rowIndex: number, row: Record<string, unknown>) => {
     if (!activeResult) {
@@ -922,16 +1040,17 @@ export default function QueryWorkspace() {
 
     const pkCols = cachedSourceColumns?.filter((c) => c.isPrimaryKey) ?? [];
     if (!pkCols.length) {
-      setEditError('No primary key detected — cannot safely delete this row.');
+      setSaveError('No primary key detected — cannot safely delete this row.');
       if (editErrorTimeoutRef.current) window.clearTimeout(editErrorTimeoutRef.current);
       editErrorTimeoutRef.current = window.setTimeout(() => {
-        setEditError(null);
+        setSaveError(null);
       }, 3500);
       return;
     }
 
     const row = activeResult.rows[selectedSourceRowIndex] as Record<string, unknown>;
-    setEditError(null);
+    setSaveError(null);
+    const targetTabId = activeTabId;
 
     try {
       await ensureExecutionConnectionReady(resolvedConnectionId);
@@ -952,7 +1071,7 @@ export default function QueryWorkspace() {
       syncTransactionState(resolvedConnectionId, payload);
 
       setHistoryRefreshToken((current) => current + 1);
-      setResults((current) =>
+      setTabResults(targetTabId, (current) =>
         current.map((item, idx) => {
           if (idx !== activeResultIndex) {
             return item;
@@ -972,21 +1091,23 @@ export default function QueryWorkspace() {
       setSelectedSourceRowIndex(null);
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err);
-      setEditError(msg);
+      setSaveError(msg);
       if (editErrorTimeoutRef.current) window.clearTimeout(editErrorTimeoutRef.current);
       editErrorTimeoutRef.current = window.setTimeout(() => {
-        setEditError(null);
+        setSaveError(null);
       }, 3500);
     }
   }, [
     activeResult,
     activeResultIndex,
     activeSourceTable,
+    activeTabId,
     cachedSourceColumns,
     engine,
     ensureExecutionConnectionReady,
     resolvedConnectionId,
     selectedSourceRowIndex,
+    setTabResults,
   ]);
 
   const handleTransactionAction = useCallback(async (action: 'COMMIT' | 'ROLLBACK') => {
@@ -1002,16 +1123,16 @@ export default function QueryWorkspace() {
       pageSize: 1,
     });
     syncTransactionState(resolvedConnectionId, payload);
-    setResults([
+    setTabResults(activeTabId, [
       {
         ...payload.result,
         statement: action,
         title: t('result'),
       },
     ]);
-    setActiveResultIndex(0);
+    setTabActiveResultIndex(activeTabId, 0);
     setHistoryRefreshToken((current) => current + 1);
-  }, [ensureExecutionConnectionReady, resolvedConnectionId, syncTransactionState, t]);
+  }, [activeTabId, ensureExecutionConnectionReady, resolvedConnectionId, setTabActiveResultIndex, setTabResults, syncTransactionState, t]);
 
   const handleConnectionChange = useCallback((nextConnectionId: string) => {
     if (!activeTab) {
@@ -1102,21 +1223,21 @@ export default function QueryWorkspace() {
           ? 'h-full min-h-0 border'
           : 'min-h-[190px] max-h-[58%] shrink-0 flex-grow-0 border-t max-[720px]:h-[40%]'
       }`}
-      style={fullscreen ? { background: 'rgba(8, 17, 27, 0.88)' } : { height: `${resultsHeight}%`, background: 'rgba(8, 17, 27, 0.88)' }}
+      style={fullscreen ? { background: 'rgba(var(--bt-background-rgb), 0.92)' } : { height: `${resultsHeight}%`, background: 'rgba(var(--bt-background-rgb), 0.92)' }}
     >
       <div
-        className="flex flex-wrap items-center gap-2 border-b border-border/80 px-3"
-        style={{ background: 'rgba(11, 23, 36, 0.92)', paddingTop: 8, paddingBottom: 8 }}
+        className="flex items-center gap-2 border-b border-border/80 px-3 overflow-hidden"
+        style={{ background: 'rgba(var(--bt-surface-rgb), 0.64)', paddingTop: 8, paddingBottom: 8 }}
       >
         {/* Pill tabs */}
-        <div style={{ display: 'flex', gap: 2, padding: 2, background: 'var(--bt-background)', borderRadius: 7, border: '1px solid var(--bt-border)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 2, padding: 2, background: 'rgba(var(--bt-background-rgb), 0.72)', borderRadius: 7, border: '1px solid var(--bt-border)', flexShrink: 0 }}>
           {(results.length ? results : [{ title: t('result') } as QueryExecutionResult]).map((item, index) => (
             <div key={`${item.title}-${index}`} className="inline-flex items-center">
               <button
-                onClick={() => { setActiveResultIndex(index); setActivePanel('results'); }}
+                onClick={() => { setTabActiveResultIndex(activeTabId, index); setActivePanel('results'); }}
                 className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs font-semibold transition-colors"
                 style={activePanel === 'results' && activeResultIndex === index
-                  ? { background: hexToRgba(connectionColor, 0.15), color: connectionColor, border: `1px solid ${hexToRgba(connectionColor, 0.30)}` }
+                  ? { background: hexToRgba(connectionColor, 0.055), color: 'var(--bt-text)', border: `1px solid ${hexToRgba(connectionColor, 0.18)}` }
                   : { background: 'transparent', color: 'var(--bt-muted)', border: '1px solid transparent' }
                 }
               >
@@ -1137,7 +1258,7 @@ export default function QueryWorkspace() {
             onClick={() => setActivePanel('logs')}
             className="inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition-colors"
             style={activePanel === 'logs'
-              ? { background: hexToRgba(connectionColor, 0.15), color: connectionColor, border: `1px solid ${hexToRgba(connectionColor, 0.30)}` }
+              ? { background: hexToRgba(connectionColor, 0.055), color: 'var(--bt-text)', border: `1px solid ${hexToRgba(connectionColor, 0.18)}` }
               : { background: 'transparent', color: 'var(--bt-muted)', border: '1px solid transparent' }
             }
           >
@@ -1150,12 +1271,40 @@ export default function QueryWorkspace() {
           </button>
         </div>
 
-        {activeResult ? (
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="hidden md:flex items-center gap-1.5 text-xs shrink-0" style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--bt-muted)' }}>
-              {hasGridResult ? (
+        {activeResult && hasGridResult ? (
+          <div className="flex flex-1 items-center min-w-0">
+
+            {/* Container 1 — início: + e salvar */}
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={handleAddNewRow}
+                disabled={!canEditGrid || loading}
+                className="inline-flex items-center rounded-lg border border-border/70 px-2 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-35"
+                title={t('addRow')}
+              >
+                <Plus size={13} />
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSaveChanges()}
+                disabled={!hasPendingChanges || loading}
+                className={`inline-flex items-center rounded-lg border px-2 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+                  hasPendingChanges
+                    ? 'border-amber-400/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/18'
+                    : 'border-border/70 text-muted hover:bg-border/30 hover:text-text'
+                }`}
+                title={t('saveChanges')}
+              >
+                <Save size={13} />
+              </button>
+            </div>
+
+            {/* Container 2 — centro: stats, transação, paginação, filtro, fullscreen, exports */}
+            <div className="flex flex-1 items-center justify-center gap-2 min-w-0 px-2">
+              <div className="hidden md:flex items-center gap-1.5 text-xs shrink-0" style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--bt-muted)' }}>
                 <>
-                  <span style={{ color: connectionColor }}>✓</span>
+                  <span style={{ color: 'var(--bt-muted)' }}>✓</span>
                   <span>
                     {formatNumber(locale, filteredRows.length)}
                     {quickFilter ? ` / ${formatNumber(locale, activeResult.rows.length)}` : ''} {t('rowsLabel')}
@@ -1168,8 +1317,139 @@ export default function QueryWorkspace() {
                   ) : null}
                   <span style={{ opacity: 0.4 }}>│</span>
                 </>
+                <span style={{ color: 'var(--bt-muted)' }}>{activeResult.execution_time}ms</span>
+              </div>
+              {transactionOpen ? (
+                <>
+                  <span className="inline-flex items-center rounded-lg border border-sky-400/30 bg-sky-400/10 px-2.5 py-1.5 text-xs text-sky-200">
+                    {t('transactionOpen')}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void handleTransactionAction('COMMIT')}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/35 bg-emerald-400/12 px-2.5 py-1.5 text-xs text-emerald-200 transition-colors hover:bg-emerald-400/18"
+                  >
+                    {t('commitAction')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleTransactionAction('ROLLBACK')}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/25 bg-red-400/10 px-2.5 py-1.5 text-xs text-red-300 transition-colors hover:bg-red-400/16"
+                  >
+                    {t('rollbackAction')}
+                  </button>
+                </>
               ) : null}
-              <span style={{ color: connectionColor }}>{activeResult.execution_time}ms</span>
+              {canPaginate ? (
+                <div className="flex items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
+                  <label className="inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-muted">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={pageSizeDraft}
+                      onChange={(event) => setPageSizeDraft(event.target.value.replace(/[^0-9]/g, ''))}
+                      onBlur={() => void applyPageSize()}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void applyPageSize();
+                        }
+                      }}
+                      className="w-14 rounded border border-border/70 bg-background/35 px-1.5 py-1 text-right text-[11px] text-text outline-none focus:border-primary"
+                    />
+                    <span>{t('rowsLabel')}</span>
+                  </label>
+                  <button
+                    onClick={() => void loadResultPage(activeResultIndex, currentPage - 1)}
+                    disabled={loading || currentPage <= 1}
+                    className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label={t('previousPage')}
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span className="px-1 text-[11px] text-muted">
+                    {currentPage}/{totalPages}
+                  </span>
+                  <button
+                    onClick={() => void loadResultPage(activeResultIndex, currentPage + 1)}
+                    disabled={loading || currentPage >= totalPages}
+                    className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label={t('nextPage')}
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              ) : null}
+              <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5 min-w-[160px] md:min-w-[200px]">
+                <Search size={13} className="shrink-0 text-muted" />
+                <input
+                  value={quickFilterInput}
+                  onChange={(event) => setQuickFilterInput(event.target.value)}
+                  placeholder={t('quickFilter')}
+                  className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => setGridFullscreen((current) => !current)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text"
+                title={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
+              >
+                {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                {fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
+              </button>
+              <button
+                onClick={() => {
+                  exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel));
+                  if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
+                  setExportedFormat('csv');
+                  exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                  exportedFormat === 'csv'
+                    ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
+                    : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                }`}
+              >
+                {exportedFormat === 'csv' ? <Check size={13} /> : <Download size={13} />}
+                CSV
+              </button>
+              <button
+                onClick={() => {
+                  exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel));
+                  if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
+                  setExportedFormat('json');
+                  exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                  exportedFormat === 'json'
+                    ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
+                    : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                }`}
+              >
+                {exportedFormat === 'json' ? <Check size={13} /> : <FileJson size={13} />}
+                JSON
+              </button>
+            </div>
+
+            {/* Container 3 — fim: lixeira colada na borda */}
+            <div className="shrink-0">
+              <button
+                type="button"
+                onClick={() => void handleDeleteSelectedRow()}
+                disabled={selectedSourceRowIndex == null || loading}
+                className="inline-flex items-center rounded-lg border border-red-400/25 px-2 py-1.5 text-xs text-red-300/70 transition-colors hover:bg-red-400/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-35"
+                title={t('deleteSelectedRow')}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+
+          </div>
+        ) : activeResult ? (
+          <div className="flex flex-1 items-center justify-end gap-2 min-w-0">
+            <div className="hidden md:flex items-center gap-1.5 text-xs shrink-0" style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--bt-muted)' }}>
+              <span style={{ color: 'var(--bt-muted)' }}>{activeResult.execution_time}ms</span>
             </div>
             {transactionOpen ? (
               <>
@@ -1192,123 +1472,38 @@ export default function QueryWorkspace() {
                 </button>
               </>
             ) : null}
-            {hasGridResult ? (
-              <>
-                {canPaginate ? (
-                  <div className="flex items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
-                    <label className="inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-muted">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={pageSizeDraft}
-                        onChange={(event) => setPageSizeDraft(event.target.value.replace(/[^0-9]/g, ''))}
-                        onBlur={() => void applyPageSize()}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            event.preventDefault();
-                            void applyPageSize();
-                          }
-                        }}
-                        className="w-14 rounded border border-border/70 bg-background/35 px-1.5 py-1 text-right text-[11px] text-text outline-none focus:border-primary"
-                      />
-                      <span>{t('rowsLabel')}</span>
-                    </label>
-                    <button
-                      onClick={() => void loadResultPage(activeResultIndex, currentPage - 1)}
-                      disabled={loading || currentPage <= 1}
-                      className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                      aria-label={t('previousPage')}
-                    >
-                      <ChevronLeft size={14} />
-                    </button>
-                    <span className="px-1 text-[11px] text-muted">
-                      {currentPage}/{totalPages}
-                    </span>
-                    <button
-                      onClick={() => void loadResultPage(activeResultIndex, currentPage + 1)}
-                      disabled={loading || currentPage >= totalPages}
-                      className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                      aria-label={t('nextPage')}
-                    >
-                      <ChevronRight size={14} />
-                    </button>
-                  </div>
-                ) : null}
-                <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5 min-w-[180px] md:min-w-[220px]">
-                  <Search size={13} className="shrink-0 text-muted" />
-                  <input
-                    value={quickFilterInput}
-                    onChange={(event) => setQuickFilterInput(event.target.value)}
-                    placeholder={t('quickFilter')}
-                    className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => void handleDeleteSelectedRow()}
-                  disabled={selectedSourceRowIndex == null || loading}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/25 px-2.5 py-1.5 text-xs text-red-300 transition-colors hover:bg-red-400/10 disabled:cursor-not-allowed disabled:opacity-40"
-                  title={t('deleteSelectedRow')}
-                >
-                  <Trash2 size={13} />
-                  {t('deleteRow')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setGridFullscreen((current) => !current)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text"
-                  title={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
-                >
-                  {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-                  {fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
-                </button>
-                <button
-                  onClick={() => {
-                    exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel));
-                    if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
-                    setExportedFormat('csv');
-                    exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
-                  }}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                    exportedFormat === 'csv'
-                      ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
-                      : 'border-border text-muted hover:bg-border/30 hover:text-text'
-                  }`}
-                >
-                  {exportedFormat === 'csv' ? <Check size={13} /> : <Download size={13} />}
-                  CSV
-                </button>
-                <button
-                  onClick={() => {
-                    exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel));
-                    if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
-                    setExportedFormat('json');
-                    exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
-                  }}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                    exportedFormat === 'json'
-                      ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
-                      : 'border-border text-muted hover:bg-border/30 hover:text-text'
-                  }`}
-                >
-                  {exportedFormat === 'json' ? <Check size={13} /> : <FileJson size={13} />}
-                  JSON
-                </button>
-              </>
-            ) : null}
           </div>
         ) : null}
       </div>
 
+      {saveError ? (
+        <div className="flex items-center gap-2 border-b border-red-400/25 bg-red-400/8 px-4 py-2 text-xs text-red-300">
+          <AlertCircle size={12} className="shrink-0" />
+          {saveError}
+        </div>
+      ) : null}
       <div className="flex-1 overflow-auto bg-background/10 relative">
         {activePanel === 'logs' ? (
           <div className="h-full overflow-y-auto p-3" style={{ fontFamily: 'ui-monospace, "SF Mono", monospace', fontSize: 11.5 }}>
             {resolvedConnectionId && connectionLogs[resolvedConnectionId]?.length ? (
-              connectionLogs[resolvedConnectionId].map((entry, i) => (
-                <div key={i} className="py-1 border-b border-border/30 last:border-0" style={{ color: 'var(--bt-muted)', lineHeight: 1.6 }}>
-                  {entry}
-                </div>
-              ))
+              connectionLogs[resolvedConnectionId].map((entry, i) => {
+                const tone = resolveLogTone(entry);
+                return (
+                  <div
+                    key={i}
+                    className="flex items-start gap-2 border-b border-border/25 py-1.5 last:border-0"
+                    style={{ color: tone.text, lineHeight: 1.6 }}
+                  >
+                    <span
+                      className="w-[72px] shrink-0 text-[11px] font-semibold uppercase tracking-[0.08em]"
+                      style={{ color: tone.label }}
+                    >
+                      [{tone.kind}]
+                    </span>
+                    <span className="min-w-0 flex-1 break-words">{entry}</span>
+                  </div>
+                );
+              })
             ) : (
               <div className="flex h-full items-center justify-center text-muted/50 text-sm" style={{ fontFamily: 'inherit' }}>
                 Nenhum log registrado para esta conexão.
@@ -1317,13 +1512,11 @@ export default function QueryWorkspace() {
           </div>
         ) : null}
         {activePanel === 'results' && loading ? (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/55 backdrop-blur-[1px]">
-            <div className="flex items-center gap-3">
-              <LoaderCircle size={16} className="animate-spin text-primary" />
-              <span className="text-[10px] uppercase tracking-[0.14em] text-primary/70">
-                {t('loadingResults')}
-              </span>
-            </div>
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background/35">
+            <EcgLine color={connectionColor} size="md" />
+            <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: connectionColor, opacity: 0.7 }}>
+              {t('loadingResults')}
+            </span>
           </div>
         ) : null}
         {activePanel === 'results' && error && !loading ? (
@@ -1347,13 +1540,14 @@ export default function QueryWorkspace() {
                   rows={filteredRows}
                   rowNumberOffset={quickFilter ? 0 : rowNumberOffset}
                   density={density}
-                  onCellEdit={activeSourceTable ? handleCellEdit : undefined}
-                  editingCell={editingCell}
-                  editError={editError}
+                  onCellChange={canEditGrid ? handleCellChange : undefined}
+                  pendingRowEdits={pendingRowEdits}
+                  pendingNewRows={canEditGrid ? pendingNewRows : undefined}
+                  focusNewRowToken={canEditGrid ? focusNewRowToken : undefined}
                   selectedRowIndex={selectedDisplayRowIndex}
                   onRowSelect={handleRowSelect}
                 />
-              ) : (
+              ) : activeResult.summary ? null : (
                 <div className="h-full flex items-center justify-center text-muted/50 text-sm">
                   {t('executionWithoutResultSet')}
                 </div>
@@ -1377,9 +1571,7 @@ export default function QueryWorkspace() {
             <div
               className="flex items-stretch border-b border-border/80"
               style={{
-                background: 'rgba(6, 14, 22, 0.94)',
-                borderTopLeftRadius: 10,
-                borderTopRightRadius: 10,
+                background: 'rgba(var(--bt-background-rgb), 0.96)',
               }}
             >
               <div className="flex flex-1 min-w-0 items-stretch overflow-x-auto scrollbar-hide">
@@ -1402,59 +1594,57 @@ export default function QueryWorkspace() {
                     onPointerMove={handleTabPointerMove}
                     onPointerUp={handleTabPointerUp}
                     onPointerCancel={handleTabPointerUp}
-                    className={`group relative flex min-w-[148px] max-w-[240px] cursor-grab touch-none select-none items-center gap-2 px-3 py-2.5 transition-all active:cursor-grabbing ${
+                    className={`group relative flex min-w-[108px] max-w-[178px] cursor-grab touch-none select-none items-center gap-1.5 px-2.5 py-1.5 transition-all active:cursor-grabbing ${
                       isActiveTab ? 'text-text' : 'text-muted hover:bg-white/4'
                     }`}
                     style={{
-                      background: isActiveTab ? 'rgba(10, 22, 34, 0.96)' : 'transparent',
-                      borderTop: isActiveTab ? `1px solid ${hexToRgba(tabColor, 0.82)}` : '1px solid transparent',
+                      background: isActiveTab ? 'rgba(var(--bt-surface-rgb), 0.62)' : 'transparent',
+                      borderTop: isActiveTab ? `1px solid ${hexToRgba(tabColor, 0.18)}` : '1px solid transparent',
                       borderRight: isActiveTab ? `1px solid var(--bt-border)` : '1px solid var(--bt-border)',
-                      borderBottom: isActiveTab ? '1px solid rgba(10, 22, 34, 0.96)' : '1px solid transparent',
-                      borderLeft: isDragOverTab ? `1px solid ${hexToRgba(tabColor, 0.9)}` : '1px solid transparent',
-                      borderTopLeftRadius: isActiveTab ? 7 : 0,
-                      borderTopRightRadius: isActiveTab ? 7 : 0,
-                      boxShadow: isActiveTab
-                        ? `inset 0 1px 0 ${hexToRgba(tabColor, 0.55)}, inset 10px 0 10px -12px ${hexToRgba(tabColor, 0.85)}, inset -10px 0 10px -12px ${hexToRgba(tabColor, 0.85)}`
-                        : undefined,
+                      borderBottom: isActiveTab ? '1px solid rgba(var(--bt-surface-rgb), 0.62)' : '1px solid transparent',
+                      borderLeft: isDragOverTab ? `1px solid ${hexToRgba(tabColor, 0.28)}` : '1px solid transparent',
+                      borderTopLeftRadius: isActiveTab ? 5 : 0,
+                      borderTopRightRadius: isActiveTab ? 5 : 0,
+                      boxShadow: isActiveTab ? `inset 0 1px 0 ${hexToRgba(tabColor, 0.12)}` : undefined,
                       opacity: isDraggedTab ? 0.48 : 1,
                     }}
                   >
-                    <span style={{ width: 6, height: 6, borderRadius: 2, flexShrink: 0, background: tabColor, opacity: isActiveTab ? 1 : 0.55 }} />
-                    <span className="text-sm truncate flex-1">{tab.title}</span>
+                    <span style={{ width: 4, height: 4, borderRadius: 999, flexShrink: 0, background: tabColor, opacity: isActiveTab ? 0.58 : 0.28 }} />
+                    <span className="truncate flex-1 text-[12px] leading-5">{tab.title}</span>
                     <button
                       onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
                       onPointerDown={(event) => event.stopPropagation()}
-                      className={`p-1 rounded hover:bg-border/50 text-muted transition-opacity flex-shrink-0 ${
-                        activeTabId === tab.id ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      className={`rounded p-0.5 text-muted transition-opacity hover:bg-border/40 flex-shrink-0 ${
+                        activeTabId === tab.id ? 'opacity-55 hover:opacity-100' : 'opacity-0 group-hover:opacity-80'
                       }`}
                     >
-                      <X size={14} />
+                      <X size={12} />
                     </button>
                   </div>
                   );
                 })}
                 <button
                   onClick={() => addTab(resolvedConnectionId)}
-                  className="flex items-center px-3 text-muted hover:text-text transition-colors"
-                  style={{ borderBottom: '1px solid var(--bt-border)', minWidth: 40, paddingTop: 10, paddingBottom: 10 }}
+                  className="flex items-center px-2 text-muted hover:text-text transition-colors"
+                  style={{ borderBottom: '1px solid var(--bt-border)', minWidth: 30, paddingTop: 6, paddingBottom: 6 }}
                   title={t('newQueryTab')}
                 >
-                  <Plus size={14} />
+                  <Plus size={13} />
                 </button>
               </div>
               <button
                 ref={connectionMenuButtonRef}
                 type="button"
                 onClick={(e) => openConnectionMenu(e.currentTarget.getBoundingClientRect())}
-                className="shrink-0 flex items-center gap-2 border-l border-border/60 px-3 text-muted hover:text-text transition-colors"
+                className="shrink-0 flex items-center gap-1.5 border-l border-border/60 px-2.5 text-muted hover:text-text transition-colors"
                 style={{
-                  borderBottom: connectionMenuOpen ? `1px solid ${connectionColor}` : '1px solid transparent',
-                  background: connectionMenuOpen ? hexToRgba(connectionColor, 0.08) : undefined,
-                  color: connectionMenuOpen ? connectionColor : undefined,
+                  borderBottom: connectionMenuOpen ? `1px solid ${hexToRgba(connectionColor, 0.24)}` : '1px solid transparent',
+                  background: connectionMenuOpen ? hexToRgba(connectionColor, 0.035) : undefined,
+                  color: connectionMenuOpen ? 'var(--bt-text)' : undefined,
                 }}
               >
-                <span style={{ width: 7, height: 7, borderRadius: 2, flexShrink: 0, background: connectionColor, boxShadow: `0 0 5px ${hexToRgba(connectionColor, 0.8)}` }} />
-                <span className="text-[11px] uppercase tracking-[0.12em] truncate max-w-[180px]">
+                <span style={{ width: 5, height: 5, borderRadius: 999, flexShrink: 0, background: connectionColor, opacity: 0.58 }} />
+                <span className="text-[10px] uppercase tracking-[0.08em] truncate max-w-[150px]">
                   {selectedConnection
                     ? `${selectedConnection.engine.toUpperCase()} · ${selectedConnection.name}`
                     : t('noActiveConnection')}
@@ -1466,7 +1656,7 @@ export default function QueryWorkspace() {
             <div
               className="flex flex-wrap items-center gap-2 px-3 py-2.5"
               style={{
-                background: 'rgba(9, 19, 30, 0.92)',
+                background: 'rgba(var(--bt-surface-rgb), 0.72)',
                 borderBottom: '1px solid var(--bt-border)',
               }}
             >
@@ -1478,15 +1668,15 @@ export default function QueryWorkspace() {
                 }`}
                 style={{
                   background: connectionColor,
-                  color: '#08111A',
-                  border: 'none',
-                  letterSpacing: 0.4,
-                  boxShadow: `0 0 18px ${hexToRgba(connectionColor, 0.5)}, inset 0 1px 0 rgba(255,255,255,0.20)`,
+                  color: '#041014',
+                  border: `1px solid ${hexToRgba(connectionColor, 0.78)}`,
+                  letterSpacing: 0.2,
+                  boxShadow: `0 0 18px ${hexToRgba(connectionColor, 0.22)}, inset 0 1px 0 rgba(255,255,255,0.2)`,
                 }}
               >
                 {loading
-                  ? <LoaderCircle size={14} className="animate-spin" style={{ color: '#08111A' }} />
-                  : <Play size={14} style={{ fill: '#08111A', opacity: 0.75 }} />
+                  ? <LoaderCircle size={14} className="animate-spin" style={{ color: '#041014', opacity: 0.82 }} />
+                  : <Play size={14} style={{ fill: '#041014', color: '#041014', opacity: 0.82 }} />
                 }
                 {loading ? t('statusRunning') : t('run')}
                 <span style={{ opacity: 0.5, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}>⌘↵</span>
@@ -1497,9 +1687,9 @@ export default function QueryWorkspace() {
                 onClick={toggleHistory}
                 className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
                 style={{
-                  background: historyOpen ? hexToRgba(connectionColor, 0.12) : 'var(--bt-surface)',
-                  border: `1px solid ${historyOpen ? hexToRgba(connectionColor, 0.35) : 'var(--bt-border)'}`,
-                  color: historyOpen ? connectionColor : 'var(--bt-muted)',
+                  background: historyOpen ? hexToRgba(connectionColor, 0.055) : 'var(--bt-surface)',
+                  border: `1px solid ${historyOpen ? hexToRgba(connectionColor, 0.22) : 'var(--bt-border)'}`,
+                  color: historyOpen ? 'var(--bt-text)' : 'var(--bt-muted)',
                 }}
               >
                 <Clock3 size={13} />
@@ -1540,9 +1730,9 @@ export default function QueryWorkspace() {
                 <span
                   className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] transition-colors${toolbarStatus.pulse ? ' animate-pulse' : ''}`}
                   style={{
-                    borderColor: hexToRgba(toolbarStatus.color, 0.35),
-                    background: hexToRgba(toolbarStatus.color, 0.10),
-                    color: toolbarStatus.color,
+                    borderColor: hexToRgba(toolbarStatus.color, 0.22),
+                    background: hexToRgba(toolbarStatus.color, 0.055),
+                    color: 'var(--bt-muted)',
                   }}
                 >
                   {toolbarStatus.label}
@@ -1551,11 +1741,16 @@ export default function QueryWorkspace() {
             </div>
           </div>
 
+          {(() => {
+            const effectiveGlowState = semanticBackgroundEnabled ? semanticBackgroundState : 'idle';
+            const editorGlow = buildEditorGlow(effectiveGlowState, connectionColor);
+            return (
           <div
-            className="flex-1 relative min-h-0 flex flex-col overflow-hidden bg-background/18"
+            className={`flex-1 relative min-h-0 flex flex-col overflow-hidden bg-background/18 ${effectiveGlowState === 'running' ? 'editor-glow-running' : ''}`}
             style={{
-              borderLeft: `2px solid ${connectionColor}`,
-              boxShadow: `inset 7px 0 18px -12px ${hexToRgba(connectionColor, 0.55)}`,
+              borderLeft: `2px solid ${editorGlow.borderColor}`,
+              boxShadow: editorGlow.boxShadow,
+              transition: 'box-shadow 400ms ease, border-left-color 300ms ease',
             }}
           >
             {activeTab ? (
@@ -1712,6 +1907,8 @@ export default function QueryWorkspace() {
               </div>
             )}
           </div>
+            );
+          })()}
 
           {!gridFullscreen ? (
             <>
@@ -1854,6 +2051,68 @@ export default function QueryWorkspace() {
         : null}
     </div>
   );
+}
+
+type LogTone = {
+  kind: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS';
+  label: string;
+  text: string;
+};
+
+function resolveLogTone(entry: string): LogTone {
+  const normalized = entry.toLowerCase();
+
+  if (
+    normalized.includes('erro') ||
+    normalized.includes('error') ||
+    normalized.includes('failed') ||
+    normalized.includes('falha') ||
+    normalized.includes('exception') ||
+    normalized.includes('timeout')
+  ) {
+    return {
+      kind: 'ERROR',
+      label: '#FCA5A5',
+      text: '#FECACA',
+    };
+  }
+
+  if (
+    normalized.includes('warn') ||
+    normalized.includes('warning') ||
+    normalized.includes('retry') ||
+    normalized.includes('tentativa') ||
+    normalized.includes('reconnecting') ||
+    normalized.includes('reconectando')
+  ) {
+    return {
+      kind: 'WARN',
+      label: '#FCD34D',
+      text: '#FDE68A',
+    };
+  }
+
+  if (
+    normalized.includes('sucesso') ||
+    normalized.includes('success') ||
+    normalized.includes('opened successfully') ||
+    normalized.includes('connection opened') ||
+    normalized.includes('restored') ||
+    normalized.includes('copied') ||
+    normalized.includes('loaded')
+  ) {
+    return {
+      kind: 'SUCCESS',
+      label: '#86EFAC',
+      text: '#BBF7D0',
+    };
+  }
+
+  return {
+    kind: 'INFO',
+    label: '#7DD3FC',
+    text: 'var(--bt-muted)',
+  };
 }
 
 function DangerousUpdateModal({
@@ -2104,6 +2363,7 @@ function splitSqlStatementsWithRange(sql: string) {
   let inDoubleQuote = false;
   let inLineComment = false;
   let inBlockComment = false;
+  let dollarQuoteTag: string | null = null;
 
   for (let index = 0; index < sql.length; index++) {
     const currentChar = sql[index];
@@ -2131,6 +2391,17 @@ function splitSqlStatementsWithRange(sql: string) {
       continue;
     }
 
+    if (dollarQuoteTag) {
+      if (sql.startsWith(dollarQuoteTag, index)) {
+        current += dollarQuoteTag;
+        index += dollarQuoteTag.length - 1;
+        dollarQuoteTag = null;
+      } else {
+        current += currentChar;
+      }
+      continue;
+    }
+
     if (!inSingleQuote && !inDoubleQuote && currentChar === '-' && nextChar === '-') {
       current += currentChar + nextChar;
       index += 1;
@@ -2143,6 +2414,16 @@ function splitSqlStatementsWithRange(sql: string) {
       index += 1;
       inBlockComment = true;
       continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && currentChar === '$') {
+      const tag = readDollarQuoteTag(sql, index);
+      if (tag) {
+        current += tag;
+        index += tag.length - 1;
+        dollarQuoteTag = tag;
+        continue;
+      }
     }
 
     if (!inDoubleQuote && currentChar === "'") {
@@ -2191,6 +2472,11 @@ function splitSqlStatementsWithRange(sql: string) {
   return statements;
 }
 
+function readDollarQuoteTag(sql: string, start: number): string | null {
+  const match = sql.slice(start).match(/^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/);
+  return match?.[0] ?? null;
+}
+
 function buildGridColumns(
   result: QueryResult | null,
   metadataColumns?: MetadataColumn[],
@@ -2211,6 +2497,7 @@ function buildGridColumns(
       subtitle,
       isPrimaryKey: metadataMatch?.isPrimaryKey === true,
       isForeignKey: metadataMatch?.isForeignKey === true,
+      isAutoIncrement: metadataMatch?.isAutoIncrement === true,
     };
   });
 }
@@ -2333,39 +2620,6 @@ function quoteValue(value: string | null, dataType: string, engine: DatabaseEngi
   return `'${escaped}'`;
 }
 
-function buildUpdateSql(
-  schemaName: string | null,
-  tableName: string,
-  colName: string,
-  newValue: string | null,
-  row: Record<string, unknown>,
-  pkCols: import('./../../features/database/types').MetadataColumn[],
-  engine: DatabaseEngine,
-): string {
-  const qi = (n: string) => quoteIdentifier(n, engine);
-  const tableRef = schemaName ? `${qi(schemaName)}.${qi(tableName)}` : qi(tableName);
-
-  const setCols = pkCols.some((pk) => pk.columnName === colName)
-    ? [colName]
-    : [colName];
-
-  const setClause = setCols
-    .map((c) => {
-      const pkCol = pkCols.find((p) => p.columnName === c);
-      return `${qi(c)} = ${quoteValue(newValue, pkCol?.dataType ?? '', engine)}`;
-    })
-    .join(', ');
-
-  const whereClause = pkCols
-    .map((pk) => {
-      const pkVal = row[pk.columnName];
-      const rawPkStr = pkVal === null || pkVal === undefined ? null : String(pkVal);
-      return `${qi(pk.columnName)} = ${quoteValue(rawPkStr, pk.dataType, engine)}`;
-    })
-    .join(' AND ');
-
-  return `UPDATE ${tableRef} SET ${setClause} WHERE ${whereClause}`;
-}
 
 function buildDeleteSql(
   schemaName: string | null,
@@ -2386,4 +2640,86 @@ function buildDeleteSql(
     .join(' AND ');
 
   return `DELETE FROM ${tableRef} WHERE ${whereClause}`;
+}
+
+function buildMultiColUpdateSql(
+  schemaName: string | null,
+  tableName: string,
+  changes: Record<string, string | null>,
+  row: Record<string, unknown>,
+  pkCols: import('./../../features/database/types').MetadataColumn[],
+  engine: DatabaseEngine,
+): string {
+  const qi = (n: string) => quoteIdentifier(n, engine);
+  const tableRef = schemaName ? `${qi(schemaName)}.${qi(tableName)}` : qi(tableName);
+
+  const setClause = Object.entries(changes)
+    .map(([col, val]) => {
+      const meta = pkCols.find((p) => p.columnName === col);
+      return `${qi(col)} = ${quoteValue(val, meta?.dataType ?? '', engine)}`;
+    })
+    .join(', ');
+
+  const whereClause = pkCols
+    .map((pk) => {
+      const pkVal = row[pk.columnName];
+      const rawPkStr = pkVal === null || pkVal === undefined ? null : String(pkVal);
+      return `${qi(pk.columnName)} = ${quoteValue(rawPkStr, pk.dataType, engine)}`;
+    })
+    .join(' AND ');
+
+  return `UPDATE ${tableRef} SET ${setClause} WHERE ${whereClause}`;
+}
+
+function buildInsertSql(
+  schemaName: string | null,
+  tableName: string,
+  row: Record<string, unknown>,
+  columnMeta: Array<{ name: string; data_type: string }>,
+  engine: DatabaseEngine,
+): string {
+  const qi = (n: string) => quoteIdentifier(n, engine);
+  const tableRef = schemaName ? `${qi(schemaName)}.${qi(tableName)}` : qi(tableName);
+
+  const entries = Object.entries(row).filter(([, v]) => v !== undefined);
+  const cols = entries.map(([c]) => qi(c)).join(', ');
+  const vals = entries
+    .map(([c, v]) => {
+      const meta = columnMeta.find((m) => m.name === c);
+      const strVal = v === null || v === undefined ? null : String(v);
+      return quoteValue(strVal, meta?.data_type ?? '', engine);
+    })
+    .join(', ');
+
+  return `INSERT INTO ${tableRef} (${cols}) VALUES (${vals})`;
+}
+
+function buildEditorGlow(state: string, color: string): { boxShadow: string; borderColor: string } {
+  switch (state) {
+    case 'running':
+      return {
+        boxShadow: `inset 3px 0 20px ${hexToRgba(color, 0.20)}, inset 0 0 50px ${hexToRgba(color, 0.07)}`,
+        borderColor: hexToRgba(color, 0.75),
+      };
+    case 'success':
+      return {
+        boxShadow: 'inset 3px 0 20px rgba(61,220,151,0.25), inset 0 0 50px rgba(61,220,151,0.09)',
+        borderColor: 'rgba(61,220,151,0.70)',
+      };
+    case 'error':
+      return {
+        boxShadow: 'inset 3px 0 20px rgba(255,90,95,0.25), inset 0 0 50px rgba(255,90,95,0.09)',
+        borderColor: 'rgba(255,90,95,0.70)',
+      };
+    case 'warning':
+      return {
+        boxShadow: 'inset 3px 0 18px rgba(255,181,71,0.20), inset 0 0 45px rgba(255,181,71,0.07)',
+        borderColor: 'rgba(255,181,71,0.60)',
+      };
+    default:
+      return {
+        boxShadow: `inset 3px 0 14px ${hexToRgba(color, 0.11)}`,
+        borderColor: hexToRgba(color, 0.34),
+      };
+  }
 }

@@ -177,7 +177,7 @@ async fn execute_query_on_pool(
                 format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
 
             let data_sql = format!(
-                "SELECT to_jsonb(blacktable_page) AS __blacktable_json
+                "SELECT to_jsonb(blacktable_page) AS __blacktable_json, blacktable_page.*
                  FROM ({trimmed}) AS blacktable_page
                  LIMIT {normalized_page_size} OFFSET {offset}"
             );
@@ -218,7 +218,7 @@ async fn execute_query_on_pool(
             })
         } else if is_result_set_query(trimmed) {
             let data_sql = format!(
-                "SELECT to_jsonb(blacktable_row) AS __blacktable_json
+                "SELECT to_jsonb(blacktable_row) AS __blacktable_json, blacktable_row.*
                  FROM ({trimmed}) AS blacktable_row"
             );
 
@@ -248,19 +248,11 @@ async fn execute_query_on_pool(
                 .await
                 .map_err(|error| error.to_string())?;
 
-            Ok(QueryResult {
-                columns: vec!["Rows Affected".into()],
-                column_meta: vec![QueryColumnMeta {
-                    name: "Rows Affected".into(),
-                    data_type: "BIGINT".into(),
-                }],
-                rows: vec![json!({ "Rows Affected": result.rows_affected() })],
-                execution_time: started_at.elapsed().as_millis() as u64,
-                summary: None,
-                total_rows: None,
-                page: None,
-                page_size: None,
-            })
+            Ok(build_command_result(
+                trimmed,
+                result.rows_affected(),
+                started_at.elapsed().as_millis() as u64,
+            ))
         }
     };
 
@@ -291,7 +283,7 @@ async fn execute_query_on_active_connection(
                 format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
 
             let data_sql = format!(
-                "SELECT to_jsonb(blacktable_page) AS __blacktable_json
+                "SELECT to_jsonb(blacktable_page) AS __blacktable_json, blacktable_page.*
                  FROM ({trimmed}) AS blacktable_page
                  LIMIT {normalized_page_size} OFFSET {offset}"
             );
@@ -322,7 +314,7 @@ async fn execute_query_on_active_connection(
             })
         } else if is_result_set_query(trimmed) {
             let data_sql = format!(
-                "SELECT to_jsonb(blacktable_row) AS __blacktable_json
+                "SELECT to_jsonb(blacktable_row) AS __blacktable_json, blacktable_row.*
                  FROM ({trimmed}) AS blacktable_row"
             );
 
@@ -350,19 +342,11 @@ async fn execute_query_on_active_connection(
                 .await
                 .map_err(|error| error.to_string())?;
 
-            Ok(QueryResult {
-                columns: vec!["Rows Affected".into()],
-                column_meta: vec![QueryColumnMeta {
-                    name: "Rows Affected".into(),
-                    data_type: "BIGINT".into(),
-                }],
-                rows: vec![json!({ "Rows Affected": result.rows_affected() })],
-                execution_time: started_at.elapsed().as_millis() as u64,
-                summary: None,
-                total_rows: None,
-                page: None,
-                page_size: None,
-            })
+            Ok(build_command_result(
+                trimmed,
+                result.rows_affected(),
+                started_at.elapsed().as_millis() as u64,
+            ))
         }
     };
 
@@ -403,6 +387,38 @@ async fn fetch_total_rows_on_connection(
 
     row.try_get::<i64, _>("blacktable_total")
         .map_err(|error| format!("Failed to decode PostgreSQL total row count: {error}"))
+}
+
+fn build_command_result(query: &str, rows_affected: u64, execution_time: u64) -> QueryResult {
+    if is_do_block(query) {
+        return QueryResult {
+            columns: Vec::new(),
+            column_meta: Vec::new(),
+            rows: Vec::new(),
+            execution_time,
+            summary: Some(
+                "Bloco DO executado com sucesso. RAISE NOTICE e emitido pelo PostgreSQL como notice do servidor; ele nao retorna linhas no result set."
+                    .into(),
+            ),
+            total_rows: None,
+            page: None,
+            page_size: None,
+        };
+    }
+
+    QueryResult {
+        columns: vec!["Rows Affected".into()],
+        column_meta: vec![QueryColumnMeta {
+            name: "Rows Affected".into(),
+            data_type: "BIGINT".into(),
+        }],
+        rows: vec![json!({ "Rows Affected": rows_affected })],
+        execution_time,
+        summary: None,
+        total_rows: None,
+        page: None,
+        page_size: None,
+    }
 }
 
 fn decode_jsonb_rows(rows: Vec<sqlx::postgres::PgRow>) -> Result<Vec<Value>, String> {
@@ -455,6 +471,10 @@ fn is_result_set_query(query: &str) -> bool {
 fn is_paginable_result_query(query: &str) -> bool {
     let upper = strip_leading_sql_comments(query).to_uppercase();
     upper.starts_with("SELECT") || upper.starts_with("WITH")
+}
+
+fn is_do_block(query: &str) -> bool {
+    strip_leading_sql_comments(query).to_uppercase().starts_with("DO ")
 }
 
 fn strip_leading_sql_comments(query: &str) -> &str {

@@ -5,6 +5,7 @@ pub mod db;
 pub mod engines;
 pub mod history;
 pub mod jdk;
+pub mod metadata;
 pub mod ssh;
 
 use serde::Serialize;
@@ -244,9 +245,13 @@ pub fn run() {
             let history_state = tauri::async_runtime::block_on(history::service::HistoryState::new(
                 &app.handle(),
             ))?;
+            let metadata_state = tauri::async_runtime::block_on(
+                metadata::service::MetadataStoreState::new(&app.handle()),
+            )?;
             engines::oracle::init_sidecar_root(&app.handle())?;
             app.manage(db::DbState::new());
             app.manage(history_state);
+            app.manage(metadata_state);
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();
@@ -299,7 +304,15 @@ pub fn run() {
             check_jdk_status,
             download_install_jdk,
             updater::check_for_updates,
-            updater::install_update
+            updater::install_update,
+            metadata::service::get_local_schemas,
+            metadata::service::get_local_tables,
+            metadata::service::get_local_columns,
+            metadata::service::save_local_schemas,
+            metadata::service::save_local_tables,
+            metadata::service::save_local_columns,
+            metadata::service::invalidate_local_metadata,
+            metadata::service::clear_all_local_metadata
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

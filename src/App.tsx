@@ -107,6 +107,7 @@ function App() {
 
     const runStartupSequence = async () => {
       await emitSplashProgress(18, translate(locale, 'splashLoadingInterface'));
+      await invokeSafely('clear_all_local_metadata');
       await nextFrame();
 
       const sessionReady =
@@ -237,6 +238,10 @@ function App() {
   }, [activeTabId, addTab, closeQueryTabShortcut, closeTab, commandPaletteShortcut, newQueryTabShortcut]);
 
   useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
     const buildMenu = async () => {
       const separator = await PredefinedMenuItem.new({ item: 'Separator' });
       const quit = await PredefinedMenuItem.new({ item: 'Quit' });
@@ -362,6 +367,10 @@ function App() {
 }
 
 export default App;
+
+function isTauriRuntime() {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
 
 async function emitSplashProgress(progress: number, label: string) {
   await invokeSafely('update_splash_progress', {

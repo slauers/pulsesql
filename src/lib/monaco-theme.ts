@@ -4,6 +4,48 @@ import { getThemeById, type AppThemeDefinition } from '../themes';
 const AUTO_MONACO_THEME_ID = 'pulsesql-auto';
 
 export function ensureMonacoThemes(monaco: typeof Monaco) {
+  monaco.editor.defineTheme('pulsesql-minimal-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'keyword', foreground: '67E8F9' },
+      { token: 'number', foreground: '86EFAC' },
+      { token: 'string', foreground: 'FDE68A' },
+      { token: 'comment', foreground: '64748B', fontStyle: 'italic' },
+      { token: 'delimiter', foreground: '94A3B8' },
+      { token: 'operator', foreground: 'CBD5E1' },
+      { token: 'identifier', foreground: 'E6EDF3' },
+    ],
+    colors: {
+      'editor.background': '#05080B',
+      'editor.foreground': '#E6EDF3',
+      'editor.lineHighlightBackground': '#0B1219',
+      'editorCursor.foreground': '#0E7490',
+      'editorLineNumber.foreground': '#4B5B68',
+      'editorLineNumber.activeForeground': '#A7B4C0',
+      'editor.selectionBackground': '#0D2B35',
+      'editor.inactiveSelectionBackground': '#0B1D25',
+      'editorIndentGuide.background1': '#14202A',
+      'editorIndentGuide.activeBackground1': '#263846',
+      'editorOverviewRuler.border': '#05080B',
+      'minimap.background': '#05080B',
+      'minimapSlider.background': '#33415544',
+      'minimapSlider.hoverBackground': '#47556966',
+      'minimapSlider.activeBackground': '#64748B88',
+      'scrollbarSlider.background': '#33415544',
+      'scrollbarSlider.hoverBackground': '#47556966',
+      'scrollbarSlider.activeBackground': '#64748B88',
+      'editorSuggestWidget.background': '#0D131A',
+      'editorSuggestWidget.border': '#1C2833',
+      'editorSuggestWidget.foreground': '#E6EDF3',
+      'editorSuggestWidget.highlightForeground': '#38BDF8',
+      'editorSuggestWidget.selectedBackground': '#142635',
+      'editorSuggestWidget.selectedForeground': '#FFFFFF',
+      'editorSuggestWidget.selectedIconForeground': '#0E7490',
+      'editorSuggestWidgetStatus.foreground': '#7D8B99',
+    },
+  });
+
   monaco.editor.defineTheme('pulsesql-dark', {
     base: 'vs-dark',
     inherit: true,
@@ -162,6 +204,10 @@ export function resolveMonacoTheme(themeId: string) {
 
   if (themeId === 'solarized-dark') {
     return 'solarized-dark';
+  }
+
+  if (themeId === 'pulsesql-minimal-dark') {
+    return 'pulsesql-minimal-dark';
   }
 
   if (themeId === 'teal-grid') {

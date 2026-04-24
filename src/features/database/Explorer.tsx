@@ -11,13 +11,13 @@ import {
   FilePenLine,
   FileSearch,
   Pin,
-  LoaderCircle,
-  RefreshCw,
   Rows4,
   Table2,
 } from 'lucide-react';
-import { type DatabaseEngine, useConnectionsStore } from '../../store/connections';
+import EcgMonitor from '../../components/ui/EcgMonitor';
+import { type DatabaseEngine, useConnectionsStore, getConnectionColor } from '../../store/connections';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
+import { useConnectionRuntimeStore } from '../../store/connectionRuntime';
 import { useQueriesStore } from '../../store/queries';
 import {
   ensureColumnsCached,
@@ -41,6 +41,7 @@ interface DatabaseExplorerProps {
   engine: DatabaseEngine;
   showRefreshButton?: boolean;
   refreshToken?: number;
+  onConnect?: () => void;
 }
 
 interface TableContextMenuState {
@@ -74,7 +75,7 @@ const EXPLORER_ACTIONS: Array<{
   { id: 'insert', label: 'Insert', icon: CopyPlus },
 ];
 
-const MENU_OFFSET_PX = 8;
+const MENU_OFFSET_PX = 4;
 const TABLE_MENU_WIDTH = 190;
 const SCHEMA_MENU_WIDTH = 220;
 
@@ -84,16 +85,19 @@ export function DatabaseExplorer({
   engine,
   showRefreshButton = true,
   refreshToken = 0,
+  onConnect,
 }: DatabaseExplorerProps) {
   const metadataConnection = useDatabaseSessionStore((state) => state.metadataByConnection[connId]);
   const activeSchema = useDatabaseSessionStore((state) => state.activeSchemaByConnection[connId] ?? null);
   const setActiveSchema = useDatabaseSessionStore((state) => state.setActiveSchema);
   const connection = useConnectionsStore((state) => state.connections.find((item) => item.id === connId) ?? null);
+  const connectionColor = useConnectionsStore((state) => getConnectionColor(state.connections, connId));
   const setActiveConnection = useConnectionsStore((state) => state.setActiveConnection);
   const updateConnection = useConnectionsStore((state) => state.updateConnection);
   const addTabWithContent = useQueriesStore((state) => state.addTabWithContent);
   const replaceActiveTabContent = useQueriesStore((state) => state.replaceActiveTabContent);
   const requestTabExecution = useQueriesStore((state) => state.requestTabExecution);
+  const runtimeStatus = useConnectionRuntimeStore((state) => state.runtimeStatus[connId] ?? 'disconnected');
 
   const [loading, setLoading] = useState(true);
   const [tablesLoading, setTablesLoading] = useState(false);
@@ -102,7 +106,18 @@ export function DatabaseExplorer({
   const [schemaContextMenu, setSchemaContextMenu] = useState<SchemaContextMenuState | null>(null);
   const [describeState, setDescribeState] = useState<DescribeState | null>(null);
 
+  const isConnecting = runtimeStatus === 'connecting' || runtimeStatus === 'reconnecting';
+  const isConnected = runtimeStatus === 'connected';
+  const canLoadMetadata = isConnected || isConnecting;
+  const hasConnectionError = runtimeStatus === 'failed';
+  const showHeartbeat = isConnecting || (isConnected && loading);
+
   useEffect(() => {
+    if (!isConnected) {
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
 
     setLoading(true);
@@ -120,7 +135,7 @@ export function DatabaseExplorer({
     return () => {
       cancelled = true;
     };
-  }, [connId, engine, refreshToken]);
+  }, [isConnected, connId, engine, refreshToken]);
 
   useEffect(() => {
     const handlePointerDown = () => {
@@ -153,7 +168,8 @@ export function DatabaseExplorer({
   const tablesError = schemaEntry?.tablesError ?? null;
 
   useEffect(() => {
-    if (!resolvedSchema) {
+    if (!canLoadMetadata || !resolvedSchema) {
+      setTablesLoading(false);
       return;
     }
 
@@ -171,9 +187,14 @@ export function DatabaseExplorer({
     return () => {
       cancelled = true;
     };
-  }, [connId, engine, resolvedSchema]);
+  }, [canLoadMetadata, connId, engine, resolvedSchema]);
 
   const handleRefresh = async () => {
+    if (!canLoadMetadata) {
+      onConnect?.();
+      return;
+    }
+
     setRefreshing(true);
     invalidateMetadataCache(connId);
     try {
@@ -198,7 +219,8 @@ export function DatabaseExplorer({
       return;
     }
 
-    const reference = { schema, table };
+    // No schema prefix on generated queries — keep it simple
+    const reference = { table };
     const sql =
       action === 'selectTop100'
         ? buildSelectTopQuery(engine, reference)
@@ -232,45 +254,50 @@ export function DatabaseExplorer({
 
   return (
     <div className="relative flex h-full flex-col bg-surface/35">
-      <div className="flex items-center gap-2 border-b border-border/60" style={{ padding: '10px 14px 9px' }}>
-        <span className="text-muted uppercase" style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.6, whiteSpace: 'nowrap' }}>
-          Tables
-        </span>
-        <div className="flex-1 h-px bg-border/60" />
-        {resolvedSchema ? (
+      {canLoadMetadata ? (
+        <div className="flex items-center gap-2 border-b border-border/60" style={{ padding: '10px 14px 9px' }}>
+          <div className="flex-1 h-px bg-border/60" />
           <button
             type="button"
-            onClick={(event) =>
+            onClick={(event) => {
+              if (!resolvedSchema) return;
+              event.stopPropagation();
               setSchemaContextMenu({
-                ...resolveMenuAnchor(event, SCHEMA_MENU_WIDTH),
+                x: event.clientX,
+                y: event.clientY,
                 schema: resolvedSchema,
-              })
-            }
-            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-background/30 px-2 py-1 text-muted transition-colors hover:bg-background/45 hover:text-text"
+              });
+            }}
+            disabled={!resolvedSchema}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-background/30 px-2 py-1 text-muted transition-colors hover:bg-background/45 hover:text-text disabled:pointer-events-none disabled:opacity-0"
             style={{ fontSize: 9.5 }}
-            title={resolvedSchema}
+            title={resolvedSchema ?? ''}
           >
-            <span className="max-w-[110px] truncate">{resolvedSchema}</span>
+            <span className="max-w-[110px] truncate">{resolvedSchema ?? ''}</span>
             <ChevronDown size={11} />
           </button>
-        ) : null}
-        {showRefreshButton ? (
-          <button
-            type="button"
-            onClick={() => void handleRefresh()}
-            className="text-muted hover:text-text transition-colors"
-            title="Atualizar metadata"
-          >
-            <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-          </button>
-        ) : null}
-      </div>
+          {showRefreshButton ? (
+            <button
+              type="button"
+              onClick={() => void handleRefresh()}
+              className="text-muted hover:text-text transition-colors"
+              title="Atualizar metadata"
+            >
+              <RefreshIcon size={12} spinning={refreshing} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-        {loading ? (
-          <div className="flex justify-center p-4">
-            <LoaderCircle size={18} className="animate-spin text-muted" />
-          </div>
+        {!canLoadMetadata ? (
+          <DisconnectedExplorerState
+            hasConnectionError={hasConnectionError}
+            isConnecting={isConnecting}
+            onConnect={onConnect}
+          />
+        ) : showHeartbeat ? (
+          <HeartbeatLoader color={connectionColor} />
         ) : schemaError ? (
           <ExplorerError message={schemaError} onRetry={() => void handleRefresh()} />
         ) : !resolvedSchema ? (
@@ -278,9 +305,7 @@ export function DatabaseExplorer({
             Nenhum schema encontrado para esta conexao.
           </div>
         ) : tablesLoading && !tables.length ? (
-          <div className="flex justify-center p-4">
-            <LoaderCircle size={18} className="animate-spin text-muted" />
-          </div>
+          <HeartbeatLoader color={connectionColor} />
         ) : tablesError ? (
           <ExplorerError message={tablesError} onRetry={() => void handleRefresh()} />
         ) : tables.length ? (
@@ -293,13 +318,14 @@ export function DatabaseExplorer({
                 schema={resolvedSchema}
                 table={table}
                 onOpenAction={(action) => void openQueryFromExplorer(action, resolvedSchema, table)}
-                onOpenContextMenu={(event) =>
+                onOpenContextMenu={(event) => {
                   setContextMenu({
-                    ...resolveMenuAnchor(event, TABLE_MENU_WIDTH),
+                    x: event.clientX,
+                    y: event.clientY,
                     schema: resolvedSchema,
                     table,
-                  })
-                }
+                  });
+                }}
               />
             ))}
           </div>
@@ -313,7 +339,7 @@ export function DatabaseExplorer({
       {contextMenu
         ? createPortal(
             <div
-              className="fixed z-[120] min-w-[190px] rounded-lg border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+              className="fixed z-[120] min-w-[190px] rounded-lg border border-border/70 bg-surface/90 p-1 shadow-[0_8px_32px_rgba(0,0,0,0.55),0_0_0_1px_rgba(71,196,232,0.06)] backdrop-blur-2xl"
               style={buildMenuPosition(contextMenu.x, contextMenu.y, TABLE_MENU_WIDTH)}
               onMouseDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
@@ -328,9 +354,9 @@ export function DatabaseExplorer({
                       setContextMenu(null);
                       void openQueryFromExplorer(action.id, contextMenu.schema, contextMenu.table);
                     }}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+                    className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] text-text/90 transition-colors hover:bg-primary/10 hover:text-text"
                   >
-                    <Icon size={14} className="text-muted" />
+                    <Icon size={13} className="text-muted shrink-0" />
                     <span>{action.label}</span>
                   </button>
                 );
@@ -343,7 +369,7 @@ export function DatabaseExplorer({
       {schemaContextMenu
         ? createPortal(
             <div
-              className="fixed z-[120] min-w-[220px] rounded-lg border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+              className="fixed z-[120] min-w-[220px] rounded-lg border border-border/70 bg-surface/90 p-1 shadow-[0_8px_32px_rgba(0,0,0,0.55),0_0_0_1px_rgba(71,196,232,0.06)] backdrop-blur-2xl"
               style={buildMenuPosition(schemaContextMenu.x, schemaContextMenu.y, SCHEMA_MENU_WIDTH)}
               onMouseDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
@@ -356,11 +382,11 @@ export function DatabaseExplorer({
                     setActiveSchema(connId, schema);
                     setSchemaContextMenu(null);
                   }}
-                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
-                    schema === resolvedSchema ? 'bg-background/55 text-primary' : 'text-text hover:bg-background/55'
+                  className={`flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors ${
+                    schema === resolvedSchema ? 'bg-primary/12 text-primary' : 'text-text/90 hover:bg-primary/10 hover:text-text'
                   }`}
                 >
-                  <Crosshair size={14} className="text-muted" />
+                  <Crosshair size={13} className="text-muted shrink-0" />
                   <span className="flex-1 truncate text-left">{schema}</span>
                   {preferredSchema === schema ? (
                     <span className="rounded border border-border/60 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.14em] text-muted">
@@ -369,13 +395,13 @@ export function DatabaseExplorer({
                   ) : null}
                 </button>
               ))}
-              <div className="my-1 border-t border-border/70" />
+              <div className="my-1 border-t border-border/50" />
               <button
                 type="button"
                 onClick={() => openCreateTableTemplate(schemaContextMenu.schema)}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+                className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] text-text/90 transition-colors hover:bg-primary/10 hover:text-text"
               >
-                <Table2 size={14} className="text-muted" />
+                <Table2 size={13} className="text-muted shrink-0" />
                 <span>Criar tabela neste schema</span>
               </button>
               <button
@@ -390,9 +416,9 @@ export function DatabaseExplorer({
                   setActiveSchema(connId, schemaContextMenu.schema);
                   setSchemaContextMenu(null);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+                className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] text-text/90 transition-colors hover:bg-primary/10 hover:text-text"
               >
-                <Pin size={14} className="text-muted" />
+                <Pin size={13} className="text-muted shrink-0" />
                 <span>Tornar schema padrao</span>
               </button>
             </div>,
@@ -410,6 +436,67 @@ export function DatabaseExplorer({
         />
       ) : null}
     </div>
+  );
+}
+
+function HeartbeatLoader({ color }: { color: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-3 py-8">
+      <EcgMonitor color={color} width={160} height={32} transparent />
+      <span className="text-[11px] text-muted/70">Carregando...</span>
+    </div>
+  );
+}
+
+function DisconnectedExplorerState({
+  hasConnectionError,
+  isConnecting,
+  onConnect,
+}: {
+  hasConnectionError: boolean;
+  isConnecting: boolean;
+  onConnect?: () => void;
+}) {
+  return (
+    <div className="flex h-full items-start justify-center px-3 py-6 text-center">
+      <div className="flex w-full max-w-[220px] flex-col items-center gap-3">
+        {hasConnectionError ? (
+          <div className="space-y-1">
+            <div className="text-xs font-medium text-red-200/90">Erro ao conectar</div>
+            <div className="text-[11px] text-muted/75">Check logs.</div>
+          </div>
+        ) : null}
+      <button
+        type="button"
+        disabled={isConnecting || !onConnect}
+        onClick={onConnect}
+        className="inline-flex w-full items-center justify-center rounded-lg border border-border/70 bg-background/35 px-3 py-2 text-xs font-medium text-muted transition-colors hover:border-primary/20 hover:bg-primary/5 hover:text-text disabled:cursor-not-allowed disabled:opacity-45"
+      >
+        {isConnecting ? 'Conectando...' : hasConnectionError ? 'Tentar novamente' : 'Conectar'}
+      </button>
+      </div>
+    </div>
+  );
+}
+
+function RefreshIcon({ size, spinning }: { size: number; spinning: boolean }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={spinning ? { animation: 'spin 1s linear infinite' } : undefined}
+    >
+      <path d="M21 2v6h-6" />
+      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+      <path d="M3 22v-6h6" />
+      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+    </svg>
   );
 }
 
@@ -439,6 +526,7 @@ function FlatTableItem({
   const tableEntry = useDatabaseSessionStore(
     (state) => state.metadataByConnection[connId]?.schemasByName[schema]?.tablesByName[table],
   );
+  const connectionColor = useConnectionsStore((state) => getConnectionColor(state.connections, connId));
   const [expanded, setExpanded] = useState(false);
   const [loadingColumns, setLoadingColumns] = useState(false);
 
@@ -509,7 +597,7 @@ function FlatTableItem({
         <div className="ml-5 border-l border-border/40 pl-3">
           {loadingColumns && !columns.length ? (
             <div className="flex items-center gap-2 py-2 text-[11px] text-muted">
-              <LoaderCircle size={12} className="animate-spin" />
+              <EcgMonitor color={connectionColor} width={80} height={18} transparent />
               Carregando colunas...
             </div>
           ) : tableEntry?.columnsError ? (
@@ -656,19 +744,8 @@ function resolveActionTitle(action: ExplorerActionId): string {
 }
 
 function buildMenuPosition(x: number, y: number, menuWidth: number) {
-  const left = Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8));
-  const top = Math.max(8, Math.min(y, window.innerHeight - 220));
-
+  const menuHeight = 210;
+  const left = Math.max(8, Math.min(x + MENU_OFFSET_PX, window.innerWidth - menuWidth - 8));
+  const top = Math.max(8, Math.min(y + MENU_OFFSET_PX, window.innerHeight - menuHeight - 8));
   return { left, top };
-}
-
-function resolveMenuAnchor(event: ReactMouseEvent<HTMLElement>, menuWidth: number) {
-  const currentTarget = event.currentTarget.getBoundingClientRect();
-  const prefersRightSide = currentTarget.right + menuWidth + MENU_OFFSET_PX <= window.innerWidth - 8;
-  const x = prefersRightSide
-    ? Math.round(currentTarget.right + MENU_OFFSET_PX)
-    : Math.round(Math.max(8, currentTarget.left - menuWidth - MENU_OFFSET_PX));
-  const y = Math.round(Math.min(currentTarget.top, window.innerHeight - 220));
-
-  return { x, y };
 }

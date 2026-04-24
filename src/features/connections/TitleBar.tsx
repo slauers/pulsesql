@@ -44,8 +44,8 @@ export default function TitleBar({ connectionColor, connectionName, schema, isCo
             style={{
               padding: '4px 10px',
               borderRadius: '6px 0 0 6px',
-              background: hexToRgba(connectionColor, 0.10),
-              border: `1px solid ${hexToRgba(connectionColor, 0.32)}`,
+              background: hexToRgba(connectionColor, 0.045),
+              border: `1px solid ${hexToRgba(connectionColor, 0.16)}`,
               borderRight: 'none',
               display: 'flex',
               alignItems: 'center',
@@ -59,7 +59,7 @@ export default function TitleBar({ connectionColor, connectionName, schema, isCo
                 borderRadius: 2,
                 flexShrink: 0,
                 background: connectionColor,
-                boxShadow: `0 0 8px ${connectionColor}`,
+                opacity: 0.7,
               }}
             />
             <span style={{ color: 'var(--bt-text)', fontWeight: 600, whiteSpace: 'nowrap' }}>
@@ -91,11 +91,11 @@ export default function TitleBar({ connectionColor, connectionName, schema, isCo
               fontSize: 10,
               letterSpacing: 1,
               fontWeight: 600,
-              color: connectionColor,
+              color: 'var(--bt-muted)',
               padding: '3px 9px',
               borderRadius: 999,
-              border: `1px solid ${hexToRgba(connectionColor, 0.25)}`,
-              background: hexToRgba(connectionColor, 0.08),
+              border: `1px solid ${hexToRgba(connectionColor, 0.12)}`,
+              background: hexToRgba(connectionColor, 0.035),
               whiteSpace: 'nowrap',
             }}
           >
