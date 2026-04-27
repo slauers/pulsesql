@@ -204,7 +204,7 @@ export function DatabaseExplorer({
     }
   };
 
-  const openQueryFromExplorer = async (action: ExplorerActionId, schema: string, table: string) => {
+  const openQueryFromExplorer = async (action: ExplorerActionId, schema: string, table: string, newTab = false) => {
     const columns =
       action === 'insert' || action === 'update' || action === 'describeTable'
         ? await ensureColumnsCached(connId, engine, schema, table, { priority: true }).catch(() => [])
@@ -234,9 +234,14 @@ export function DatabaseExplorer({
     setActiveSchema(connId, schema);
 
     if (action === 'selectTop100') {
-      const tabId = replaceActiveTabContent(sql, `${table} ${resolveActionTitle(action)}`, connId);
-      if (tabId) {
+      if (newTab) {
+        const tabId = addTabWithContent(sql, `${table} ${resolveActionTitle(action)}`, connId);
         requestTabExecution(tabId);
+      } else {
+        const tabId = replaceActiveTabContent(sql, `${table} ${resolveActionTitle(action)}`, connId);
+        if (tabId) {
+          requestTabExecution(tabId);
+        }
       }
       return;
     }
@@ -317,7 +322,7 @@ export function DatabaseExplorer({
                 engine={engine}
                 schema={resolvedSchema}
                 table={table}
-                onOpenAction={(action) => void openQueryFromExplorer(action, resolvedSchema, table)}
+                onOpenAction={(action) => void openQueryFromExplorer(action, resolvedSchema, table, action === 'selectTop100')}
                 onOpenContextMenu={(event) => {
                   setContextMenu({
                     x: event.clientX,
