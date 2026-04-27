@@ -595,6 +595,61 @@ body[data-density='compact'] .bt-density-chip {
   to   { transform: translateX(120px); }
 }
 
+.pulse-loader-mark {
+  --pulse-loader-color: var(--bt-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.pulse-loader-mark svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+.pulse-loader-mark-path {
+  fill: none;
+  stroke: var(--pulse-loader-color);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+}
+
+.pulse-loader-mark-path--base {
+  opacity: 0.16;
+}
+
+.pulse-loader-mark-path--trace {
+  stroke-dasharray: 34 100;
+  stroke-dashoffset: 34;
+  opacity: 0.96;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--pulse-loader-color) 55%, transparent));
+  animation: pulse-loader-mark-trace 1.05s linear infinite;
+}
+
+.pulse-loader-mark--tiny .pulse-loader-mark-path--base {
+  opacity: 0.14;
+}
+
+.pulse-loader-mark--tiny .pulse-loader-mark-path--trace {
+  stroke-dasharray: 26 100;
+  filter: drop-shadow(0 0 1.5px color-mix(in srgb, var(--pulse-loader-color) 28%, transparent));
+}
+
+@keyframes pulse-loader-mark-trace {
+  from {
+    stroke-dashoffset: 34;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
 @keyframes editor-glow-pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.55; }
@@ -667,6 +722,14 @@ body[data-density='compact'] .bt-density-chip {
   align-items: center;
   justify-content: center;
   min-height: 38px;
+}
+
+.splash-screen__loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 84px;
+  width: 100%;
 }
 
 .splash-screen__logo {

@@ -474,8 +474,9 @@ function DisconnectedExplorerState({
         type="button"
         disabled={isConnecting || !onConnect}
         onClick={onConnect}
-        className="inline-flex w-full items-center justify-center rounded-lg border border-border/70 bg-background/35 px-3 py-2 text-xs font-medium text-muted transition-colors hover:border-primary/20 hover:bg-primary/5 hover:text-text disabled:cursor-not-allowed disabled:opacity-45"
+        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-border/70 bg-background/35 px-3 py-2 text-xs font-medium text-muted transition-colors hover:border-primary/20 hover:bg-primary/5 hover:text-text disabled:cursor-not-allowed disabled:opacity-45"
       >
+        {isConnecting ? <PulseLoader color="currentColor" size="xs" surface="transparent" /> : null}
         {isConnecting ? 'Conectando...' : hasConnectionError ? 'Tentar novamente' : 'Conectar'}
       </button>
       </div>
