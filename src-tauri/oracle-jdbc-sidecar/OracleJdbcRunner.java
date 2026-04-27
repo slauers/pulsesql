@@ -80,6 +80,7 @@ public class OracleJdbcRunner {
    * response line to stdout. Runs until stdin is closed (parent process exits).
    */
   private static void runServer() throws Exception {
+    java.io.PrintStream stdout = new java.io.PrintStream(System.out, true, StandardCharsets.UTF_8);
     java.io.BufferedReader stdin = new java.io.BufferedReader(
         new java.io.InputStreamReader(System.in, StandardCharsets.UTF_8));
 
@@ -127,8 +128,8 @@ public class OracleJdbcRunner {
         response = "{\"error\":" + quote("Oracle JDBC sidecar error: " + (msg != null ? msg : error.toString())) + "}";
       }
 
-      System.out.println(response);
-      System.out.flush();
+      stdout.println(response);
+      stdout.flush();
     }
   }
 
