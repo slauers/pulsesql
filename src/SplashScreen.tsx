@@ -1,9 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { getInitialLocale, translate } from './i18n';
 import { LOCK_SPLASH_FOR_DEV } from './devFlags';
-import EcgMonitor from './components/ui/EcgMonitor';
+import PulseLoader from './components/ui/PulseLoader';
 import { useConnectionsStore, getConnectionColor, hexToRgba } from './store/connections';
 
 const MIN_SPLASH_MS = 5000;
@@ -21,15 +21,6 @@ export default function SplashScreen() {
   const [label, setLabel] = useState(DEFAULT_LABEL);
   const [finishing, setFinishing] = useState(false);
   const mountTimeRef = useRef(Date.now());
-
-  const monitorRef = useRef<HTMLDivElement>(null);
-  const [monitorWidth, setMonitorWidth] = useState(260);
-
-  useLayoutEffect(() => {
-    if (monitorRef.current) {
-      setMonitorWidth(monitorRef.current.offsetWidth);
-    }
-  }, []);
 
   const favoriteConnectionId = useConnectionsStore((s) => s.favoriteConnectionId);
   const connections = useConnectionsStore((s) => s.connections);
@@ -128,8 +119,8 @@ export default function SplashScreen() {
         '--splash-glow':    hexToRgba(ecgColor, 0.18),
       } as React.CSSProperties}
     >
-      <div ref={monitorRef} style={{ width: '100%', height: 160, overflow: 'hidden' }}>
-        <EcgMonitor color={ecgColor} width={monitorWidth} height={160} speed={finishing ? 0.0025 : 0.004} transparent />
+      <div className="splash-screen__loader">
+        <PulseLoader color={ecgColor} size="lg" surface="transparent" />
       </div>
 
       <div className="splash-screen__copy">

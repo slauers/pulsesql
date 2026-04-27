@@ -58,6 +58,7 @@ export default function ConnectionForm({
   const engineDefinition = ENGINE_DEFINITIONS[currentEngine];
   const sshEnabled = Boolean(formData.ssh?.enabled);
   const sshAuthMethod = formData.ssh?.authMethod ?? 'password';
+  const formConnectionColor = formData.color ?? '#47C4E8';
 
   const updateField = <K extends keyof ConnectionConfig>(field: K, value: ConnectionConfig[K]) => {
     if (field === 'name' || field === 'host' || field === 'port' || field === 'database' || field === 'user') {
@@ -242,15 +243,15 @@ export default function ConnectionForm({
                   type="button"
                   onClick={() => colorInputRef.current?.click()}
                   className="flex h-8 w-8 items-center justify-center rounded-md border-2 border-border transition-transform hover:scale-105"
-                  style={{ borderColor: formData.color ?? '#47C4E8', background: (formData.color ?? '#47C4E8') + '22' }}
+                  style={{ borderColor: formConnectionColor, background: `${formConnectionColor}22` }}
                   title="Connection color"
                 >
-                  <div className="w-3.5 h-3.5 rounded-sm" style={{ background: formData.color ?? '#47C4E8' }} />
+                  <div className="w-3.5 h-3.5 rounded-sm" style={{ background: formConnectionColor }} />
                 </button>
                 <input
                   ref={colorInputRef}
                   type="color"
-                  value={formData.color ?? '#47C4E8'}
+                  value={formConnectionColor}
                   onChange={(e) => updateField('color', e.target.value)}
                   className="sr-only"
                   tabIndex={-1}
@@ -580,8 +581,8 @@ export default function ConnectionForm({
             disabled={testState === 'testing'}
             className="inline-flex items-center gap-2 px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40 transition-colors disabled:opacity-50"
           >
-            {testState === 'testing' ? <PulseLoader size="xs" surface="transparent" /> : <CheckCircle size={14} />}
-            Test Connection
+            {testState === 'testing' ? <PulseLoader color={formConnectionColor} size="xs" surface="transparent" /> : <CheckCircle size={14} />}
+            {testState === 'testing' ? 'Testing...' : 'Test Connection'}
           </button>
           <button
             type="button"

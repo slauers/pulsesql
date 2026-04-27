@@ -8,7 +8,7 @@ import { readText as clipboardReadText, writeText as clipboardWriteText } from '
 import { useQueriesStore } from '../../store/queries';
 import { type DatabaseEngine, useConnectionsStore, getConnectionColor, hexToRgba } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { ensureColumnsCached, ensureTablesCached, warmMetadataAfterConnect } from '../database/metadata-cache';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
 import type { MetadataColumn } from '../database/types';
@@ -16,7 +16,6 @@ import {
   Plus,
   X,
   Play,
-  LoaderCircle,
   Clock3,
   AlignLeft,
   Sparkles,
@@ -89,7 +88,7 @@ interface ExecuteQueryPayload {
 const SEMANTIC_SUCCESS_DURATION_MS = 3600;
 const SEMANTIC_ERROR_DURATION_MS = 6200;
 const SEMANTIC_WARNING_DURATION_MS = 6200;
-const MIN_RUNNING_VISIBLE_MS = 450;
+const MIN_RUNNING_VISIBLE_MS = 1100;
 const CONNECTION_MENU_WIDTH = 340;
 let sqlFormatterRegistered = false;
 
@@ -380,10 +379,12 @@ export default function QueryWorkspace() {
       semanticResetTimeoutRef.current = null;
     }
 
-    setSemanticBackgroundState('running');
-    setLoading(true);
-    setTabError(activeTabId, null);
-    setActivePanel('results');
+    flushSync(() => {
+      setSemanticBackgroundState('running');
+      setLoading(true);
+      setTabError(activeTabId, null);
+      setActivePanel('results');
+    });
     return window.performance.now();
   }, [activeTabId, setSemanticBackgroundState, setTabError]);
 
@@ -1640,16 +1641,6 @@ export default function QueryWorkspace() {
             )}
           </div>
         ) : null}
-        {activePanel === 'results' && loading ? (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/55">
-            <PulseLoader
-              color={connectionColor}
-              message={t('loadingResults')}
-              size="md"
-              surface="card"
-            />
-          </div>
-        ) : null}
         {activePanel === 'results' && error && !loading ? (
           <QueryErrorPanel error={error} activeSchema={schemaLabel} onRetry={() => void executeQuery()} />
         ) : activePanel === 'results' && activeResult ? (
@@ -1691,6 +1682,16 @@ export default function QueryWorkspace() {
           </div>
         ) : null}
       </div>
+      {loading ? (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background">
+          <PulseLoader
+            color={connectionColor}
+            message={t('loadingResults')}
+            size="lg"
+            surface="card"
+          />
+        </div>
+      ) : null}
     </div>
   );
 
@@ -1795,7 +1796,7 @@ export default function QueryWorkspace() {
                 onClick={() => void executeQuery()}
                 disabled={loading || !activeTab || !resolvedConnectionId}
                 className={`flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-bold transition-all ${
-                  loading ? 'cursor-wait opacity-100' : 'disabled:cursor-not-allowed disabled:opacity-40'
+                  loading ? 'cursor-default opacity-100' : 'disabled:cursor-not-allowed disabled:opacity-40'
                 }`}
                 style={{
                   background: connectionColor,
@@ -1806,7 +1807,7 @@ export default function QueryWorkspace() {
                 }}
               >
                 {loading
-                  ? <LoaderCircle size={14} className="animate-spin" style={{ color: '#041014', opacity: 0.82 }} />
+                  ? <PulseLoader color="#041014" size="xs" surface="transparent" />
                   : <Play size={14} style={{ fill: '#041014', color: '#041014', opacity: 0.82 }} />
                 }
                 {loading ? t('statusRunning') : t('run')}
