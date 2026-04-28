@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { CheckCircle, Eye, EyeOff } from 'lucide-react';
 import { createDefaultConnectionForm, ENGINE_DEFINITIONS } from './connection-engines';
 import { CONNECTION_COLOR_PALETTE, ConnectionConfig, DatabaseEngine, OracleConnectionType, PostgresSslMode, SshAuthMethod, useConnectionsStore } from '../../store/connections';
+import { useUiPreferencesStore } from '../../store/uiPreferences';
+import { translate } from '../../i18n';
 import AppSelect from '../../components/ui/AppSelect';
 import JdkSetupBanner from './JdkSetupBanner';
 import PulseLoader from '../../components/ui/PulseLoader';
@@ -26,12 +28,15 @@ export default function ConnectionForm({
 }) {
   const addConnection = useConnectionsStore((state) => state.addConnection);
   const updateConnection = useConnectionsStore((state) => state.updateConnection);
+  const locale = useUiPreferencesStore((state) => state.locale);
+  const t = (key: Parameters<typeof translate>[1]) => translate(locale, key);
   const [formData, setFormData] = useState<Partial<ConnectionConfig>>(initialConnection ?? createDefaultConnectionForm());
   const [showMainPassword, setShowMainPassword] = useState(false);
   const [showSshPassword, setShowSshPassword] = useState(false);
   const [showPassphrase, setShowPassphrase] = useState(false);
   const [testState, setTestState] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState<string>('');
+  const [saveAsNewToast, setSaveAsNewToast] = useState<string | null>(null);
   const [showImportPanel, setShowImportPanel] = useState(false);
   const [connectionString, setConnectionString] = useState('');
   const [importMessage, setImportMessage] = useState('');
@@ -200,6 +205,22 @@ export default function ConnectionForm({
           </button>
         </div>
       </div>
+
+      {/* Metadata strip — only shown when editing an existing connection */}
+      {initialConnection ? (
+        <div className="mb-3 grid grid-cols-4 divide-x divide-border/50 rounded-lg border border-border/60 bg-background/30">
+          <MetaItem label={t('metaCreated')} value={initialConnection.createdAt ? formatMetaDate(initialConnection.createdAt) : t('never')} />
+          <MetaItem label={t('metaLastConnected')} value={initialConnection.lastConnectedAt ? formatMetaDate(initialConnection.lastConnectedAt) : t('never')} />
+          <MetaItem
+            label={t('metaAvgLatency')}
+            value={initialConnection.avgLatencyMs != null ? `${initialConnection.avgLatencyMs} ms` : '—'}
+          />
+          <MetaItem
+            label={t('metaEngine')}
+            value={initialConnection.engine === 'oracle' ? 'Oracle' : initialConnection.engine === 'mysql' ? 'MySQL' : 'PostgreSQL'}
+          />
+        </div>
+      ) : null}
 
       {showImportPanel ? (
         <div className="mb-3 rounded-lg border border-border/70 bg-surface/65 p-3 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
@@ -574,6 +595,12 @@ export default function ConnectionForm({
           </div>
         ) : null}
 
+        {saveAsNewToast ? (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+            {saveAsNewToast}
+          </div>
+        ) : null}
+
         <div className="flex justify-end gap-3 pt-2">
           <button
             type="button"
@@ -584,6 +611,30 @@ export default function ConnectionForm({
             {testState === 'testing' ? <PulseLoader color={formConnectionColor} size="xs" surface="transparent" /> : <CheckCircle size={14} />}
             {testState === 'testing' ? 'Testing...' : 'Test Connection'}
           </button>
+          {initialConnection ? (
+            <button
+              type="button"
+              onClick={() => {
+                const payload = buildPayload(formData);
+                if (!payload) return;
+                const cloned: typeof payload = {
+                  ...payload,
+                  id: crypto.randomUUID(),
+                  name: `${payload.name} (copy)`,
+                  createdAt: Date.now(),
+                  lastConnectedAt: undefined,
+                  avgLatencyMs: undefined,
+                  engineVersion: undefined,
+                };
+                addConnection(cloned);
+                setSaveAsNewToast(`Connection "${cloned.name}" created.`);
+                window.setTimeout(() => setSaveAsNewToast(null), 2500);
+              }}
+              className="px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40 transition-colors"
+            >
+              {t('saveAsNew')}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={onClose}
@@ -761,4 +812,17 @@ function extractRawErrorMessage(error: unknown): string {
   }
 
   return 'Erro desconhecido ao testar a conexao.';
+}
+
+function MetaItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 px-3 py-2.5">
+      <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-muted/60">{label}</span>
+      <span className="truncate text-xs font-medium text-text/80">{value}</span>
+    </div>
+  );
+}
+
+function formatMetaDate(timestamp: number): string {
+  return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
