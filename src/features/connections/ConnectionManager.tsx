@@ -872,18 +872,32 @@ export default function ConnectionManager() {
         ) : null}
 
         <div className="flex-1 bg-background flex flex-col min-w-0 min-h-0 overflow-hidden">
-          {showForm ? (
-            <ConnectionForm
-              initialConnection={editingConnection}
-              onClose={() => {
-                setShowForm(false);
-                setEditingConnectionId(null);
-              }}
-            />
-          ) : (
-            <QueryWorkspace />
-          )}
+          <QueryWorkspace />
         </div>
+
+        {showForm ? createPortal(
+          <div
+            className="fixed inset-0 z-[170] flex items-center justify-center bg-background/78 p-6 backdrop-blur-sm"
+            onMouseDown={() => {
+              setShowForm(false);
+              setEditingConnectionId(null);
+            }}
+          >
+            <div
+              className="relative flex h-full w-full max-h-[680px] max-w-[680px] flex-col overflow-hidden rounded-xl border border-border/70 bg-surface shadow-[0_32px_96px_rgba(0,0,0,0.55)]"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <ConnectionForm
+                initialConnection={editingConnection}
+                onClose={() => {
+                  setShowForm(false);
+                  setEditingConnectionId(null);
+                }}
+              />
+            </div>
+          </div>,
+          document.body,
+        ) : null}
       </div>
 
       {connectionContextMenu ? (
