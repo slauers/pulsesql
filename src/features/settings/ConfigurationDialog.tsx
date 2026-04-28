@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { createPortal } from 'react-dom';
-import { Command, Download, FileJson, Grid2x2, Palette, PenLine, Search, Settings2, SlidersHorizontal, Upload, X, Zap } from 'lucide-react';
+import { Code2, Command, Download, Grid2x2, LayoutGrid, Palette, PenLine, Search, Settings2, SlidersHorizontal, Upload, X, Zap } from 'lucide-react';
 import AppSelect from '../../components/ui/AppSelect';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
 import { useConnectionsStore, getConnectionColor, hexToRgba } from '../../store/connections';
@@ -353,11 +353,11 @@ export default function ConfigurationDialog({
         </div>
 
         {/* Tab bar */}
-        <div className="border-b border-border px-5 py-3">
-          <div className="flex items-center gap-2">
+        <div className="border-b border-border px-5 py-2.5">
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-background/40 p-0.5">
             {([
-              { id: 'form', Icon: SlidersHorizontal, label: t('visual') },
-              { id: 'json', Icon: FileJson, label: t('json') },
+              { id: 'form', Icon: LayoutGrid, label: t('visual') },
+              { id: 'json', Icon: Code2, label: t('json') },
             ] as const).map(({ id, Icon, label }) => {
               const active = activeTab === id;
               return (
@@ -365,10 +365,10 @@ export default function ConfigurationDialog({
                   key={id}
                   type="button"
                   onClick={() => setActiveTab(id)}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors ${
-                    active ? '' : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all duration-150 ${
+                    active ? 'text-text shadow-sm' : 'text-muted hover:text-text'
                   }`}
-                  style={active ? { borderColor: ccBorder, background: ccBg, color: cc } : undefined}
+                  style={active ? { background: ccBg, color: cc, outline: `1px solid ${ccBorder}` } : undefined}
                 >
                   <Icon size={13} />
                   {label}
