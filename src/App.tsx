@@ -358,7 +358,7 @@ function App() {
   return (
     <div className={`atlas-app-background h-screen w-screen overflow-hidden bg-background text-text flex flex-col relative bt-density-${density}`}>
       {pendingUpdate ? (
-        <div className="shrink-0 flex items-center justify-end px-3 py-1 border-b border-border/80 bg-background/95 relative z-20">
+        <div className="shrink-0 flex items-center justify-end border-b border-primary/30 bg-primary/8 relative z-20 px-3 py-1.5">
           <UpdateButton update={pendingUpdate} />
         </div>
       ) : null}

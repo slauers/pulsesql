@@ -5,7 +5,7 @@ import type * as Monaco from 'monaco-editor';
 import Editor from '@monaco-editor/react';
 import { format as sqlFormat } from 'sql-formatter';
 import { readText as clipboardReadText, writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
-import { useQueriesStore } from '../../store/queries';
+import { useQueriesStore, type QueryTab } from '../../store/queries';
 import { type DatabaseEngine, useConnectionsStore, getConnectionColor, hexToRgba } from '../../store/connections';
 import { invoke } from '@tauri-apps/api/core';
 import { createPortal, flushSync } from 'react-dom';
@@ -139,6 +139,7 @@ export default function QueryWorkspace() {
     addTabWithContent,
     setActiveTab,
     closeTab,
+    closeOtherTabs,
     updateTabContent,
     replaceActiveTabContent,
     setTabConnection,
@@ -209,6 +210,7 @@ export default function QueryWorkspace() {
   const [connectionMenuOpen, setConnectionMenuOpen] = useState(false);
   const [connectionMenuPosition, setConnectionMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [exportedFormat, setExportedFormat] = useState<'csv' | 'json' | null>(null);
   const exportFeedbackRef = useRef<number | null>(null);
@@ -2148,6 +2150,7 @@ export default function QueryWorkspace() {
                       }
                       setActiveTab(tab.id);
                     }}
+                    onContextMenu={(e) => { e.preventDefault(); setTabContextMenu({ x: e.clientX, y: e.clientY, tabId: tab.id }); }}
                     onPointerDown={(event) => handleTabPointerDown(event, tab.id)}
                     onPointerMove={handleTabPointerMove}
                     onPointerUp={handleTabPointerUp}
@@ -2531,6 +2534,25 @@ export default function QueryWorkspace() {
         onReplaceCurrent={replaceCurrentWithHistory}
         onRunAgain={(item) => void runHistoryItem(item, true)}
       />
+
+      {tabContextMenu ? createPortal(
+        <TabContextMenu
+          x={tabContextMenu.x}
+          y={tabContextMenu.y}
+          tabId={tabContextMenu.tabId}
+          tabs={tabs}
+          connectionId={resolvedConnectionId}
+          onClose={() => setTabContextMenu(null)}
+          onNewTab={() => addTab(resolvedConnectionId)}
+          onDuplicateTab={(id) => {
+            const tab = tabs.find(t => t.id === id);
+            if (tab) addTabWithContent(tab.content, tab.title, tab.connectionId);
+          }}
+          onCloseTab={(id) => closeTab(id)}
+          onCloseOtherTabs={(id) => closeOtherTabs(id)}
+        />,
+        document.body,
+      ) : null}
 
       {gridFullscreen
         ? createPortal(
@@ -3483,4 +3505,76 @@ function buildEditorGlow(state: string, color: string): { boxShadow: string; bor
         borderColor: hexToRgba(color, 0.34),
       };
   }
+}
+
+interface TabContextMenuProps {
+  x: number;
+  y: number;
+  tabId: string;
+  tabs: QueryTab[];
+  connectionId: string | null;
+  onClose: () => void;
+  onNewTab: () => void;
+  onDuplicateTab: (id: string) => void;
+  onCloseTab: (id: string) => void;
+  onCloseOtherTabs: (id: string) => void;
+}
+
+function TabContextMenu({
+  x,
+  y,
+  tabId,
+  tabs,
+  onClose,
+  onNewTab,
+  onDuplicateTab,
+  onCloseTab,
+  onCloseOtherTabs,
+}: TabContextMenuProps) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleMouseDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose();
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  const menuX = Math.min(x, window.innerWidth - 200);
+  const menuY = Math.min(y, window.innerHeight - 180);
+
+  const item = (label: string, action: () => void, disabled = false) => (
+    <button
+      type="button"
+      onMouseDown={(e) => { e.stopPropagation(); }}
+      onClick={() => { action(); onClose(); }}
+      disabled={disabled}
+      className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-left text-xs text-text hover:bg-border/40 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div
+      ref={ref}
+      className="fixed z-[200] w-48 overflow-hidden rounded-xl border border-border/80 bg-surface/98 py-1 shadow-[0_16px_48px_rgba(0,0,0,0.45)] backdrop-blur-sm"
+      style={{ top: menuY, left: menuX }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {item('Nova Aba', onNewTab)}
+      {item('Duplicar Aba', () => onDuplicateTab(tabId))}
+      <div className="my-1 border-t border-border/50" />
+      {item('Fechar Aba', () => onCloseTab(tabId))}
+      {item('Fechar Todas as Outras', () => onCloseOtherTabs(tabId), tabs.length <= 1)}
+    </div>
+  );
 }

@@ -97,15 +97,19 @@ export function UpdateButton({ update }: { update: UpdateInfo }) {
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className={`inline-flex h-6 items-center gap-1.5 px-2 text-[11px] transition-colors ${
+        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[12px] font-medium transition-all ${
           open
-            ? 'bg-primary/20 text-primary'
-            : 'text-primary/80 hover:bg-primary/15 hover:text-primary'
+            ? 'border-primary/60 bg-primary/20 text-primary'
+            : 'border-primary/45 bg-primary/12 text-primary hover:bg-primary/20 hover:border-primary/70'
         }`}
         title={`PulseSQL ${update.version} available`}
       >
-        <ArrowUpCircle size={12} />
-        <span>{update.version}</span>
+        <span className="relative flex h-2 w-2 shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+        </span>
+        <ArrowUpCircle size={13} />
+        <span>Update available — {update.version}</span>
       </button>
 
       {open && dropdownPos
