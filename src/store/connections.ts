@@ -34,6 +34,10 @@ export interface ConnectionConfig {
   preferredSchema?: string;
   ssh?: SshConfig;
   color?: string;
+  createdAt?: number;
+  lastConnectedAt?: number;
+  avgLatencyMs?: number;
+  engineVersion?: string;
 }
 
 export const CONNECTION_COLOR_PALETTE = [
@@ -118,7 +122,8 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
   favoriteConnectionId: readFavoriteConnectionId(),
   addConnection: (conn) =>
     set((state) => {
-      const newConns = [...state.connections, conn];
+      const withMeta = { ...conn, createdAt: conn.createdAt ?? Date.now() };
+      const newConns = [...state.connections, withMeta];
       writeConnections(newConns);
       return { connections: newConns };
     }),
@@ -242,6 +247,10 @@ function normalizeConnection(input: unknown): ConnectionConfig | null {
     oracleDriverProperties: asOptionalString(raw.oracleDriverProperties),
     preferredSchema: asOptionalString(raw.preferredSchema),
     color: asOptionalString(raw.color),
+    createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : undefined,
+    lastConnectedAt: typeof raw.lastConnectedAt === 'number' ? raw.lastConnectedAt : undefined,
+    avgLatencyMs: typeof raw.avgLatencyMs === 'number' ? raw.avgLatencyMs : undefined,
+    engineVersion: asOptionalString(raw.engineVersion),
     ssh: {
       enabled: sshEnabled,
       host: asOptionalString(ssh?.host ?? raw.sshHost),

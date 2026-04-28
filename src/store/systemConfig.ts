@@ -8,7 +8,7 @@ export interface SystemConfig {
     resultPageSize: number;
     themeId: string;
     monacoThemeName: string;
-    density: 'compact' | 'comfortable';
+    density: 'compact' | 'comfortable' | 'spacious';
     editorFontSize: number;
   };
   workbench: {
@@ -204,8 +204,10 @@ function normalizeMonacoThemeName(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : 'default';
 }
 
-function normalizeDensity(value: unknown): 'compact' | 'comfortable' {
-  return value === 'compact' ? 'compact' : 'comfortable';
+function normalizeDensity(value: unknown): 'compact' | 'comfortable' | 'spacious' {
+  if (value === 'compact') return 'compact';
+  if (value === 'spacious') return 'spacious';
+  return 'comfortable';
 }
 
 function normalizeEditorFontSize(value: unknown) {

@@ -14,7 +14,7 @@ interface UiPreferencesState {
   resultPageSize: number;
   themeId: string;
   monacoThemeName: string;
-  density: 'compact' | 'comfortable';
+  density: 'compact' | 'comfortable' | 'spacious';
   editorFontSize: number;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
@@ -30,7 +30,7 @@ interface UiPreferencesState {
   setResultPageSize: (pageSize: number) => void;
   setThemeId: (themeId: string) => void;
   setMonacoThemeName: (themeName: string) => void;
-  setDensity: (density: 'compact' | 'comfortable') => void;
+  setDensity: (density: 'compact' | 'comfortable' | 'spacious') => void;
   setEditorFontSize: (fontSize: number) => void;
   setSidebarWidth: (width: number) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
