@@ -120,6 +120,10 @@ pub async fn open_connection(
     Ok(handle.clone())
 }
 
+pub async fn close_connection(handle: &OracleConnectionHandle) -> Result<(), String> {
+    invoke_sidecar("close", handle, None, None, None, None, None, None).map(|_| ())
+}
+
 pub async fn list_databases(handle: &OracleConnectionHandle) -> Result<Vec<String>, String> {
     let response = invoke_sidecar("listDatabases", handle, None, None, None, None, None, None)?;
     Ok(response.items.unwrap_or_default())

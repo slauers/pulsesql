@@ -15,11 +15,15 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
 
 public class OracleJdbcRunner {
+  private static final Map<String, Connection> CONNECTIONS = new HashMap<>();
+
   public static void main(String[] args) throws Exception {
     // Persistent server mode: read JSON requests from stdin, write responses to stdout.
     // Invoked as: java OracleJdbcRunner --server
@@ -47,8 +51,12 @@ public class OracleJdbcRunner {
           writeSuccess(responsePath, "{\"message\":\"Connection successful\"}");
           break;
         case "open":
-          testConnection(request);
+          openPersistentConnection(request);
           writeSuccess(responsePath, "{\"message\":\"Connection opened\"}");
+          break;
+        case "close":
+          closePersistentConnection(request);
+          writeSuccess(responsePath, "{\"message\":\"Connection closed\"}");
           break;
         case "listDatabases":
           writeSuccess(responsePath, listItems(request, "SELECT SYS_CONTEXT('USERENV', 'DB_NAME') AS DB_NAME FROM dual"));
@@ -104,8 +112,12 @@ public class OracleJdbcRunner {
             response = "{\"message\":\"Connection successful\"}";
             break;
           case "open":
-            testConnection(request);
+            openPersistentConnection(request);
             response = "{\"message\":\"Connection opened\"}";
+            break;
+          case "close":
+            closePersistentConnection(request);
+            response = "{\"message\":\"Connection closed\"}";
             break;
           case "listDatabases":
             response = listItems(request, "SELECT SYS_CONTEXT('USERENV', 'DB_NAME') AS DB_NAME FROM dual");
@@ -159,9 +171,67 @@ public class OracleJdbcRunner {
     }
   }
 
+  private static void openPersistentConnection(Request request) throws Exception {
+    Connection connection = getPersistentConnection(request);
+    if (!connection.isValid(10)) {
+      throw new IllegalStateException("Oracle connection validation failed.");
+    }
+  }
+
+  private static void closePersistentConnection(Request request) throws Exception {
+    String key = connectionKey(request);
+    Connection connection = CONNECTIONS.remove(key);
+    if (connection != null) {
+      connection.close();
+    }
+  }
+
+  private static Connection getPersistentConnection(Request request) throws Exception {
+    Class.forName("oracle.jdbc.OracleDriver");
+    String key = connectionKey(request);
+    Connection existing = CONNECTIONS.get(key);
+
+    if (isConnectionUsable(existing)) {
+      return existing;
+    }
+
+    if (existing != null) {
+      try {
+        existing.close();
+      } catch (Exception ignored) {
+      }
+      CONNECTIONS.remove(key);
+    }
+
+    DriverManager.setLoginTimeout((int) Duration.ofSeconds(10).toSeconds());
+    Connection connection = DriverManager.getConnection(request.jdbcUrl(), request.properties());
+    if (!connection.isValid(10)) {
+      connection.close();
+      throw new IllegalStateException("Oracle connection validation failed.");
+    }
+
+    CONNECTIONS.put(key, connection);
+    return connection;
+  }
+
+  private static boolean isConnectionUsable(Connection connection) {
+    try {
+      return connection != null && !connection.isClosed() && connection.isValid(2);
+    } catch (Exception ignored) {
+      return false;
+    }
+  }
+
+  private static String connectionKey(Request request) {
+    return request.jdbcUrl()
+        + "|user=" + request.user
+        + "|password=" + request.password
+        + "|props=" + (request.oracleDriverProperties == null ? "" : request.oracleDriverProperties);
+  }
+
   private static String listItems(Request request, String sql) throws Exception {
-    try (Connection connection = DriverManager.getConnection(request.jdbcUrl(), request.properties());
-         Statement statement = connection.createStatement();
+    Connection connection = getPersistentConnection(request);
+    try (Statement statement = connection.createStatement();
          ResultSet resultSet = statement.executeQuery(sql)) {
       List<String> items = new ArrayList<>();
 
@@ -193,8 +263,8 @@ public class OracleJdbcRunner {
         " ) fk ON fk.column_name = c.column_name" +
         " WHERE c.owner = '" + schemaEsc + "' AND c.table_name = '" + tableEsc + "' ORDER BY c.column_id";
 
-    try (Connection connection = DriverManager.getConnection(request.jdbcUrl(), request.properties());
-         Statement statement = connection.createStatement();
+    Connection connection = getPersistentConnection(request);
+    try (Statement statement = connection.createStatement();
          ResultSet resultSet = statement.executeQuery(sql)) {
       StringBuilder json = new StringBuilder();
       json.append("{\"column_defs\":[");
@@ -235,77 +305,81 @@ public class OracleJdbcRunner {
       throw new IllegalArgumentException("Nenhum comando SQL informado.");
     }
 
-    try (Connection connection = DriverManager.getConnection(request.jdbcUrl(), request.properties())) {
-      connection.setAutoCommit(false);
+    Connection connection = getPersistentConnection(request);
+    connection.setAutoCommit(false);
 
-      try {
-        List<String> summaryParts = new ArrayList<>();
-        List<String> lastColumns = new ArrayList<>();
-        List<String> lastRows = new ArrayList<>();
-        List<String> lastColumnMeta = new ArrayList<>();
-        List<String> diagnostics = new ArrayList<>();
-        Long totalRows = null;
-        Integer page = null;
-        Integer pageSize = null;
-        Boolean hasMore = null;
+    try {
+      List<String> summaryParts = new ArrayList<>();
+      List<String> lastColumns = new ArrayList<>();
+      List<String> lastRows = new ArrayList<>();
+      List<String> lastColumnMeta = new ArrayList<>();
+      List<String> diagnostics = new ArrayList<>();
+      Long totalRows = null;
+      Integer page = null;
+      Integer pageSize = null;
+      Boolean hasMore = null;
 
-        for (String statementSql : statements) {
-          if (isPaginableResultQuery(statementSql)) {
-            SelectResult selectResult = readPagedSelectResult(connection, statementSql, request, diagnostics);
-            lastColumns = selectResult.columns;
-            lastColumnMeta = selectResult.columnMeta;
-            lastRows = selectResult.rows;
-            totalRows = selectResult.totalRows;
-            page = selectResult.page;
-            pageSize = selectResult.pageSize;
-            hasMore = selectResult.hasMore;
+      for (String statementSql : statements) {
+        if (isPaginableResultQuery(statementSql)) {
+          SelectResult selectResult = readPagedSelectResult(connection, statementSql, request, diagnostics);
+          lastColumns = selectResult.columns;
+          lastColumnMeta = selectResult.columnMeta;
+          lastRows = selectResult.rows;
+          totalRows = selectResult.totalRows;
+          page = selectResult.page;
+          pageSize = selectResult.pageSize;
+          hasMore = selectResult.hasMore;
+          continue;
+        }
+
+        try (Statement statement = connection.createStatement()) {
+          statement.setQueryTimeout(30);
+          boolean hasResultSet = statement.execute(statementSql);
+
+          if (hasResultSet) {
+            try (ResultSet resultSet = statement.getResultSet()) {
+              long serializeStarted = System.currentTimeMillis();
+              SelectResult selectResult = readResultSet(resultSet, null, null, null);
+              diagnostics.add("[oracle] serialize_ms: " + (System.currentTimeMillis() - serializeStarted));
+              lastColumns = selectResult.columns;
+              lastColumnMeta = selectResult.columnMeta;
+              lastRows = selectResult.rows;
+              totalRows = selectResult.totalRows;
+              page = selectResult.page;
+              pageSize = selectResult.pageSize;
+              hasMore = selectResult.hasMore;
+            }
             continue;
           }
 
-          try (Statement statement = connection.createStatement()) {
-            statement.setQueryTimeout(30);
-            boolean hasResultSet = statement.execute(statementSql);
-
-            if (hasResultSet) {
-              try (ResultSet resultSet = statement.getResultSet()) {
-                long serializeStarted = System.currentTimeMillis();
-                SelectResult selectResult = readResultSet(resultSet, null, null, null);
-                diagnostics.add("[oracle] serialize_ms: " + (System.currentTimeMillis() - serializeStarted));
-                lastColumns = selectResult.columns;
-                lastColumnMeta = selectResult.columnMeta;
-                lastRows = selectResult.rows;
-                totalRows = selectResult.totalRows;
-                page = selectResult.page;
-                pageSize = selectResult.pageSize;
-                hasMore = selectResult.hasMore;
-              }
-              continue;
-            }
-
-            String summary = buildStatementSummary(statementSql, statement.getUpdateCount());
-            if (summary != null) {
-              summaryParts.add(summary);
-            }
+          String summary = buildStatementSummary(statementSql, statement.getUpdateCount());
+          if (summary != null) {
+            summaryParts.add(summary);
           }
         }
+      }
 
-        connection.commit();
+      connection.commit();
 
-        return buildExecuteResponseJson(
-            lastColumns,
-            lastColumnMeta,
-            lastRows,
-            summaryParts.isEmpty() ? null : String.join("\n\n", summaryParts),
-            System.currentTimeMillis() - startedAt,
-            totalRows,
-            page,
-            pageSize,
-            hasMore,
-            diagnostics
-        );
-      } catch (Exception error) {
-        connection.rollback();
-        throw error;
+      return buildExecuteResponseJson(
+          lastColumns,
+          lastColumnMeta,
+          lastRows,
+          summaryParts.isEmpty() ? null : String.join("\n\n", summaryParts),
+          System.currentTimeMillis() - startedAt,
+          totalRows,
+          page,
+          pageSize,
+          hasMore,
+          diagnostics
+      );
+    } catch (Exception error) {
+      connection.rollback();
+      throw error;
+    } finally {
+      try {
+        connection.setAutoCommit(true);
+      } catch (Exception ignored) {
       }
     }
   }
@@ -320,8 +394,8 @@ public class OracleJdbcRunner {
 
     String countSql = "SELECT COUNT(*) AS blacktable_total FROM (" + statements.get(0) + ") blacktable_count";
 
-    try (Connection connection = DriverManager.getConnection(request.jdbcUrl(), request.properties());
-         Statement statement = connection.createStatement()) {
+    Connection connection = getPersistentConnection(request);
+    try (Statement statement = connection.createStatement()) {
       statement.setQueryTimeout(30);
       long countStarted = System.currentTimeMillis();
       try (ResultSet resultSet = statement.executeQuery(countSql)) {

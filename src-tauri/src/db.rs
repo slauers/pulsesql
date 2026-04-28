@@ -70,7 +70,9 @@ impl ManagedConnection {
         match self.pool {
             ConnectionPool::Postgres(pool) => pool.close().await,
             ConnectionPool::Mysql(pool) => pool.close().await,
-            ConnectionPool::Oracle(_) => {}
+            ConnectionPool::Oracle(handle) => {
+                let _ = oracle::close_connection(&handle).await;
+            }
         }
 
         if let Some(tunnel) = self.tunnel {
