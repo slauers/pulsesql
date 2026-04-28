@@ -22,6 +22,8 @@ interface ResultGridProps {
   onRowSelect?: (rowIndex: number, row: Record<string, unknown>) => void;
   layoutKey?: string | null;
   onFocusQuickFilter?: () => void;
+  onCellFocused?: () => void;
+  clearSelectionToken?: number;
   accentColor?: string;
 }
 
@@ -38,6 +40,8 @@ export default function ResultGrid({
   onRowSelect,
   layoutKey = null,
   onFocusQuickFilter,
+  onCellFocused,
+  clearSelectionToken,
   accentColor = '#38bdf8',
 }: ResultGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -241,6 +245,13 @@ export default function ResultGrid({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusNewRowToken]);
 
+  useEffect(() => {
+    if (clearSelectionToken === undefined) return;
+    setSelectedCell(null);
+    setSelectionAnchor(null);
+    setDetailCell(null);
+  }, [clearSelectionToken]);
+
   const anyEditActive = activeEditCell !== null;
 
   const lockedRowIndex = (() => {
@@ -297,6 +308,7 @@ export default function ResultGrid({
       setSelectionAnchor({ rowIndex, column: colName });
     }
     setSelectedCell({ rowIndex, column: colName });
+    onCellFocused?.();
     parentRef.current?.focus();
   };
 

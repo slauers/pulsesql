@@ -217,6 +217,7 @@ export default function QueryWorkspace() {
   const [pendingRowEdits, setPendingRowEdits] = useState<Map<object, Record<string, string | null>>>(new Map());
   const [pendingNewRows, setPendingNewRows] = useState<Record<string, unknown>[]>([]);
   const [focusNewRowToken, setFocusNewRowToken] = useState(0);
+  const [gridClearSelectionToken, setGridClearSelectionToken] = useState(0);
   const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
   const [gridFullscreen, setGridFullscreen] = useState(false);
   const [resultsCollapsed, setResultsCollapsed] = useState(false);
@@ -418,6 +419,8 @@ export default function QueryWorkspace() {
       setTabError(activeTabId, null);
       setActivePanel('results');
       setResultsCollapsed(false);
+      setSelectedSourceRowIndex(null);
+      setGridClearSelectionToken((t) => t + 1);
     });
     return window.performance.now();
   }, [activeTabId, setSemanticBackgroundState, setTabError]);
@@ -1252,6 +1255,7 @@ export default function QueryWorkspace() {
 
   useEffect(() => {
     setSelectedSourceRowIndex(null);
+    setGridClearSelectionToken((t) => t + 1);
     setPendingRowEdits(new Map());
     setPendingNewRows([]);
   }, [activeResultIndex, resolvedConnectionId, activeResult?.statement, activeTabId]);
@@ -1498,6 +1502,7 @@ export default function QueryWorkspace() {
     }
 
     setSelectedSourceRowIndex((current) => (current === sourceIndex ? null : sourceIndex));
+    setGridClearSelectionToken((t) => t + 1);
   }, [activeResult]);
 
   const handleDeleteSelectedRow = useCallback(async () => {
@@ -2087,6 +2092,8 @@ export default function QueryWorkspace() {
                   focusNewRowToken={canEditGrid ? focusNewRowToken : undefined}
                   selectedRowIndex={selectedDisplayRowIndex}
                   onRowSelect={handleRowSelect}
+                  onCellFocused={() => setSelectedSourceRowIndex(null)}
+                  clearSelectionToken={gridClearSelectionToken}
                 />
               ) : activeResult.summary ? null : (
                 <div className="h-full flex items-center justify-center text-muted/50 text-sm">
