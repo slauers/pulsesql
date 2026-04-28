@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { Command, Download, FileJson, Grid2x2, Palette, PenLine, Search, Settings2, SlidersHorizontal, Upload, X, Zap } from 'lucide-react';
 import AppSelect from '../../components/ui/AppSelect';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
-import { useConnectionsStore } from '../../store/connections';
+import { useConnectionsStore, getConnectionColor, hexToRgba } from '../../store/connections';
 import { readSystemConfig, type SystemConfig } from '../../store/systemConfig';
 import { APP_THEMES } from '../../themes';
 import { APP_LOCALES, translate } from '../../i18n';
@@ -62,8 +62,13 @@ export default function ConfigurationDialog({
   const setNewQueryTabShortcut = useUiPreferencesStore((state) => state.setNewQueryTabShortcut);
   const setCloseQueryTabShortcut = useUiPreferencesStore((state) => state.setCloseQueryTabShortcut);
   const connections = useConnectionsStore((state) => state.connections);
+  const activeConnectionId = useConnectionsStore((state) => state.activeConnectionId);
   const favoriteConnectionId = useConnectionsStore((state) => state.favoriteConnectionId);
   const setFavoriteConnection = useConnectionsStore((state) => state.setFavoriteConnection);
+
+  const cc = getConnectionColor(connections, activeConnectionId);
+  const ccBg = hexToRgba(cc, 0.12);
+  const ccBorder = hexToRgba(cc, 0.35);
 
   const currentConfig = useMemo<SystemConfig>(
     () => ({
@@ -295,8 +300,8 @@ export default function ConfigurationDialog({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15" style={{ border: '1px solid var(--bt-primary)', opacity: 0.9 }}>
-              <Settings2 size={16} style={{ color: 'var(--bt-primary)' }} />
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg" style={{ background: ccBg, border: `1px solid ${ccBorder}` }}>
+              <Settings2 size={16} style={{ color: cc }} />
             </div>
             <div>
               <div className="text-sm font-semibold text-text">{t('configurationsTitle')}</div>
@@ -411,7 +416,7 @@ export default function ConfigurationDialog({
                         <item.Icon
                           size={13}
                           className="shrink-0"
-                          style={{ color: active ? 'var(--bt-primary)' : undefined }}
+                          style={{ color: active ? cc : undefined }}
                         />
                         {item.label}
                       </button>
@@ -515,6 +520,7 @@ export default function ConfigurationDialog({
                                     label={t('semanticBackground')}
                                     description={t('semanticBackgroundDescription')}
                                     checked={draft.ui.semanticBackgroundEnabled}
+                                    color={cc}
                                     onChange={(checked) =>
                                       setDraft((current) => ({
                                         ...current,
@@ -528,6 +534,7 @@ export default function ConfigurationDialog({
                                     label={t('showServerTimeInStatusBar')}
                                     description={t('showServerTimeInStatusBarDescription')}
                                     checked={draft.ui.showServerTimeInStatusBar}
+                                    color={cc}
                                     onChange={(checked) =>
                                       setDraft((current) => ({
                                         ...current,
@@ -541,6 +548,7 @@ export default function ConfigurationDialog({
                                     label={t('showAutocommitInStatusBar')}
                                     description={t('showAutocommitInStatusBarDescription')}
                                     checked={draft.ui.showAutocommitInStatusBar}
+                                    color={cc}
                                     onChange={(checked) =>
                                       setDraft((current) => ({
                                         ...current,
@@ -621,6 +629,7 @@ export default function ConfigurationDialog({
                               label={t('sidebarCollapsedOnStartup')}
                               description={t('sidebarCollapsedOnStartupDescription')}
                               checked={draft.workbench.sidebarCollapsed}
+                              color={cc}
                               onChange={(checked) =>
                                 setDraft((current) => ({
                                   ...current,
@@ -634,6 +643,7 @@ export default function ConfigurationDialog({
                               label={t('logsExpandedByDefault')}
                               description={t('logsExpandedByDefaultDescription')}
                               checked={draft.workbench.logsExpandedByDefault}
+                              color={cc}
                               onChange={(checked) =>
                                 setDraft((current) => ({
                                   ...current,
@@ -797,7 +807,8 @@ export default function ConfigurationDialog({
           <button
             type="button"
             onClick={activeTab === 'form' ? handleSaveForm : handleSaveJson}
-            className="rounded-lg bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition-opacity"
+            className="rounded-lg px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition-opacity"
+            style={{ background: cc }}
           >
             {t('save')}
           </button>
@@ -837,11 +848,13 @@ function ToggleRow({
   description,
   checked,
   onChange,
+  color,
 }: {
   label: string;
   description: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  color: string;
 }) {
   return (
     <label className="flex cursor-pointer items-center justify-between gap-4 py-3">
@@ -849,7 +862,7 @@ function ToggleRow({
         <div className="text-sm font-medium text-text">{label}</div>
         <div className="text-xs text-muted">{description}</div>
       </div>
-      <ToggleSwitch checked={checked} onChange={onChange} />
+      <ToggleSwitch checked={checked} onChange={onChange} color={color} />
     </label>
   );
 }
@@ -857,9 +870,11 @@ function ToggleRow({
 function ToggleSwitch({
   checked,
   onChange,
+  color,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
+  color: string;
 }) {
   return (
     <button
@@ -871,7 +886,7 @@ function ToggleSwitch({
       style={{
         width: 36,
         height: 20,
-        background: checked ? 'var(--bt-primary)' : 'var(--bt-border)',
+        background: checked ? color : 'var(--bt-border)',
       }}
     >
       <span
