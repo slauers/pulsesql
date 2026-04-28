@@ -2,6 +2,14 @@
 
 All notable changes to PulseSQL are documented here.
 
+## [0.3.0] - 2026-04-28
+
+### Added
+
+- Keymap configurável: 11 atalhos globais, todos editáveis em Configurações → Atalhos
+- Novos atalhos: Executar query, Próxima/aba anterior, Duplicar aba, Salvar como .sql, Mostrar/ocultar sidebar, Mostrar/ocultar resultados, Formatar query
+- ShortcutInput: clique no campo → pressione as teclas → atalho capturado como badges visuais (⌘ ⇧ P); Backspace para limpar, Escape para cancelar
+
 ## [0.2.9] - 2026-04-28
 
 ### Added
