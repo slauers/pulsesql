@@ -461,30 +461,30 @@ export default function ConnectionForm({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div>
-            <label className="block text-sm text-muted mb-1">Connect Timeout (seconds)</label>
+        <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded border border-border/70 bg-background/40 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={Boolean(formData.autoReconnect ?? true)}
+              onChange={(event) => updateField('autoReconnect', event.target.checked)}
+              style={{ accentColor: cc }}
+            />
+            <span className="text-sm text-text">Reconnect on failure</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-muted">
+            <span>timeout</span>
             <input
               type="number"
               min={3}
               max={120}
               value={formData.connectTimeoutSeconds ?? 10}
               onChange={(event) => updateField('connectTimeoutSeconds', Number(event.target.value))}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
+              onClick={(e) => e.stopPropagation()}
+              className="w-14 rounded border border-border bg-background px-2 py-1 text-center text-xs text-text focus:border-primary focus:outline-none"
             />
+            <span>s</span>
           </div>
-          <div className="flex items-end">
-            <label className="flex w-full cursor-pointer select-none items-center gap-2 rounded border border-border/70 bg-background/40 px-3 py-2">
-              <input
-                type="checkbox"
-                checked={Boolean(formData.autoReconnect ?? true)}
-                onChange={(event) => updateField('autoReconnect', event.target.checked)}
-                style={{ accentColor: cc }}
-              />
-              <span className="text-sm text-text">Auto-reconnect on open failure</span>
-            </label>
-          </div>
-        </div>
+        </label>
 
         {/* ── SSH Tunnel section ── */}
         <div className="rounded border" style={{ borderColor: ccBorder }}>
