@@ -2149,18 +2149,18 @@ export default function QueryWorkspace() {
                       isActiveTab ? 'text-text' : 'text-muted hover:bg-white/4'
                     }`}
                     style={{
-                      background: isActiveTab ? 'rgba(var(--bt-surface-rgb), 0.62)' : 'transparent',
-                      borderTop: isActiveTab ? `1px solid ${hexToRgba(tabColor, 0.18)}` : '1px solid transparent',
-                      borderRight: isActiveTab ? `1px solid var(--bt-border)` : '1px solid var(--bt-border)',
-                      borderBottom: isActiveTab ? '1px solid rgba(var(--bt-surface-rgb), 0.62)' : '1px solid transparent',
-                      borderLeft: isDragOverTab ? `1px solid ${hexToRgba(tabColor, 0.28)}` : '1px solid transparent',
+                      background: isActiveTab ? hexToRgba(tabColor, 0.13) : 'transparent',
+                      borderTop: isActiveTab ? `1px solid ${hexToRgba(tabColor, 0.32)}` : '1px solid transparent',
+                      borderRight: isActiveTab ? `1px solid ${hexToRgba(tabColor, 0.22)}` : '1px solid var(--bt-border)',
+                      borderBottom: isActiveTab ? `1px solid ${hexToRgba(tabColor, 0.13)}` : '1px solid transparent',
+                      borderLeft: isDragOverTab ? `1px solid ${hexToRgba(tabColor, 0.28)}` : isActiveTab ? `1px solid ${hexToRgba(tabColor, 0.22)}` : '1px solid transparent',
                       borderTopLeftRadius: isActiveTab ? 5 : 0,
                       borderTopRightRadius: isActiveTab ? 5 : 0,
-                      boxShadow: isActiveTab ? `inset 0 1px 0 ${hexToRgba(tabColor, 0.12)}` : undefined,
+                      boxShadow: isActiveTab ? `inset 0 1px 0 ${hexToRgba(tabColor, 0.22)}` : undefined,
                       opacity: isDraggedTab ? 0.48 : 1,
                     }}
                   >
-                    <span style={{ width: 4, height: 4, borderRadius: 999, flexShrink: 0, background: tabColor, opacity: isActiveTab ? 0.58 : 0.28 }} />
+                    <span style={{ width: 4, height: 4, borderRadius: 999, flexShrink: 0, background: tabColor, opacity: isActiveTab ? 0.85 : 0.28 }} />
                     <span className="truncate flex-1 text-[12px] leading-5">{tab.title}</span>
                     <button
                       onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
@@ -2236,7 +2236,6 @@ export default function QueryWorkspace() {
                   : <Play size={14} style={{ fill: '#041014', color: '#041014', opacity: 0.82 }} />
                 }
                 {loading ? (activeExecutionId ? t('cancelExecution') : t('statusRunning')) : t('run')}
-                <span style={{ opacity: 0.5, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}>⌘↵</span>
               </button>
 
               <button
