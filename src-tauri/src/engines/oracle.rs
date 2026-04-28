@@ -110,27 +110,33 @@ pub fn create_handle(
 }
 
 pub async fn test_connection(handle: &OracleConnectionHandle) -> Result<(), String> {
-    invoke_sidecar("test", handle, None, None, None, None, None, None).map(|_| ())
+    invoke_sidecar_blocking("test", handle.clone(), None, None, None, None, None, None)
+        .await
+        .map(|_| ())
 }
 
 pub async fn open_connection(
     handle: &OracleConnectionHandle,
 ) -> Result<OracleConnectionHandle, String> {
-    invoke_sidecar("open", handle, None, None, None, None, None, None)?;
+    invoke_sidecar_blocking("open", handle.clone(), None, None, None, None, None, None).await?;
     Ok(handle.clone())
 }
 
 pub async fn close_connection(handle: &OracleConnectionHandle) -> Result<(), String> {
-    invoke_sidecar("close", handle, None, None, None, None, None, None).map(|_| ())
+    invoke_sidecar_blocking("close", handle.clone(), None, None, None, None, None, None)
+        .await
+        .map(|_| ())
 }
 
 pub async fn list_databases(handle: &OracleConnectionHandle) -> Result<Vec<String>, String> {
-    let response = invoke_sidecar("listDatabases", handle, None, None, None, None, None, None)?;
+    let response =
+        invoke_sidecar_blocking("listDatabases", handle.clone(), None, None, None, None, None, None).await?;
     Ok(response.items.unwrap_or_default())
 }
 
 pub async fn list_schemas(handle: &OracleConnectionHandle) -> Result<Vec<String>, String> {
-    let response = invoke_sidecar("listSchemas", handle, None, None, None, None, None, None)?;
+    let response =
+        invoke_sidecar_blocking("listSchemas", handle.clone(), None, None, None, None, None, None).await?;
     Ok(response.items.unwrap_or_default())
 }
 
@@ -138,7 +144,17 @@ pub async fn list_tables(
     handle: &OracleConnectionHandle,
     schema: &str,
 ) -> Result<Vec<String>, String> {
-    let response = invoke_sidecar("listTables", handle, None, None, None, None, Some(schema), None)?;
+    let response = invoke_sidecar_blocking(
+        "listTables",
+        handle.clone(),
+        None,
+        None,
+        None,
+        None,
+        Some(schema.to_string()),
+        None,
+    )
+    .await?;
     Ok(response.items.unwrap_or_default())
 }
 
@@ -147,7 +163,17 @@ pub async fn list_columns(
     schema: &str,
     table: &str,
 ) -> Result<Vec<ColumnDef>, String> {
-    let response = invoke_sidecar("listColumns", handle, None, None, None, None, Some(schema), Some(table))?;
+    let response = invoke_sidecar_blocking(
+        "listColumns",
+        handle.clone(),
+        None,
+        None,
+        None,
+        None,
+        Some(schema.to_string()),
+        Some(table.to_string()),
+    )
+    .await?;
     Ok(response.column_defs.unwrap_or_default())
 }
 
@@ -160,16 +186,17 @@ pub async fn execute_query(
 ) -> Result<QueryResult, String> {
     let started_at = Instant::now();
     let sidecar_started = Instant::now();
-    let response = invoke_sidecar(
+    let response = invoke_sidecar_blocking(
         "executeQuery",
-        handle,
-        Some(query),
+        handle.clone(),
+        Some(query.to_string()),
         page,
         page_size,
         known_total_rows,
         None,
         None,
-    )?;
+    )
+    .await?;
     let sidecar_ms = sidecar_started.elapsed().as_millis();
 
     let rows = response.rows.unwrap_or_default();
@@ -197,16 +224,17 @@ pub async fn execute_query(
 
 pub async fn count_query(handle: &OracleConnectionHandle, query: &str) -> Result<(u64, Vec<String>), String> {
     let sidecar_started = Instant::now();
-    let response = invoke_sidecar(
+    let response = invoke_sidecar_blocking(
         "countQuery",
-        handle,
-        Some(query),
+        handle.clone(),
+        Some(query.to_string()),
         None,
         None,
         None,
         None,
         None,
-    )?;
+    )
+    .await?;
     let mut diagnostics = response.diagnostics.unwrap_or_default();
     diagnostics.push(format!(
         "[oracle] count_sidecar_roundtrip_ms: {}",
@@ -304,6 +332,32 @@ fn invoke_sidecar(
                 .map_err(|_| humanize_oracle_sidecar_error(&io_error))
         }
     }
+}
+
+async fn invoke_sidecar_blocking(
+    command: &'static str,
+    handle: OracleConnectionHandle,
+    query: Option<String>,
+    page: Option<u32>,
+    page_size: Option<u32>,
+    known_total_rows: Option<u64>,
+    schema: Option<String>,
+    table: Option<String>,
+) -> Result<OracleSuccessResponse, String> {
+    tokio::task::spawn_blocking(move || {
+        invoke_sidecar(
+            command,
+            &handle,
+            query.as_deref(),
+            page,
+            page_size,
+            known_total_rows,
+            schema.as_deref(),
+            table.as_deref(),
+        )
+    })
+    .await
+    .map_err(|error| format!("Oracle sidecar task failed: {error}"))?
 }
 
 /// Writes one JSON request line to the sidecar's stdin and reads one response line from stdout.
