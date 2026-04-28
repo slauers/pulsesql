@@ -8,8 +8,10 @@ export interface SystemConfig {
     resultPageSize: number;
     themeId: string;
     monacoThemeName: string;
-    density: 'compact' | 'comfortable';
+    density: 'compact' | 'comfortable' | 'spacious';
     editorFontSize: number;
+    formatOnSave: boolean;
+    autoCloseBrackets: boolean;
   };
   workbench: {
     sidebarWidth: number;
@@ -77,6 +79,8 @@ export function defaultSystemConfig(): SystemConfig {
       monacoThemeName: 'default',
       density: 'comfortable',
       editorFontSize: 14,
+      formatOnSave: false,
+      autoCloseBrackets: true,
     },
     workbench: {
       sidebarWidth: 290,
@@ -116,6 +120,8 @@ function normalizeSystemConfig(input: unknown): SystemConfig {
       monacoThemeName: normalizeMonacoThemeName(ui.monacoThemeName),
       density: normalizeDensity(ui.density),
       editorFontSize: normalizeEditorFontSize(ui.editorFontSize),
+      formatOnSave: ui.formatOnSave === true,
+      autoCloseBrackets: ui.autoCloseBrackets !== false,
     },
     workbench: {
       sidebarWidth: normalizeSidebarWidth(workbench.sidebarWidth),
@@ -158,6 +164,8 @@ function readLegacyUiPreferences(defaults: SystemConfig['ui']): SystemConfig['ui
       monacoThemeName: defaults.monacoThemeName,
       density: defaults.density,
       editorFontSize: defaults.editorFontSize,
+      formatOnSave: defaults.formatOnSave,
+      autoCloseBrackets: defaults.autoCloseBrackets,
     };
   } catch {
     return defaults;
@@ -204,8 +212,10 @@ function normalizeMonacoThemeName(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : 'default';
 }
 
-function normalizeDensity(value: unknown): 'compact' | 'comfortable' {
-  return value === 'compact' ? 'compact' : 'comfortable';
+function normalizeDensity(value: unknown): 'compact' | 'comfortable' | 'spacious' {
+  if (value === 'compact') return 'compact';
+  if (value === 'spacious') return 'spacious';
+  return 'comfortable';
 }
 
 function normalizeEditorFontSize(value: unknown) {

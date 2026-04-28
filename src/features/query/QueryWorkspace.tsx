@@ -162,6 +162,8 @@ export default function QueryWorkspace() {
   const themeId = useUiPreferencesStore((state) => state.themeId);
   const monacoThemeName = useUiPreferencesStore((state) => state.monacoThemeName);
   const editorFontSize = useUiPreferencesStore((state) => state.editorFontSize);
+  const formatOnSave = useUiPreferencesStore((state) => state.formatOnSave);
+  const autoCloseBrackets = useUiPreferencesStore((state) => state.autoCloseBrackets);
   const density = useUiPreferencesStore((state) => state.density);
   const metadataByConnection = useDatabaseSessionStore((state) => state.metadataByConnection);
   const activeSchemaByConnection = useDatabaseSessionStore((state) => state.activeSchemaByConnection);
@@ -221,6 +223,7 @@ export default function QueryWorkspace() {
   const [activePanel, setActivePanel] = useState<'results' | 'logs'>('results');
   const editErrorTimeoutRef = useRef<number | null>(null);
   const executeQueryRef = useRef<() => void>(() => {});
+  const formatOnSaveRef = useRef(formatOnSave);
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const connectionMenuButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -1134,6 +1137,10 @@ export default function QueryWorkspace() {
   }, [resultPageSize]);
 
   useEffect(() => {
+    formatOnSaveRef.current = formatOnSave;
+  }, [formatOnSave]);
+
+  useEffect(() => {
     executeQueryRef.current = () => {
       void executeQuery();
     };
@@ -1889,27 +1896,6 @@ export default function QueryWorkspace() {
 
             <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
               <button
-                type="button"
-                onClick={() => setResultsCollapsed(true)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text"
-                title="Fechar grid"
-                aria-label="Fechar grid"
-              >
-                <X size={13} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setGridFullscreen((current) => !current)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text"
-                title={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
-                aria-label={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
-              >
-                {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-              </button>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
-              <button
                 onClick={() => {
                   exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel, 'filtered'));
                   if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
@@ -1972,18 +1958,6 @@ export default function QueryWorkspace() {
               </button>
             </div>
 
-            <div className="ml-auto shrink-0">
-              <button
-                type="button"
-                onClick={() => void handleDeleteSelectedRow()}
-                disabled={selectedSourceRowIndex == null || loading}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-400/25 text-red-300/70 transition-colors hover:bg-red-400/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-35"
-                title={t('deleteSelectedRow')}
-                aria-label={t('deleteSelectedRow')}
-              >
-                <Trash2 size={13} />
-              </button>
-            </div>
           </div>
         ) : activeResult ? (
           <div className="flex flex-1 items-center justify-end gap-2 min-w-0">
@@ -2013,6 +1987,39 @@ export default function QueryWorkspace() {
             ) : null}
           </div>
         ) : null}
+
+        <div className="ml-auto flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
+          {activeResult && hasGridResult ? (
+            <button
+              type="button"
+              onClick={() => void handleDeleteSelectedRow()}
+              disabled={selectedSourceRowIndex == null || loading}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-red-300/70 transition-colors hover:bg-red-400/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-35"
+              title={t('deleteSelectedRow')}
+              aria-label={t('deleteSelectedRow')}
+            >
+              <Trash2 size={13} />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setResultsCollapsed(true)}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text"
+            title="Fechar grid"
+            aria-label="Fechar grid"
+          >
+            <X size={13} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setGridFullscreen((current) => !current)}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text"
+            title={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
+            aria-label={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
+          >
+            {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+        </div>
       </div>
 
       {saveError ? (
@@ -2073,6 +2080,7 @@ export default function QueryWorkspace() {
                   density={density}
                   layoutKey={buildGridLayoutKey(resolvedConnectionId, activeResult.statement, activeSourceTable)}
                   onFocusQuickFilter={() => quickFilterInputRef.current?.focus()}
+                  accentColor={connectionColor}
                   onCellChange={canEditGrid ? handleCellChange : undefined}
                   pendingRowEdits={pendingRowEdits}
                   pendingNewRows={canEditGrid ? pendingNewRows : undefined}
@@ -2334,6 +2342,8 @@ export default function QueryWorkspace() {
                     scrollBeyondLastLine: false,
                     roundedSelection: false,
                     smoothScrolling: true,
+                    autoClosingBrackets: autoCloseBrackets ? 'always' : 'never',
+                    autoClosingQuotes: autoCloseBrackets ? 'always' : 'never',
                     overviewRulerBorder: false,
                     acceptSuggestionOnEnter: 'on',
                     quickSuggestionsDelay: 60,
@@ -2452,6 +2462,11 @@ export default function QueryWorkspace() {
                     });
                     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.NumpadEnter, () => {
                       executeQueryRef.current();
+                    });
+                    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                      if (formatOnSaveRef.current) {
+                        editor.getAction('editor.action.formatDocument')?.run();
+                      }
                     });
                   }}
                 />

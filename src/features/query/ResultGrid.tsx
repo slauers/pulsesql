@@ -13,7 +13,7 @@ interface ResultGridProps {
   }>;
   rows: any[];
   rowNumberOffset?: number;
-  density?: 'compact' | 'comfortable';
+  density?: 'compact' | 'comfortable' | 'spacious';
   onCellChange?: (colName: string, rowIndex: number, newValue: string | null, row: Record<string, unknown>) => void;
   pendingRowEdits?: Map<object, Record<string, string | null>>;
   pendingNewRows?: Record<string, unknown>[];
@@ -22,6 +22,7 @@ interface ResultGridProps {
   onRowSelect?: (rowIndex: number, row: Record<string, unknown>) => void;
   layoutKey?: string | null;
   onFocusQuickFilter?: () => void;
+  accentColor?: string;
 }
 
 export default function ResultGrid({
@@ -37,6 +38,7 @@ export default function ResultGrid({
   onRowSelect,
   layoutKey = null,
   onFocusQuickFilter,
+  accentColor = '#38bdf8',
 }: ResultGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -56,6 +58,7 @@ export default function ResultGrid({
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
   const [pinnedColumns, setPinnedColumns] = useState<Set<string>>(new Set());
+  const [hoveredRowIndex, setHoveredRowIndex] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const skipNextBlurRef = useRef(false);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -551,33 +554,46 @@ export default function ResultGrid({
             );
           })}
         </div>
-        
+
         <div className="absolute" style={{ top: `${headerHeight}px`, width: `${totalGridWidth}px` }}>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const row = allRows[virtualRow.index] as Record<string, unknown>;
             const isNewRow = virtualRow.index >= filteredRows.length;
             const rowPendingEdits = isNewRow ? null : (pendingRowEdits?.get(row) ?? null);
             const isDirtyRow = !isNewRow && rowPendingEdits != null;
-            const rowTone = virtualRow.index % 2 === 0 ? 'bg-background/70' : 'bg-surface/26';
+            const rowTone = virtualRow.index % 2 === 0 ? 'rgba(var(--bt-background-rgb), 0.28)' : 'rgba(var(--bt-surface-rgb), 0.10)';
             const isThisRowLocked = lockedRowIndex === virtualRow.index;
             const isSelectedRow = selectedRowIndex === virtualRow.index;
+            const isHoveredRow = hoveredRowIndex === virtualRow.index;
+            const rowBackground = isNewRow
+              ? 'rgba(52, 211, 153, 0.06)'
+              : isDirtyRow
+                ? 'rgba(251, 191, 36, 0.06)'
+                : isHoveredRow
+                  ? colorToRgba(accentColor, 0.055)
+                  : isSelectedRow
+                    ? colorToRgba(accentColor, 0.075)
+                    : rowTone;
             return (
               <div
                 key={virtualRow.key}
+                onMouseEnter={() => setHoveredRowIndex(virtualRow.index)}
+                onMouseLeave={() => setHoveredRowIndex((current) => current === virtualRow.index ? null : current)}
                 className={`group absolute w-full border-b text-sm transition-colors ${
                   isNewRow
-                    ? 'border-emerald-400/20 bg-emerald-400/6'
+                    ? 'border-emerald-400/20'
                     : isDirtyRow
-                      ? 'border-amber-400/20 bg-amber-400/6'
-                      : `border-border/20 ${rowTone}`
+                      ? 'border-amber-400/20'
+                      : 'border-border/20'
                 } ${
                   isSelectedRow
-                    ? 'ring-1 ring-inset ring-primary/20 bg-primary/5'
+                    ? 'ring-1 ring-inset ring-primary/20'
                     : isThisRowLocked
                       ? 'ring-1 ring-inset ring-primary/20'
-                      : 'hover:bg-surface/55'
+                      : ''
                 }`}
                 style={{
+                  backgroundColor: rowBackground,
                   height: `${virtualRow.size}px`,
                   width: `${totalGridWidth}px`,
                   transform: `translateY(${virtualRow.start}px)`,
@@ -588,13 +604,14 @@ export default function ResultGrid({
                   onClick={() => onRowSelect?.(virtualRow.index, row)}
                   className={`sticky left-0 flex w-12 shrink-0 items-center justify-center border-r px-2 text-xs font-mono transition-colors ${
                     isNewRow
-                      ? 'border-emerald-400/20 bg-emerald-400/6 text-emerald-300/60'
+                      ? 'border-emerald-400/20 text-emerald-300/60'
                       : isDirtyRow
-                        ? 'border-amber-400/20 bg-amber-400/6 text-amber-300/60'
+                        ? 'border-amber-400/20 text-amber-300/60'
                         : isSelectedRow
-                          ? `bg-primary/5 text-text border-border/25`
-                          : `${rowTone} text-muted/45 border-border/25 ${isThisRowLocked ? '' : 'group-hover:bg-surface/55'}`
+                          ? 'text-text border-border/25'
+                          : 'text-muted/45 border-border/25'
                   }`}
+                  style={{ backgroundColor: rowBackground }}
                   title="Selecionar linha"
                 >
                   {isNewRow ? '+' : rowNumberOffset + virtualRow.index + 1}
@@ -1071,4 +1088,16 @@ function renderPresentedValue(presentation: ReturnType<typeof resolveCellPresent
 
 function shouldOfferDetail(presentation: ReturnType<typeof resolveCellPresentation>) {
   return presentation.kind === 'json' || presentation.rawValue.length > 80 || presentation.rawValue.includes('\n');
+}
+
+function colorToRgba(color: string, alpha: number) {
+  const hex = color.trim().replace('#', '');
+  if (/^[0-9a-f]{6}$/i.test(hex)) {
+    const red = parseInt(hex.slice(0, 2), 16);
+    const green = parseInt(hex.slice(2, 4), 16);
+    const blue = parseInt(hex.slice(4, 6), 16);
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+  }
+
+  return `rgba(var(--bt-primary-rgb), ${alpha})`;
 }

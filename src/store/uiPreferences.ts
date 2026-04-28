@@ -14,8 +14,10 @@ interface UiPreferencesState {
   resultPageSize: number;
   themeId: string;
   monacoThemeName: string;
-  density: 'compact' | 'comfortable';
+  density: 'compact' | 'comfortable' | 'spacious';
   editorFontSize: number;
+  formatOnSave: boolean;
+  autoCloseBrackets: boolean;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
   logsExpandedByDefault: boolean;
@@ -30,8 +32,10 @@ interface UiPreferencesState {
   setResultPageSize: (pageSize: number) => void;
   setThemeId: (themeId: string) => void;
   setMonacoThemeName: (themeName: string) => void;
-  setDensity: (density: 'compact' | 'comfortable') => void;
+  setDensity: (density: 'compact' | 'comfortable' | 'spacious') => void;
   setEditorFontSize: (fontSize: number) => void;
+  setFormatOnSave: (enabled: boolean) => void;
+  setAutoCloseBrackets: (enabled: boolean) => void;
   setSidebarWidth: (width: number) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setLogsExpandedByDefault: (expanded: boolean) => void;
@@ -52,6 +56,8 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
   monacoThemeName: systemConfig.ui.monacoThemeName,
   density: systemConfig.ui.density,
   editorFontSize: systemConfig.ui.editorFontSize,
+  formatOnSave: systemConfig.ui.formatOnSave,
+  autoCloseBrackets: systemConfig.ui.autoCloseBrackets,
   sidebarWidth: systemConfig.workbench.sidebarWidth,
   sidebarCollapsed: systemConfig.workbench.sidebarCollapsed,
   logsExpandedByDefault: systemConfig.workbench.logsExpandedByDefault,
@@ -160,12 +166,25 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
       const normalized = normalizeEditorFontSize(fontSize);
       updateSystemConfig((current) => ({
         ...current,
-        ui: {
-          ...current.ui,
-          editorFontSize: normalized,
-        },
+        ui: { ...current.ui, editorFontSize: normalized },
       }));
       return { editorFontSize: normalized };
+    }),
+  setFormatOnSave: (enabled) =>
+    set(() => {
+      updateSystemConfig((current) => ({
+        ...current,
+        ui: { ...current.ui, formatOnSave: enabled },
+      }));
+      return { formatOnSave: enabled };
+    }),
+  setAutoCloseBrackets: (enabled) =>
+    set(() => {
+      updateSystemConfig((current) => ({
+        ...current,
+        ui: { ...current.ui, autoCloseBrackets: enabled },
+      }));
+      return { autoCloseBrackets: enabled };
     }),
   setSidebarWidth: (width) =>
     set(() => {
