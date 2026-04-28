@@ -2,6 +2,12 @@
 
 All notable changes to PulseSQL are documented here.
 
+## [0.2.9] - 2026-04-28
+
+### Added
+
+- Salvar aba como .sql: botão direito na aba ou menu Arquivo → salva o script na pasta Downloads com o nome da aba
+
 ## [0.2.8] - 2026-04-28
 
 ### Added
