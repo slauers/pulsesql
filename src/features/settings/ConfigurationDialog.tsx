@@ -848,6 +848,14 @@ export default function ConfigurationDialog({
           )}
         </div>
 
+        {/* Preview notice */}
+        <div
+          className="mx-5 mb-3 rounded-lg border px-3.5 py-2.5 text-[11px] leading-relaxed"
+          style={{ background: hexToRgba(cc, 0.06), borderColor: hexToRgba(cc, 0.22), color: hexToRgba(cc, 0.75) }}
+        >
+          Algumas funcionalidades ainda são visuais. A implementação completa está em andamento e será entregue em breve.
+        </div>
+
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
           <button
