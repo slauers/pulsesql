@@ -505,12 +505,15 @@ export default function ConnectionForm({
             style={{ background: sshEnabled ? ccBg : 'transparent' }}
           >
             <div className="flex items-center gap-2.5">
-              <ArrowLeftRight size={14} style={{ color: cc }} />
-              <span className="text-sm font-semibold" style={{ color: cc }}>Use SSH Tunnel</span>
+              <ArrowLeftRight size={14} style={{ color: sshEnabled ? cc : 'var(--bt-muted)' }} />
+              <span className="text-sm font-semibold" style={{ color: sshEnabled ? cc : 'var(--bt-muted)' }}>Use SSH Tunnel</span>
             </div>
             <span
               className="rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest"
-              style={{ color: cc, border: `1px solid ${ccBorder}`, background: hexToRgba(cc, 0.08) }}
+              style={sshEnabled
+                ? { color: cc, border: `1px solid ${ccBorder}`, background: hexToRgba(cc, 0.08) }
+                : { color: 'var(--bt-muted)', border: '1px solid var(--bt-border)', background: 'transparent' }
+              }
             >
               {sshEnabled ? 'ENABLED' : 'DISABLED'}
             </span>
