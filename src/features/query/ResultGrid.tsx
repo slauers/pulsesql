@@ -45,6 +45,7 @@ export default function ResultGrid({
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
   const copyTimeoutRef = useRef<number | null>(null);
   const [activeEditCell, setActiveEditCell] = useState<string | null>(null);
+  const [selectedCell, setSelectedCell] = useState<{ rowIndex: number; column: string } | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const skipNextBlurRef = useRef(false);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -161,14 +162,19 @@ export default function ResultGrid({
     return Number.isNaN(idx) ? null : idx;
   })();
 
-  const handleCellClick = (cellKey: string, value: unknown, rowIndex: number) => {
-    if (anyEditActive && lockedRowIndex === rowIndex) return;
-    if (activeEditCell) return;
+  const handleCopyCell = (cellKey: string, value: unknown) => {
     const text = value === null ? '' : formatCellValue(value);
     void clipboardWriteText(text);
     if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
     setCopiedCell(cellKey);
     copyTimeoutRef.current = window.setTimeout(() => setCopiedCell(null), 1200);
+  };
+
+  const handleCellClick = (colName: string, rowIndex: number) => {
+    if (anyEditActive && lockedRowIndex === rowIndex) return;
+    if (activeEditCell) return;
+    setSelectedCell({ rowIndex, column: colName });
+    parentRef.current?.focus();
   };
 
   const openEdit = (cellKey: string, value: unknown) => {
@@ -196,8 +202,62 @@ export default function ResultGrid({
     }
   }, [activeEditCell]);
 
+  useEffect(() => {
+    if (!selectedCell) return;
+    if (selectedCell.rowIndex >= allRows.length || !columns.some((column) => column.name === selectedCell.column)) {
+      setSelectedCell(null);
+    }
+  }, [allRows.length, columns, selectedCell]);
+
+  const handleGridKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (activeEditCell || !selectedCell) return;
+
+    const isCopy = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c';
+    if (isCopy) {
+      const row = allRows[selectedCell.rowIndex] as Record<string, unknown> | undefined;
+      if (!row) return;
+      event.preventDefault();
+      const cellKey = `${selectedCell.rowIndex}-${selectedCell.column}`;
+      handleCopyCell(cellKey, row[selectedCell.column]);
+      return;
+    }
+
+    const currentColumnIndex = columns.findIndex((column) => column.name === selectedCell.column);
+    if (currentColumnIndex < 0) return;
+
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const nextColumnIndex = event.key === 'ArrowRight'
+        ? Math.min(columns.length - 1, currentColumnIndex + 1)
+        : event.key === 'ArrowLeft'
+          ? Math.max(0, currentColumnIndex - 1)
+          : currentColumnIndex;
+      const nextRowIndex = event.key === 'ArrowDown'
+        ? Math.min(allRows.length - 1, selectedCell.rowIndex + 1)
+        : event.key === 'ArrowUp'
+          ? Math.max(0, selectedCell.rowIndex - 1)
+          : selectedCell.rowIndex;
+
+      setSelectedCell({ rowIndex: nextRowIndex, column: columns[nextColumnIndex].name });
+      rowVirtualizer.scrollToIndex(nextRowIndex, { behavior: 'auto' });
+      return;
+    }
+
+    if (event.key === 'Enter') {
+      const row = allRows[selectedCell.rowIndex] as Record<string, unknown> | undefined;
+      if (!row) return;
+      event.preventDefault();
+      openEdit(`${selectedCell.rowIndex}-${selectedCell.column}`, row[selectedCell.column]);
+    }
+  };
+
   return (
-    <div ref={parentRef} className="h-full w-full overflow-auto bg-transparent relative">
+    <div
+      ref={parentRef}
+      tabIndex={0}
+      onKeyDown={handleGridKeyDown}
+      className="h-full w-full overflow-auto bg-transparent relative outline-none"
+    >
       {!allRows.length ? (
         <div className="h-full flex items-center justify-center text-sm text-muted/60">
           Nenhum resultado para o filtro aplicado.
@@ -331,6 +391,7 @@ export default function ResultGrid({
                   const cellKey = `${virtualRow.index}-${col.name}`;
                   const isCopied = copiedCell === cellKey;
                   const isEditing = activeEditCell === cellKey;
+                  const isSelectedCell = selectedCell?.rowIndex === virtualRow.index && selectedCell.column === col.name;
                   const isInactiveCell = isThisRowLocked && !isEditing;
                   return (
                     <div
@@ -340,7 +401,7 @@ export default function ResultGrid({
                           openEdit(cellKey, val);
                           return;
                         }
-                        handleCellClick(cellKey, val, virtualRow.index);
+                        handleCellClick(col.name, virtualRow.index);
                       }}
                       onDoubleClick={() => {
                         if (!isNewRow) openEdit(cellKey, val);
@@ -354,7 +415,9 @@ export default function ResultGrid({
                               ? 'pointer-events-none select-none text-text opacity-35'
                               : isCopied
                                 ? 'bg-emerald-400/16 text-emerald-100'
-                                : 'cursor-pointer text-ellipsis text-text/94'
+                                : isSelectedCell
+                                  ? 'cursor-pointer text-ellipsis bg-primary/10 text-text ring-1 ring-inset ring-primary/45'
+                                  : 'cursor-pointer text-ellipsis text-text/94'
                       }`}
                       style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
                       title={displayValue}
