@@ -1007,6 +1007,8 @@ export default function QueryWorkspace() {
       ? currentPage + 1
       : currentPage;
   const canLoadNextPage = canPaginate && (totalRowsKnown ? currentPage < totalPages : hasMorePages);
+  const nextPageCached = Boolean(canPaginate && activeResult?.pageCache?.[currentPage + 1]);
+  const cachedPageCount = activeResult?.pageCache ? Object.keys(activeResult.pageCache).length : 0;
   const paginationTotalLabel = totalRowsKnown ? String(totalPages) : hasMorePages ? '...' : String(currentPage);
   const displayedTotalRows = totalRowsKnown
     ? formatNumber(locale, totalRows)
@@ -1510,15 +1512,13 @@ export default function QueryWorkspace() {
         </div>
 
         {activeResult && hasGridResult ? (
-          <div className="flex flex-1 items-center min-w-0">
-
-            {/* Container 1 — início: + e salvar */}
-            <div className="flex items-center gap-1 shrink-0">
+          <div className="flex flex-1 items-center gap-2 overflow-x-auto scrollbar-hide min-w-0">
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
               <button
                 type="button"
                 onClick={handleAddNewRow}
                 disabled={!canEditGrid || loading}
-                className="inline-flex items-center rounded-lg border border-border/70 px-2 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-35"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-35"
                 title={t('addRow')}
               >
                 <Plus size={13} />
@@ -1527,10 +1527,10 @@ export default function QueryWorkspace() {
                 type="button"
                 onClick={() => void handleSaveChanges()}
                 disabled={!hasPendingChanges || loading}
-                className={`inline-flex items-center rounded-lg border px-2 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-md text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
                   hasPendingChanges
-                    ? 'border-amber-400/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/18'
-                    : 'border-border/70 text-muted hover:bg-border/30 hover:text-text'
+                    ? 'bg-amber-400/12 text-amber-200 hover:bg-amber-400/18'
+                    : 'text-muted hover:bg-border/30 hover:text-text'
                 }`}
                 title={t('saveChanges')}
               >
@@ -1538,110 +1538,122 @@ export default function QueryWorkspace() {
               </button>
             </div>
 
-            {/* Container 2 — centro: stats, transação, paginação, filtro, fullscreen, exports */}
-            <div className="flex flex-1 items-center justify-center gap-2 min-w-0 px-2">
-              <div className="hidden md:flex items-center gap-1.5 text-xs shrink-0" style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--bt-muted)' }}>
-                <>
-                  <span style={{ color: 'var(--bt-muted)' }}>✓</span>
-                  <span>
-                    {formatNumber(locale, filteredRows.length)}
-                    {' / '}
-                    {quickFilter ? formatNumber(locale, activeResult.rows.length) : displayedTotalRows}
-                    {quickFilter && (totalRowsKnown ? totalRows !== activeResult.rows.length : hasMorePages)
-                      ? ` / ${displayedTotalRows}`
-                      : ''}
-                    {' '}
-                    {t('rowsLabel')}
-                  </span>
-                  {canPaginate ? (
-                    <>
-                      <span style={{ opacity: 0.4 }}>│</span>
-                      <span>{t('pageOf', { page: currentPage, total: paginationTotalLabel })}</span>
-                    </>
-                  ) : null}
-                  <span style={{ opacity: 0.4 }}>│</span>
-                </>
-                <span style={{ color: 'var(--bt-muted)' }}>{activeResult.execution_time}ms</span>
-              </div>
-              {transactionOpen ? (
-                <>
-                  <span className="inline-flex items-center rounded-lg border border-sky-400/30 bg-sky-400/10 px-2.5 py-1.5 text-xs text-sky-200">
-                    {t('transactionOpen')}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void handleTransactionAction('COMMIT')}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/35 bg-emerald-400/12 px-2.5 py-1.5 text-xs text-emerald-200 transition-colors hover:bg-emerald-400/18"
-                  >
-                    {t('commitAction')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleTransactionAction('ROLLBACK')}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/25 bg-red-400/10 px-2.5 py-1.5 text-xs text-red-300 transition-colors hover:bg-red-400/16"
-                  >
-                    {t('rollbackAction')}
-                  </button>
-                </>
-              ) : null}
+            <div className="hidden lg:flex shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-background/18 px-2.5 py-1.5 text-xs text-muted" style={{ fontFamily: 'ui-monospace, monospace' }}>
+              <Check size={12} className="text-emerald-300/80" />
+              <span>
+                {formatNumber(locale, filteredRows.length)}
+                {' / '}
+                {quickFilter ? formatNumber(locale, activeResult.rows.length) : displayedTotalRows}
+                {quickFilter && (totalRowsKnown ? totalRows !== activeResult.rows.length : hasMorePages)
+                  ? ` / ${displayedTotalRows}`
+                  : ''}
+                {' '}
+                {t('rowsLabel')}
+              </span>
               {canPaginate ? (
-                <div className="flex items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
-                  <label className="inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-muted">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={pageSizeDraft}
-                      onChange={(event) => setPageSizeDraft(event.target.value.replace(/[^0-9]/g, ''))}
-                      onBlur={() => void applyPageSize()}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          void applyPageSize();
-                        }
-                      }}
-                      className="w-14 rounded border border-border/70 bg-background/35 px-1.5 py-1 text-right text-[11px] text-text outline-none focus:border-primary"
-                    />
-                    <span>{t('rowsLabel')}</span>
-                  </label>
-                  <button
-                    onClick={() => void loadResultPage(activeResultIndex, currentPage - 1)}
-                    disabled={loading || currentPage <= 1}
-                    className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                    aria-label={t('previousPage')}
-                  >
-                    <ChevronLeft size={14} />
-                  </button>
-                  <span className="px-1 text-[11px] text-muted">
-                    {currentPage}/{paginationTotalLabel}
-                  </span>
-                  <button
-                    onClick={() => void loadResultPage(activeResultIndex, currentPage + 1)}
-                    disabled={loading || !canLoadNextPage}
-                    className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                    aria-label={t('nextPage')}
-                  >
-                    <ChevronRight size={14} />
-                  </button>
-                </div>
+                <>
+                  <span className="text-muted/35">|</span>
+                  <span>{t('pageOf', { page: currentPage, total: paginationTotalLabel })}</span>
+                </>
               ) : null}
-              <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5 min-w-[160px] md:min-w-[200px]">
-                <Search size={13} className="shrink-0 text-muted" />
-                <input
-                  value={quickFilterInput}
-                  onChange={(event) => setQuickFilterInput(event.target.value)}
-                  placeholder={t('quickFilter')}
-                  className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
-                />
-              </label>
+              <span className="text-muted/35">|</span>
+              <span>{activeResult.execution_time}ms</span>
+            </div>
+
+            {transactionOpen ? (
+              <div className="flex shrink-0 items-center gap-1 rounded-lg border border-sky-400/25 bg-sky-400/8 px-1.5 py-1">
+                <span className="hidden xl:inline px-1 text-xs text-sky-200">
+                  {t('transactionOpen')}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleTransactionAction('COMMIT')}
+                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-emerald-200 transition-colors hover:bg-emerald-400/14"
+                >
+                  {t('commitAction')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleTransactionAction('ROLLBACK')}
+                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-red-300 transition-colors hover:bg-red-400/14"
+                >
+                  {t('rollbackAction')}
+                </button>
+              </div>
+            ) : null}
+
+            {canPaginate ? (
+              <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
+                <label className="inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-muted">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={pageSizeDraft}
+                    onChange={(event) => setPageSizeDraft(event.target.value.replace(/[^0-9]/g, ''))}
+                    onBlur={() => void applyPageSize()}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        void applyPageSize();
+                      }
+                    }}
+                    className="w-14 rounded border border-border/70 bg-background/35 px-1.5 py-1 text-right text-[11px] text-text outline-none focus:border-primary"
+                  />
+                  <span>{t('rowsLabel')}</span>
+                </label>
+                <button
+                  onClick={() => void loadResultPage(activeResultIndex, currentPage - 1)}
+                  disabled={loading || currentPage <= 1}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label={t('previousPage')}
+                  title={t('previousPage')}
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <span className="min-w-[52px] text-center text-[11px] text-muted">
+                  {currentPage}/{paginationTotalLabel}
+                </span>
+                <button
+                  onClick={() => void loadResultPage(activeResultIndex, currentPage + 1)}
+                  disabled={loading || !canLoadNextPage}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label={t('nextPage')}
+                  title={t('nextPage')}
+                >
+                  <ChevronRight size={14} />
+                </button>
+                {nextPageCached ? (
+                  <span
+                    className="h-1.5 w-1.5 rounded-full bg-emerald-300/80"
+                    title={`Proxima pagina em cache (${cachedPageCount})`}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+
+            <label className="flex min-w-[150px] max-w-[260px] flex-1 items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5">
+              <Search size={13} className="shrink-0 text-muted" />
+              <input
+                value={quickFilterInput}
+                onChange={(event) => setQuickFilterInput(event.target.value)}
+                placeholder={t('quickFilter')}
+                className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
+              />
+            </label>
+
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
               <button
                 type="button"
                 onClick={() => setGridFullscreen((current) => !current)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text"
                 title={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
+                aria-label={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
               >
                 {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-                {fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
               </button>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
               <button
                 onClick={() => {
                   exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel));
@@ -1652,8 +1664,9 @@ export default function QueryWorkspace() {
                 className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
                   exportedFormat === 'csv'
                     ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
-                    : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                    : 'border-transparent text-muted hover:bg-border/30 hover:text-text'
                 }`}
+                title="Exportar CSV"
               >
                 {exportedFormat === 'csv' ? <Check size={13} /> : <Download size={13} />}
                 CSV
@@ -1668,27 +1681,27 @@ export default function QueryWorkspace() {
                 className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
                   exportedFormat === 'json'
                     ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
-                    : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                    : 'border-transparent text-muted hover:bg-border/30 hover:text-text'
                 }`}
+                title="Exportar JSON"
               >
                 {exportedFormat === 'json' ? <Check size={13} /> : <FileJson size={13} />}
                 JSON
               </button>
             </div>
 
-            {/* Container 3 — fim: lixeira colada na borda */}
-            <div className="shrink-0">
+            <div className="ml-auto shrink-0">
               <button
                 type="button"
                 onClick={() => void handleDeleteSelectedRow()}
                 disabled={selectedSourceRowIndex == null || loading}
-                className="inline-flex items-center rounded-lg border border-red-400/25 px-2 py-1.5 text-xs text-red-300/70 transition-colors hover:bg-red-400/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-35"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-400/25 text-red-300/70 transition-colors hover:bg-red-400/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-35"
                 title={t('deleteSelectedRow')}
+                aria-label={t('deleteSelectedRow')}
               >
                 <Trash2 size={13} />
               </button>
             </div>
-
           </div>
         ) : activeResult ? (
           <div className="flex flex-1 items-center justify-end gap-2 min-w-0">
