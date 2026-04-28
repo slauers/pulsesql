@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { createPortal } from 'react-dom';
-import { Download, Settings2, SlidersHorizontal, FileJson, Upload, X } from 'lucide-react';
+import { Download, Search, Settings2, SlidersHorizontal, FileJson, Upload, X } from 'lucide-react';
 import AppSelect from '../../components/ui/AppSelect';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
 import { useConnectionsStore } from '../../store/connections';
@@ -11,6 +11,18 @@ import { APP_LOCALES, translate } from '../../i18n';
 import { ensureConfiguredMonacoTheme, resolveConfiguredMonacoTheme } from '../../lib/monaco-theme';
 
 type ConfigurationTab = 'form' | 'json';
+type ConfigSection = 'interface' | 'editor' | 'workbench' | 'shortcuts' | 'startup' | 'advanced';
+
+const CONFIG_SECTION_KEY = 'pulsesql.config.lastSection';
+
+const MONACO_THEME_OPTIONS = [
+  { value: 'auto', label: 'Auto (from app theme)' },
+  { value: 'default', label: 'Default' },
+  { value: 'monokai', label: 'Monokai' },
+  { value: 'dracula', label: 'Dracula' },
+  { value: 'solarized-dark', label: 'Solarized Dark' },
+  { value: 'github-dark', label: 'GitHub Dark' },
+];
 
 export default function ConfigurationDialog({
   open,
@@ -102,9 +114,24 @@ export default function ConfigurationDialog({
   );
 
   const [activeTab, setActiveTab] = useState<ConfigurationTab>('form');
+  const [activeSection, setActiveSection] = useState<ConfigSection>(() => {
+    try {
+      const saved = localStorage.getItem(CONFIG_SECTION_KEY);
+      if (saved === 'interface' || saved === 'editor' || saved === 'workbench' ||
+          saved === 'shortcuts' || saved === 'startup' || saved === 'advanced') {
+        return saved;
+      }
+    } catch {
+      // ignore
+    }
+    return 'interface';
+  });
   const [draft, setDraft] = useState<SystemConfig>(currentConfig);
   const [jsonDraft, setJsonDraft] = useState(JSON.stringify(currentConfig, null, 2));
   const [jsonError, setJsonError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const searchDebounceRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -115,11 +142,34 @@ export default function ConfigurationDialog({
     setJsonDraft(JSON.stringify(currentConfig, null, 2));
     setJsonError(null);
     setActiveTab('form');
+    setSearchQuery('');
+    setDebouncedSearch('');
   }, [currentConfig, open]);
+
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      window.clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = window.setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 200);
+    return () => {
+      if (searchDebounceRef.current) window.clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchQuery]);
 
   if (!open) {
     return null;
   }
+
+  const handleSectionChange = (section: ConfigSection) => {
+    setActiveSection(section);
+    try {
+      localStorage.setItem(CONFIG_SECTION_KEY, section);
+    } catch {
+      // ignore
+    }
+  };
 
   const applyConfig = (nextConfig: SystemConfig) => {
     const favoriteExists =
@@ -194,6 +244,45 @@ export default function ConfigurationDialog({
     }
   };
 
+  const t = (key: Parameters<typeof translate>[1]) => translate(locale, key);
+
+  const navItems: Array<{ id: ConfigSection; label: string }> = [
+    { id: 'interface', label: t('interfaceSection') },
+    { id: 'editor', label: t('editorSection') },
+    { id: 'workbench', label: t('workbench') },
+    { id: 'shortcuts', label: t('globalShortcuts') },
+    { id: 'startup', label: t('startup') },
+    { id: 'advanced', label: t('advancedSection') },
+  ];
+
+  // All settings rows with their section, label, and description for search filtering
+  type SettingRow = { section: ConfigSection; label: string; description: string; key: string };
+  const allSettingRows: SettingRow[] = [
+    { section: 'interface', label: t('language'), description: t('languageDescription'), key: 'language' },
+    { section: 'interface', label: t('theme'), description: t('themeDescription'), key: 'theme' },
+    { section: 'interface', label: t('density'), description: t('densityDescription'), key: 'density' },
+    { section: 'interface', label: t('semanticBackground'), description: t('semanticBackgroundDescription'), key: 'semanticBackground' },
+    { section: 'interface', label: t('rowsPerPage'), description: t('rowsPerPageDescription'), key: 'rowsPerPage' },
+    { section: 'interface', label: t('showServerTimeInStatusBar'), description: t('showServerTimeInStatusBarDescription'), key: 'showServerTime' },
+    { section: 'interface', label: t('showAutocommitInStatusBar'), description: t('showAutocommitInStatusBarDescription'), key: 'showAutocommit' },
+    { section: 'editor', label: t('monacoThemeName'), description: t('monacoThemeNameDescription'), key: 'monacoTheme' },
+    { section: 'editor', label: t('editorFontSize'), description: t('editorFontSizeDescription'), key: 'editorFontSize' },
+    { section: 'workbench', label: t('sidebarWidth'), description: t('sidebarWidthDescription'), key: 'sidebarWidth' },
+    { section: 'workbench', label: t('sidebarCollapsedOnStartup'), description: t('sidebarCollapsedOnStartupDescription'), key: 'sidebarCollapsed' },
+    { section: 'workbench', label: t('logsExpandedByDefault'), description: t('logsExpandedByDefaultDescription'), key: 'logsExpanded' },
+    { section: 'shortcuts', label: t('commandPaletteLabel'), description: t('shortcutExampleCommandPalette'), key: 'commandPalette' },
+    { section: 'shortcuts', label: t('newQueryTabLabel'), description: t('shortcutExampleNewQueryTab'), key: 'newQueryTab' },
+    { section: 'shortcuts', label: t('closeQueryTabLabel'), description: t('shortcutExampleCloseQueryTab'), key: 'closeQueryTab' },
+    { section: 'startup', label: t('favoriteConnection'), description: t('favoriteConnectionDescription'), key: 'favoriteConnection' },
+  ];
+
+  const q = debouncedSearch.trim().toLowerCase();
+  const matchingKeys = q
+    ? new Set(allSettingRows.filter(r => r.label.toLowerCase().includes(q) || r.description.toLowerCase().includes(q)).map(r => r.key))
+    : null;
+
+  const shouldShow = (key: string) => !matchingKeys || matchingKeys.has(key);
+
   return createPortal(
     <div
       className="fixed inset-0 z-[170] flex items-center justify-center bg-background/78 p-6 backdrop-blur-sm"
@@ -203,18 +292,19 @@ export default function ConfigurationDialog({
         className="flex h-[82vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
         onMouseDown={(event) => event.stopPropagation()}
       >
+        {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold text-text">
               <Settings2 size={16} />
-              {translate(locale, 'configurationsTitle')}
+              {t('configurationsTitle')}
             </div>
-            <div className="text-xs text-muted">{translate(locale, 'configurationsSubtitle')}</div>
+            <div className="text-xs text-muted">{t('configurationsSubtitle')}</div>
           </div>
           <div className="flex items-center gap-2">
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text">
               <Upload size={13} />
-              <span>{translate(locale, 'import')}</span>
+              <span>{t('import')}</span>
               <input
                 type="file"
                 accept=".json,application/json"
@@ -231,7 +321,7 @@ export default function ConfigurationDialog({
               className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
             >
               <Download size={13} />
-              {translate(locale, 'export')}
+              {t('export')}
             </button>
             <button
               type="button"
@@ -243,6 +333,7 @@ export default function ConfigurationDialog({
           </div>
         </div>
 
+        {/* Tab bar */}
         <div className="border-b border-border px-5 py-3">
           <div className="flex items-center gap-2">
             <button
@@ -255,7 +346,7 @@ export default function ConfigurationDialog({
               }`}
             >
               <SlidersHorizontal size={13} />
-              {translate(locale, 'visual')}
+              {t('visual')}
             </button>
             <button
               type="button"
@@ -267,371 +358,389 @@ export default function ConfigurationDialog({
               }`}
             >
               <FileJson size={13} />
-              {translate(locale, 'json')}
+              {t('json')}
             </button>
           </div>
         </div>
 
+        {/* Content */}
         <div className="min-h-0 flex-1 overflow-hidden">
           {activeTab === 'form' ? (
-            <div className="h-full overflow-auto p-5">
-              <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                <section className="rounded-lg border border-border/70 bg-background/24 p-4">
-                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">{translate(locale, 'interfaceSection')}</div>
-                  <div className="space-y-4">
-                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">{translate(locale, 'language')}</div>
-                      <div className="mb-2 text-xs text-muted">{translate(locale, 'configurationsSubtitle')}</div>
-                      <AppSelect
-                        value={draft.ui.locale}
-                        onChange={(value) =>
-                          setDraft((current) => ({
-                            ...current,
-                            ui: {
-                              ...current.ui,
-                              locale: value === 'en-US' ? 'en-US' : 'pt-BR',
-                            },
-                          }))
-                        }
-                        options={APP_LOCALES.map((appLocale) => ({
-                          value: appLocale.value,
-                          label: appLocale.label,
-                        }))}
-                        className="w-full"
-                      />
-                    </label>
+            <div className="flex h-full">
+              {/* Left nav sidebar */}
+              <div className="w-44 shrink-0 border-r border-border/60 overflow-y-auto py-3 px-2">
+                <nav className="space-y-0.5">
+                  {navItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleSectionChange(item.id)}
+                      className={`w-full rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                        activeSection === item.id
+                          ? 'bg-primary/12 text-primary'
+                          : 'text-muted hover:bg-background/40 hover:text-text'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </nav>
+              </div>
 
-                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">{translate(locale, 'theme')}</div>
-                      <div className="mb-2 text-xs text-muted">{translate(locale, 'themeDescription')}</div>
-                      <AppSelect
-                        value={draft.ui.themeId}
-                        onChange={(value) =>
-                          setDraft((current) => ({
-                            ...current,
-                            ui: {
-                              ...current.ui,
-                              themeId: value,
-                            },
-                          }))
-                        }
-                        options={APP_THEMES.map((theme) => ({
-                          value: theme.id,
-                          label: theme.label,
-                        }))}
-                        className="w-full"
-                      />
-                    </label>
-
-                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">{translate(locale, 'monacoThemeName')}</div>
-                      <div className="mb-2 text-xs text-muted">{translate(locale, 'monacoThemeNameDescription')}</div>
-                      <input
-                        value={draft.ui.monacoThemeName}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            ui: {
-                              ...current.ui,
-                              monacoThemeName: event.target.value,
-                            },
-                          }))
-                        }
-                        placeholder="default"
-                        spellCheck={false}
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-text outline-none focus:border-primary"
-                      />
-                    </label>
-
-                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">{translate(locale, 'density')}</div>
-                      <div className="mb-2 text-xs text-muted">{translate(locale, 'densityDescription')}</div>
-                      <AppSelect
-                        value={draft.ui.density}
-                        onChange={(value) =>
-                          setDraft((current) => ({
-                            ...current,
-                            ui: {
-                              ...current.ui,
-                              density: value === 'compact' ? 'compact' : 'comfortable',
-                            },
-                          }))
-                        }
-                        options={[
-                          { value: 'comfortable', label: translate(locale, 'densityComfortable') },
-                          { value: 'compact', label: translate(locale, 'densityCompact') },
-                        ]}
-                        className="w-full"
-                      />
-                    </label>
-
-                    <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div>
-                        <div className="text-sm text-text">{translate(locale, 'semanticBackground')}</div>
-                        <div className="text-xs text-muted">{translate(locale, 'semanticBackgroundDescription')}</div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={draft.ui.semanticBackgroundEnabled}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            ui: {
-                              ...current.ui,
-                              semanticBackgroundEnabled: event.target.checked,
-                            },
-                          }))
-                        }
-                        className="accent-primary"
-                      />
-                    </label>
-
-                    <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div>
-                        <div className="text-sm text-text">{translate(locale, 'showServerTimeInStatusBar')}</div>
-                        <div className="text-xs text-muted">{translate(locale, 'showServerTimeInStatusBarDescription')}</div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={draft.ui.showServerTimeInStatusBar}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            ui: {
-                              ...current.ui,
-                              showServerTimeInStatusBar: event.target.checked,
-                            },
-                          }))
-                        }
-                        className="accent-primary"
-                      />
-                    </label>
-
-                    <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div>
-                        <div className="text-sm text-text">{translate(locale, 'showAutocommitInStatusBar')}</div>
-                        <div className="text-xs text-muted">{translate(locale, 'showAutocommitInStatusBarDescription')}</div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={draft.ui.showAutocommitInStatusBar}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            ui: {
-                              ...current.ui,
-                              showAutocommitInStatusBar: event.target.checked,
-                            },
-                          }))
-                        }
-                        className="accent-primary"
-                      />
-                    </label>
-
-                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">{translate(locale, 'rowsPerPage')}</div>
-                      <div className="mb-2 text-xs text-muted">{translate(locale, 'rowsPerPageDescription')}</div>
-                      <input
-                        type="number"
-                        min={1}
-                        max={1000}
-                        value={draft.ui.resultPageSize}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            ui: {
-                              ...current.ui,
-                              resultPageSize: normalizePageSize(Number(event.target.value)),
-                            },
-                          }))
-                        }
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                      />
-                    </label>
-
-                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">{translate(locale, 'editorFontSize')}</div>
-                      <div className="mb-2 text-xs text-muted">{translate(locale, 'editorFontSizeDescription')}</div>
-                      <input
-                        type="number"
-                        min={11}
-                        max={20}
-                        value={draft.ui.editorFontSize}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            ui: {
-                              ...current.ui,
-                              editorFontSize: normalizeEditorFontSize(Number(event.target.value)),
-                            },
-                          }))
-                        }
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                      />
-                    </label>
-                  </div>
-                </section>
-
-                <section className="rounded-lg border border-border/70 bg-background/24 p-4">
-                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">{translate(locale, 'workbench')}</div>
-                  <div className="space-y-4">
-                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">{translate(locale, 'sidebarWidth')}</div>
-                      <div className="mb-2 text-xs text-muted">{translate(locale, 'sidebarWidthDescription')}</div>
-                      <input
-                        type="number"
-                        min={220}
-                        max={520}
-                        value={draft.workbench.sidebarWidth}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            workbench: {
-                              ...current.workbench,
-                              sidebarWidth: normalizeSidebarWidth(Number(event.target.value)),
-                            },
-                          }))
-                        }
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                      />
-                    </label>
-
-                    <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div>
-                        <div className="text-sm text-text">{translate(locale, 'sidebarCollapsedOnStartup')}</div>
-                        <div className="text-xs text-muted">{translate(locale, 'sidebarCollapsedOnStartupDescription')}</div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={draft.workbench.sidebarCollapsed}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            workbench: {
-                              ...current.workbench,
-                              sidebarCollapsed: event.target.checked,
-                            },
-                          }))
-                        }
-                        className="accent-primary"
-                      />
-                    </label>
-
-                    <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div>
-                        <div className="text-sm text-text">{translate(locale, 'logsExpandedByDefault')}</div>
-                        <div className="text-xs text-muted">{translate(locale, 'logsExpandedByDefaultDescription')}</div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={draft.workbench.logsExpandedByDefault}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            workbench: {
-                              ...current.workbench,
-                              logsExpandedByDefault: event.target.checked,
-                            },
-                          }))
-                        }
-                        className="accent-primary"
-                      />
-                    </label>
-                  </div>
-                </section>
-
-                <section className="rounded-lg border border-border/70 bg-background/24 p-4">
-                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">{translate(locale, 'globalShortcuts')}</div>
-                  <div className="space-y-4">
-                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">{translate(locale, 'commandPaletteLabel')}</div>
-                      <div className="mb-2 text-xs text-muted">{translate(locale, 'shortcutExampleCommandPalette')}</div>
-                      <input
-                        value={draft.shortcuts.commandPalette}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            shortcuts: {
-                              ...current.shortcuts,
-                              commandPalette: event.target.value,
-                            },
-                          }))
-                        }
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                      />
-                    </label>
-
-                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">{translate(locale, 'newQueryTabLabel')}</div>
-                      <div className="mb-2 text-xs text-muted">{translate(locale, 'shortcutExampleNewQueryTab')}</div>
-                      <input
-                        value={draft.shortcuts.newQueryTab}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            shortcuts: {
-                              ...current.shortcuts,
-                              newQueryTab: event.target.value,
-                            },
-                          }))
-                        }
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                      />
-                    </label>
-
-                    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                      <div className="text-sm text-text">{translate(locale, 'closeQueryTabLabel')}</div>
-                      <div className="mb-2 text-xs text-muted">{translate(locale, 'shortcutExampleCloseQueryTab')}</div>
-                      <input
-                        value={draft.shortcuts.closeQueryTab}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            shortcuts: {
-                              ...current.shortcuts,
-                              closeQueryTab: event.target.value,
-                            },
-                          }))
-                        }
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                      />
-                    </label>
-                  </div>
-                </section>
-
-                <section className="rounded-lg border border-border/70 bg-background/24 p-4">
-                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">{translate(locale, 'startup')}</div>
-                  <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-                    <div className="text-sm text-text">{translate(locale, 'favoriteConnection')}</div>
-                    <div className="mb-2 text-xs text-muted">{translate(locale, 'favoriteConnectionDescription')}</div>
-                    <AppSelect
-                      value={draft.startup.favoriteConnectionId ?? ''}
-                      onChange={(value) =>
-                        setDraft((current) => ({
-                          ...current,
-                          startup: {
-                            ...current.startup,
-                            favoriteConnectionId: value || null,
-                          },
-                        }))
-                      }
-                      options={[
-                        { value: '', label: translate(locale, 'none') },
-                        ...connections.map((connection) => ({
-                          value: connection.id,
-                          label: connection.name,
-                        })),
-                      ]}
-                      className="w-full"
+              {/* Section content */}
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {/* Search bar */}
+                <div className="border-b border-border/50 px-4 py-2.5">
+                  <div className="relative">
+                    <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted/60 pointer-events-none" />
+                    <input
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search settings…"
+                      className="w-full rounded-lg border border-border/60 bg-background/40 py-1.5 pl-8 pr-8 text-xs text-text placeholder:text-muted/50 outline-none focus:border-primary/50"
                     />
-                  </label>
-                </section>
+                    {searchQuery ? (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted/60 hover:text-text"
+                      >
+                        <X size={12} />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-auto p-5">
+                  {q && matchingKeys && matchingKeys.size === 0 ? (
+                    <div className="flex items-center justify-center py-12 text-sm text-muted/60">
+                      No settings match "{q}"
+                    </div>
+                  ) : (
+                    <div className="space-y-5">
+                      {/* Interface section */}
+                      {(!q || ['language','theme','density','semanticBackground','rowsPerPage','showServerTime','showAutocommit'].some(k => matchingKeys?.has(k))) && activeSection === 'interface' ? (
+                        <SectionBlock title={t('interfaceSection')}>
+                          {shouldShow('language') && (
+                            <SettingRow label={t('language')} description={t('languageDescription')}>
+                              <AppSelect
+                                value={draft.ui.locale}
+                                onChange={(value) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    ui: { ...current.ui, locale: value === 'en-US' ? 'en-US' : 'pt-BR' },
+                                  }))
+                                }
+                                options={APP_LOCALES.map((appLocale) => ({
+                                  value: appLocale.value,
+                                  label: appLocale.label,
+                                }))}
+                                className="w-full"
+                              />
+                            </SettingRow>
+                          )}
+                          {shouldShow('theme') && (
+                            <SettingRow label={t('theme')} description={t('themeDescription')}>
+                              <AppSelect
+                                value={draft.ui.themeId}
+                                onChange={(value) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    ui: { ...current.ui, themeId: value },
+                                  }))
+                                }
+                                options={APP_THEMES.map((theme) => ({
+                                  value: theme.id,
+                                  label: theme.label,
+                                }))}
+                                className="w-full"
+                              />
+                            </SettingRow>
+                          )}
+                          {shouldShow('density') && (
+                            <SettingRow label={t('density')} description={t('densityDescription')}>
+                              <DensitySegmentedControl
+                                value={draft.ui.density}
+                                onChange={(value) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    ui: { ...current.ui, density: value },
+                                  }))
+                                }
+                                options={[
+                                  { value: 'compact', label: t('densityCompact') },
+                                  { value: 'comfortable', label: t('densityComfortable') },
+                                  { value: 'spacious', label: t('densitySpacious') },
+                                ]}
+                              />
+                            </SettingRow>
+                          )}
+                          {shouldShow('semanticBackground') && (
+                            <ToggleRow
+                              label={t('semanticBackground')}
+                              description={t('semanticBackgroundDescription')}
+                              checked={draft.ui.semanticBackgroundEnabled}
+                              onChange={(checked) =>
+                                setDraft((current) => ({
+                                  ...current,
+                                  ui: { ...current.ui, semanticBackgroundEnabled: checked },
+                                }))
+                              }
+                            />
+                          )}
+                          {shouldShow('rowsPerPage') && (
+                            <SettingRow label={t('rowsPerPage')} description={t('rowsPerPageDescription')}>
+                              <input
+                                type="number"
+                                min={1}
+                                max={1000}
+                                value={draft.ui.resultPageSize}
+                                onChange={(event) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    ui: { ...current.ui, resultPageSize: normalizePageSize(Number(event.target.value)) },
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
+                              />
+                            </SettingRow>
+                          )}
+                          {/* Status Bar sub-section */}
+                          {(shouldShow('showServerTime') || shouldShow('showAutocommit')) && (
+                            <div className="mt-4">
+                              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/70">
+                                {t('statusBarSection')}
+                              </div>
+                              {shouldShow('showServerTime') && (
+                                <ToggleRow
+                                  label={t('showServerTimeInStatusBar')}
+                                  description={t('showServerTimeInStatusBarDescription')}
+                                  checked={draft.ui.showServerTimeInStatusBar}
+                                  onChange={(checked) =>
+                                    setDraft((current) => ({
+                                      ...current,
+                                      ui: { ...current.ui, showServerTimeInStatusBar: checked },
+                                    }))
+                                  }
+                                />
+                              )}
+                              {shouldShow('showAutocommit') && (
+                                <ToggleRow
+                                  label={t('showAutocommitInStatusBar')}
+                                  description={t('showAutocommitInStatusBarDescription')}
+                                  checked={draft.ui.showAutocommitInStatusBar}
+                                  onChange={(checked) =>
+                                    setDraft((current) => ({
+                                      ...current,
+                                      ui: { ...current.ui, showAutocommitInStatusBar: checked },
+                                    }))
+                                  }
+                                />
+                              )}
+                            </div>
+                          )}
+                        </SectionBlock>
+                      ) : null}
+
+                      {/* Editor section */}
+                      {(!q || ['monacoTheme','editorFontSize'].some(k => matchingKeys?.has(k))) && activeSection === 'editor' ? (
+                        <SectionBlock title={t('editorSection')}>
+                          {shouldShow('monacoTheme') && (
+                            <SettingRow label={t('monacoThemeName')} description={t('monacoThemeNameDescription')}>
+                              <AppSelect
+                                value={draft.ui.monacoThemeName}
+                                onChange={(value) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    ui: { ...current.ui, monacoThemeName: value },
+                                  }))
+                                }
+                                options={MONACO_THEME_OPTIONS}
+                                className="w-full"
+                              />
+                            </SettingRow>
+                          )}
+                          {shouldShow('editorFontSize') && (
+                            <SettingRow label={t('editorFontSize')} description={t('editorFontSizeDescription')}>
+                              <input
+                                type="number"
+                                min={11}
+                                max={20}
+                                value={draft.ui.editorFontSize}
+                                onChange={(event) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    ui: { ...current.ui, editorFontSize: normalizeEditorFontSize(Number(event.target.value)) },
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
+                              />
+                            </SettingRow>
+                          )}
+                        </SectionBlock>
+                      ) : null}
+
+                      {/* Workbench section */}
+                      {(!q || ['sidebarWidth','sidebarCollapsed','logsExpanded'].some(k => matchingKeys?.has(k))) && activeSection === 'workbench' ? (
+                        <SectionBlock title={t('workbench')}>
+                          {shouldShow('sidebarWidth') && (
+                            <SettingRow label={t('sidebarWidth')} description={t('sidebarWidthDescription')}>
+                              <input
+                                type="number"
+                                min={220}
+                                max={520}
+                                value={draft.workbench.sidebarWidth}
+                                onChange={(event) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    workbench: {
+                                      ...current.workbench,
+                                      sidebarWidth: normalizeSidebarWidth(Number(event.target.value)),
+                                    },
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
+                              />
+                            </SettingRow>
+                          )}
+                          {shouldShow('sidebarCollapsed') && (
+                            <ToggleRow
+                              label={t('sidebarCollapsedOnStartup')}
+                              description={t('sidebarCollapsedOnStartupDescription')}
+                              checked={draft.workbench.sidebarCollapsed}
+                              onChange={(checked) =>
+                                setDraft((current) => ({
+                                  ...current,
+                                  workbench: { ...current.workbench, sidebarCollapsed: checked },
+                                }))
+                              }
+                            />
+                          )}
+                          {shouldShow('logsExpanded') && (
+                            <ToggleRow
+                              label={t('logsExpandedByDefault')}
+                              description={t('logsExpandedByDefaultDescription')}
+                              checked={draft.workbench.logsExpandedByDefault}
+                              onChange={(checked) =>
+                                setDraft((current) => ({
+                                  ...current,
+                                  workbench: { ...current.workbench, logsExpandedByDefault: checked },
+                                }))
+                              }
+                            />
+                          )}
+                        </SectionBlock>
+                      ) : null}
+
+                      {/* Shortcuts section */}
+                      {(!q || ['commandPalette','newQueryTab','closeQueryTab'].some(k => matchingKeys?.has(k))) && activeSection === 'shortcuts' ? (
+                        <SectionBlock title={t('globalShortcuts')}>
+                          {shouldShow('commandPalette') && (
+                            <SettingRow label={t('commandPaletteLabel')} description={t('shortcutExampleCommandPalette')}>
+                              <input
+                                value={draft.shortcuts.commandPalette}
+                                onChange={(event) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    shortcuts: { ...current.shortcuts, commandPalette: event.target.value },
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
+                              />
+                            </SettingRow>
+                          )}
+                          {shouldShow('newQueryTab') && (
+                            <SettingRow label={t('newQueryTabLabel')} description={t('shortcutExampleNewQueryTab')}>
+                              <input
+                                value={draft.shortcuts.newQueryTab}
+                                onChange={(event) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    shortcuts: { ...current.shortcuts, newQueryTab: event.target.value },
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
+                              />
+                            </SettingRow>
+                          )}
+                          {shouldShow('closeQueryTab') && (
+                            <SettingRow label={t('closeQueryTabLabel')} description={t('shortcutExampleCloseQueryTab')}>
+                              <input
+                                value={draft.shortcuts.closeQueryTab}
+                                onChange={(event) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    shortcuts: { ...current.shortcuts, closeQueryTab: event.target.value },
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
+                              />
+                            </SettingRow>
+                          )}
+                        </SectionBlock>
+                      ) : null}
+
+                      {/* Startup section */}
+                      {(!q || matchingKeys?.has('favoriteConnection')) && activeSection === 'startup' ? (
+                        <SectionBlock title={t('startup')}>
+                          {shouldShow('favoriteConnection') && (
+                            <SettingRow label={t('favoriteConnection')} description={t('favoriteConnectionDescription')}>
+                              <AppSelect
+                                value={draft.startup.favoriteConnectionId ?? ''}
+                                onChange={(value) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    startup: { ...current.startup, favoriteConnectionId: value || null },
+                                  }))
+                                }
+                                options={[
+                                  { value: '', label: t('none') },
+                                  ...connections.map((connection) => ({
+                                    value: connection.id,
+                                    label: connection.name,
+                                  })),
+                                ]}
+                                className="w-full"
+                              />
+                            </SettingRow>
+                          )}
+                        </SectionBlock>
+                      ) : null}
+
+                      {/* Advanced section */}
+                      {activeSection === 'advanced' && !q ? (
+                        <SectionBlock title={t('advancedSection')}>
+                          <div className="rounded-lg border border-border/60 bg-background/24 px-3 py-4 text-sm text-muted/70">
+                            Advanced settings are available via the JSON tab.
+                          </div>
+                        </SectionBlock>
+                      ) : null}
+
+                      {/* Search results: show matching settings across all sections */}
+                      {q && matchingKeys && matchingKeys.size > 0 ? (
+                        <>
+                          {allSettingRows.filter(r => matchingKeys.has(r.key)).map(row => (
+                            <div key={row.key} className="rounded-lg border border-border/60 bg-background/24 px-3 py-3">
+                              <div className="mb-0.5 flex items-center gap-2">
+                                <span className="text-sm text-text">{row.label}</span>
+                                <span className="rounded border border-border/50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-muted/60">
+                                  {navItems.find(n => n.id === row.section)?.label}
+                                </span>
+                              </div>
+                              <div className="text-xs text-muted">{row.description}</div>
+                            </div>
+                          ))}
+                        </>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ) : (
             <div className="flex h-full flex-col">
               <div className="border-b border-border/60 px-5 py-3 text-xs text-muted">
-                {translate(locale, 'editJsonDirectly')}
+                {t('editJsonDirectly')}
               </div>
               <div className="min-h-0 flex-1">
                 <Editor
@@ -662,25 +771,109 @@ export default function ConfigurationDialog({
           )}
         </div>
 
+        {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
           <button
             type="button"
             onClick={onClose}
             className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
           >
-            {translate(locale, 'cancel')}
+            {t('cancel')}
           </button>
           <button
             type="button"
             onClick={activeTab === 'form' ? handleSaveForm : handleSaveJson}
             className="rounded-lg border border-primary/40 bg-primary/12 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/18"
           >
-            {translate(locale, 'save')}
+            {t('save')}
           </button>
         </div>
       </div>
     </div>,
     document.body,
+  );
+}
+
+function SectionBlock({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-lg border border-border/70 bg-background/24 p-4">
+      <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">{title}</div>
+      <div className="space-y-4">{children}</div>
+    </section>
+  );
+}
+
+function SettingRow({
+  label,
+  description,
+  children,
+}: {
+  label: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
+      <div className="text-sm text-text">{label}</div>
+      <div className="mb-2 text-xs text-muted">{description}</div>
+      {children}
+    </label>
+  );
+}
+
+function ToggleRow({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
+      <div>
+        <div className="text-sm text-text">{label}</div>
+        <div className="text-xs text-muted">{description}</div>
+      </div>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="accent-primary"
+      />
+    </label>
+  );
+}
+
+function DensitySegmentedControl({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (value: 'compact' | 'comfortable' | 'spacious') => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <div className="flex rounded-lg border border-border overflow-hidden">
+      {options.map((option, index) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value as 'compact' | 'comfortable' | 'spacious')}
+          className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+            value === option.value
+              ? 'bg-primary/18 text-primary'
+              : 'text-muted hover:bg-background/40 hover:text-text'
+          } ${index > 0 ? 'border-l border-border' : ''}`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -730,7 +923,6 @@ function normalizePageSize(value: unknown) {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return Math.min(1000, Math.max(1, Math.round(value)));
   }
-
   return 100;
 }
 
@@ -742,15 +934,16 @@ function normalizeMonacoThemeName(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : 'default';
 }
 
-function normalizeDensity(value: unknown): 'compact' | 'comfortable' {
-  return value === 'compact' ? 'compact' : 'comfortable';
+function normalizeDensity(value: unknown): 'compact' | 'comfortable' | 'spacious' {
+  if (value === 'compact') return 'compact';
+  if (value === 'spacious') return 'spacious';
+  return 'comfortable';
 }
 
 function normalizeEditorFontSize(value: unknown) {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return Math.min(20, Math.max(11, Math.round(value)));
   }
-
   return 14;
 }
 
@@ -758,7 +951,6 @@ function normalizeSidebarWidth(value: unknown) {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return Math.min(520, Math.max(220, Math.round(value)));
   }
-
   return 290;
 }
 
