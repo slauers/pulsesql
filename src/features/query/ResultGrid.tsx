@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, ArrowDown, Check } from 'lucide-react';
+import { ArrowUp, ArrowDown, Check, Copy, PanelRightOpen, Pencil, X } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 
@@ -46,6 +46,7 @@ export default function ResultGrid({
   const copyTimeoutRef = useRef<number | null>(null);
   const [activeEditCell, setActiveEditCell] = useState<string | null>(null);
   const [selectedCell, setSelectedCell] = useState<{ rowIndex: number; column: string } | null>(null);
+  const [detailCell, setDetailCell] = useState<{ rowIndex: number; column: string } | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const skipNextBlurRef = useRef(false);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -209,7 +210,42 @@ export default function ResultGrid({
     }
   }, [allRows.length, columns, selectedCell]);
 
+  useEffect(() => {
+    if (!detailCell) return;
+    if (detailCell.rowIndex >= allRows.length || !columns.some((column) => column.name === detailCell.column)) {
+      setDetailCell(null);
+    }
+  }, [allRows.length, columns, detailCell]);
+
+  const detailContext = useMemo(() => {
+    if (!detailCell) return null;
+
+    const row = allRows[detailCell.rowIndex] as Record<string, unknown> | undefined;
+    const column = columns.find((item) => item.name === detailCell.column);
+    if (!row || !column) return null;
+
+    const rowPendingEdits = detailCell.rowIndex >= sortedRows.length ? null : (pendingRowEdits?.get(row) ?? null);
+    const hasStagedValue = column.name in (rowPendingEdits ?? {});
+    const value = hasStagedValue ? rowPendingEdits?.[column.name] : row[column.name];
+    const presentation = resolveCellPresentation(value, column.subtitle);
+
+    return {
+      row,
+      column,
+      value,
+      presentation,
+      cellKey: `${detailCell.rowIndex}-${column.name}`,
+      rowNumber: rowNumberOffset + detailCell.rowIndex + 1,
+    };
+  }, [allRows, columns, detailCell, pendingRowEdits, rowNumberOffset, sortedRows.length]);
+
   const handleGridKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape' && detailCell) {
+      event.preventDefault();
+      setDetailCell(null);
+      return;
+    }
+
     if (activeEditCell || !selectedCell) return;
 
     const isCopy = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c';
@@ -393,6 +429,7 @@ export default function ResultGrid({
                   const isEditing = activeEditCell === cellKey;
                   const isSelectedCell = selectedCell?.rowIndex === virtualRow.index && selectedCell.column === col.name;
                   const isInactiveCell = isThisRowLocked && !isEditing;
+                  const canOpenDetail = shouldOfferDetail(presentation);
                   return (
                     <div
                       key={cIdx}
@@ -477,6 +514,22 @@ export default function ResultGrid({
                       ) : (
                         renderPresentedValue(presentation)
                       )}
+                      {!isEditing && canOpenDetail ? (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedCell({ rowIndex: virtualRow.index, column: col.name });
+                            setDetailCell({ rowIndex: virtualRow.index, column: col.name });
+                          }}
+                          className={`ml-auto inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border/60 bg-background/40 text-muted transition-colors hover:border-primary/45 hover:text-text ${
+                            isSelectedCell ? 'opacity-100' : 'opacity-55 hover:opacity-100'
+                          }`}
+                          title="Abrir detalhe"
+                        >
+                          <PanelRightOpen size={12} />
+                        </button>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -485,6 +538,67 @@ export default function ResultGrid({
           })}
         </div>
       </div>
+      {detailContext ? (
+        <div className="absolute bottom-3 right-3 z-20 flex max-h-[min(70%,420px)] w-[min(520px,calc(100%-24px))] flex-col overflow-hidden rounded-lg border border-border bg-surface text-xs text-text shadow-2xl">
+          <div className="flex items-start gap-3 border-b border-border/70 px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate font-mono text-[12px] font-semibold text-text">
+                  {detailContext.column.name}
+                </span>
+                {detailContext.column.isPrimaryKey ? (
+                  <span className="shrink-0 rounded border border-amber-400/30 bg-amber-400/18 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-amber-300">
+                    PK
+                  </span>
+                ) : null}
+                {detailContext.column.isForeignKey ? (
+                  <span className="shrink-0 rounded border border-sky-400/30 bg-sky-400/18 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-sky-300">
+                    FK
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-0.5 truncate text-[11px] text-muted">
+                Linha {detailContext.rowNumber}
+                {detailContext.column.subtitle ? ` · ${detailContext.column.subtitle}` : ''}
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={() => handleCopyCell(detailContext.cellKey, detailContext.value)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-muted transition-colors hover:bg-border/30 hover:text-text"
+                title="Copiar valor"
+              >
+                <Copy size={13} />
+              </button>
+              {onCellChange && !detailContext.column.isAutoIncrement ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDetailCell(null);
+                    openEdit(detailContext.cellKey, detailContext.value);
+                  }}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-muted transition-colors hover:bg-border/30 hover:text-text"
+                  title="Editar valor"
+                >
+                  <Pencil size={13} />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setDetailCell(null)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-muted transition-colors hover:bg-border/30 hover:text-text"
+                title="Fechar"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          </div>
+          <pre className="min-h-[120px] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-[12px] leading-5 text-text/95">
+            {formatDetailValue(detailContext.value)}
+          </pre>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -532,6 +646,18 @@ function formatCellValue(value: unknown) {
   }
 
   return String(value);
+}
+
+function formatDetailValue(value: unknown) {
+  if (Array.isArray(value) || (typeof value === 'object' && value !== null)) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return formatCellValue(value);
+    }
+  }
+
+  return formatCellValue(value);
 }
 
 type CellKind = 'null' | 'number' | 'date' | 'boolean' | 'json' | 'text';
@@ -629,4 +755,8 @@ function renderPresentedValue(presentation: ReturnType<typeof resolveCellPresent
       {presentation.displayValue}
     </span>
   );
+}
+
+function shouldOfferDetail(presentation: ReturnType<typeof resolveCellPresentation>) {
+  return presentation.kind === 'json' || presentation.rawValue.length > 80 || presentation.rawValue.includes('\n');
 }
