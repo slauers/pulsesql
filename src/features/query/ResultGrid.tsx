@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, ArrowDown, Check, Copy, PanelRightOpen, Pencil, X } from 'lucide-react';
+import { ArrowUp, ArrowDown, Check, Copy, EyeOff, Filter, MoreVertical, PanelRightOpen, Pencil, Pin, X } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 
@@ -20,6 +20,8 @@ interface ResultGridProps {
   focusNewRowToken?: number;
   selectedRowIndex?: number | null;
   onRowSelect?: (rowIndex: number, row: Record<string, unknown>) => void;
+  layoutKey?: string | null;
+  onFocusQuickFilter?: () => void;
 }
 
 export default function ResultGrid({
@@ -33,6 +35,8 @@ export default function ResultGrid({
   focusNewRowToken,
   selectedRowIndex = null,
   onRowSelect,
+  layoutKey = null,
+  onFocusQuickFilter,
 }: ResultGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -47,6 +51,11 @@ export default function ResultGrid({
   const [activeEditCell, setActiveEditCell] = useState<string | null>(null);
   const [selectedCell, setSelectedCell] = useState<{ rowIndex: number; column: string } | null>(null);
   const [detailCell, setDetailCell] = useState<{ rowIndex: number; column: string } | null>(null);
+  const [selectionAnchor, setSelectionAnchor] = useState<{ rowIndex: number; column: string } | null>(null);
+  const [columnMenu, setColumnMenu] = useState<{ x: number; y: number; column: string } | null>(null);
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const [pinnedColumns, setPinnedColumns] = useState<Set<string>>(new Set());
   const [editDraft, setEditDraft] = useState('');
   const skipNextBlurRef = useRef(false);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -62,6 +71,40 @@ export default function ResultGrid({
     [columnWidths, columns, rows],
   );
 
+  const storageKey = useMemo(
+    () => `pulsesql:grid-layout:${layoutKey ?? columns.map((column) => column.name).join('|')}`,
+    [columns, layoutKey],
+  );
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        widths?: Record<string, number>;
+        hidden?: string[];
+        pinned?: string[];
+      };
+      if (parsed.widths) setColumnWidths(parsed.widths);
+      if (parsed.hidden) setHiddenColumns(new Set(parsed.hidden));
+      if (parsed.pinned) setPinnedColumns(new Set(parsed.pinned));
+    } catch {
+      // Ignore corrupted local layout state.
+    }
+  }, [storageKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify({
+        widths: columnWidths,
+        hidden: [...hiddenColumns],
+        pinned: [...pinnedColumns],
+      }));
+    } catch {
+      // Layout persistence is best-effort.
+    }
+  }, [columnWidths, hiddenColumns, pinnedColumns, storageKey]);
+
   const sortedRows = useMemo(() => {
     if (!sortConfig) return rows;
     const { column, dir } = sortConfig;
@@ -75,6 +118,38 @@ export default function ResultGrid({
     });
   }, [rows, sortConfig]);
 
+  const filteredRows = useMemo(() => {
+    const activeFilters = Object.entries(columnFilters).filter(([, value]) => value.trim());
+    if (!activeFilters.length) return sortedRows;
+
+    return sortedRows.filter((row) =>
+      activeFilters.every(([column, rawFilter]) => matchColumnFilter(row?.[column], rawFilter)),
+    );
+  }, [columnFilters, sortedRows]);
+
+  const visibleColumns = useMemo(
+    () => columns.filter((column) => !hiddenColumns.has(column.name)),
+    [columns, hiddenColumns],
+  );
+  const pinnedVisibleColumns = useMemo(
+    () => visibleColumns.filter((column) => pinnedColumns.has(column.name)),
+    [pinnedColumns, visibleColumns],
+  );
+  const scrollVisibleColumns = useMemo(
+    () => visibleColumns.filter((column) => !pinnedColumns.has(column.name)),
+    [pinnedColumns, visibleColumns],
+  );
+  const pinnedOffsets = useMemo(() => {
+    let left = 48;
+    const entries: Array<[string, number]> = [];
+    pinnedVisibleColumns.forEach((column) => {
+      entries.push([column.name, left]);
+      left += resolvedWidths[column.name];
+    });
+    return Object.fromEntries(entries);
+  }, [pinnedVisibleColumns, resolvedWidths]);
+  const pinnedWidth = pinnedVisibleColumns.reduce((total, column) => total + resolvedWidths[column.name], 0);
+
   const handleSortToggle = (colName: string) => {
     setSortConfig((current) => {
       if (current?.column === colName) {
@@ -86,13 +161,21 @@ export default function ResultGrid({
 
   const rowHeight = density === 'compact' ? 26 : 30;
   const headerHeight = density === 'compact' ? 40 : 44;
-  const allRows = [...sortedRows, ...(pendingNewRows ?? [])];
+  const allRows = [...filteredRows, ...(pendingNewRows ?? [])];
 
   const rowVirtualizer = useVirtualizer({
     count: allRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
     overscan: 20,
+  });
+
+  const columnVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: scrollVisibleColumns.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: (index) => resolvedWidths[scrollVisibleColumns[index]?.name] ?? 140,
+    overscan: 5,
   });
 
   useEffect(() => {
@@ -163,6 +246,37 @@ export default function ResultGrid({
     return Number.isNaN(idx) ? null : idx;
   })();
 
+  const selectedRange = useMemo(() => {
+    if (!selectionAnchor || !selectedCell) return null;
+    const startColumnIndex = visibleColumns.findIndex((column) => column.name === selectionAnchor.column);
+    const endColumnIndex = visibleColumns.findIndex((column) => column.name === selectedCell.column);
+    if (startColumnIndex < 0 || endColumnIndex < 0) return null;
+
+    return {
+      rowStart: Math.min(selectionAnchor.rowIndex, selectedCell.rowIndex),
+      rowEnd: Math.max(selectionAnchor.rowIndex, selectedCell.rowIndex),
+      colStart: Math.min(startColumnIndex, endColumnIndex),
+      colEnd: Math.max(startColumnIndex, endColumnIndex),
+    };
+  }, [selectedCell, selectionAnchor, visibleColumns]);
+
+  const copyRange = (includeHeaders = false) => {
+    if (!selectedRange) return false;
+    const selectedColumns = visibleColumns.slice(selectedRange.colStart, selectedRange.colEnd + 1);
+    const lines: string[] = [];
+    if (includeHeaders) {
+      lines.push(selectedColumns.map((column) => column.name).join('\t'));
+    }
+
+    for (let rowIndex = selectedRange.rowStart; rowIndex <= selectedRange.rowEnd; rowIndex++) {
+      const row = allRows[rowIndex] as Record<string, unknown> | undefined;
+      lines.push(selectedColumns.map((column) => formatTsvValue(row?.[column.name])).join('\t'));
+    }
+
+    void clipboardWriteText(lines.join('\n'));
+    return true;
+  };
+
   const handleCopyCell = (cellKey: string, value: unknown) => {
     const text = value === null ? '' : formatCellValue(value);
     void clipboardWriteText(text);
@@ -171,9 +285,14 @@ export default function ResultGrid({
     copyTimeoutRef.current = window.setTimeout(() => setCopiedCell(null), 1200);
   };
 
-  const handleCellClick = (colName: string, rowIndex: number) => {
+  const handleCellClick = (colName: string, rowIndex: number, shiftKey = false) => {
     if (anyEditActive && lockedRowIndex === rowIndex) return;
     if (activeEditCell) return;
+    if (shiftKey && selectedCell) {
+      setSelectionAnchor(selectionAnchor ?? selectedCell);
+    } else {
+      setSelectionAnchor({ rowIndex, column: colName });
+    }
     setSelectedCell({ rowIndex, column: colName });
     parentRef.current?.focus();
   };
@@ -217,6 +336,13 @@ export default function ResultGrid({
     }
   }, [allRows.length, columns, detailCell]);
 
+  useEffect(() => {
+    if (!columnMenu) return;
+    const close = () => setColumnMenu(null);
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [columnMenu]);
+
   const detailContext = useMemo(() => {
     if (!detailCell) return null;
 
@@ -224,7 +350,7 @@ export default function ResultGrid({
     const column = columns.find((item) => item.name === detailCell.column);
     if (!row || !column) return null;
 
-    const rowPendingEdits = detailCell.rowIndex >= sortedRows.length ? null : (pendingRowEdits?.get(row) ?? null);
+    const rowPendingEdits = detailCell.rowIndex >= filteredRows.length ? null : (pendingRowEdits?.get(row) ?? null);
     const hasStagedValue = column.name in (rowPendingEdits ?? {});
     const value = hasStagedValue ? rowPendingEdits?.[column.name] : row[column.name];
     const presentation = resolveCellPresentation(value, column.subtitle);
@@ -237,7 +363,7 @@ export default function ResultGrid({
       cellKey: `${detailCell.rowIndex}-${column.name}`,
       rowNumber: rowNumberOffset + detailCell.rowIndex + 1,
     };
-  }, [allRows, columns, detailCell, pendingRowEdits, rowNumberOffset, sortedRows.length]);
+  }, [allRows, columns, detailCell, filteredRows.length, pendingRowEdits, rowNumberOffset]);
 
   const handleGridKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape' && detailCell) {
@@ -250,6 +376,10 @@ export default function ResultGrid({
 
     const isCopy = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c';
     if (isCopy) {
+      if (selectedRange && copyRange(event.shiftKey)) {
+        event.preventDefault();
+        return;
+      }
       const row = allRows[selectedCell.rowIndex] as Record<string, unknown> | undefined;
       if (!row) return;
       event.preventDefault();
@@ -258,13 +388,31 @@ export default function ResultGrid({
       return;
     }
 
-    const currentColumnIndex = columns.findIndex((column) => column.name === selectedCell.column);
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      if (allRows.length && visibleColumns.length) {
+        setSelectionAnchor({ rowIndex: 0, column: visibleColumns[0].name });
+        setSelectedCell({
+          rowIndex: allRows.length - 1,
+          column: visibleColumns[visibleColumns.length - 1].name,
+        });
+      }
+      return;
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      onFocusQuickFilter?.();
+      return;
+    }
+
+    const currentColumnIndex = visibleColumns.findIndex((column) => column.name === selectedCell.column);
     if (currentColumnIndex < 0) return;
 
     if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       const nextColumnIndex = event.key === 'ArrowRight'
-        ? Math.min(columns.length - 1, currentColumnIndex + 1)
+        ? Math.min(visibleColumns.length - 1, currentColumnIndex + 1)
         : event.key === 'ArrowLeft'
           ? Math.max(0, currentColumnIndex - 1)
           : currentColumnIndex;
@@ -274,7 +422,12 @@ export default function ResultGrid({
           ? Math.max(0, selectedCell.rowIndex - 1)
           : selectedCell.rowIndex;
 
-      setSelectedCell({ rowIndex: nextRowIndex, column: columns[nextColumnIndex].name });
+      if (!event.shiftKey) {
+        setSelectionAnchor({ rowIndex: nextRowIndex, column: visibleColumns[nextColumnIndex].name });
+      } else {
+        setSelectionAnchor(selectionAnchor ?? selectedCell);
+      }
+      setSelectedCell({ rowIndex: nextRowIndex, column: visibleColumns[nextColumnIndex].name });
       rowVirtualizer.scrollToIndex(nextRowIndex, { behavior: 'auto' });
       return;
     }
@@ -286,6 +439,10 @@ export default function ResultGrid({
       openEdit(`${selectedCell.rowIndex}-${selectedCell.column}`, row[selectedCell.column]);
     }
   };
+
+  const virtualColumns = columnVirtualizer.getVirtualItems();
+  const totalGridWidth = 48 + pinnedWidth + columnVirtualizer.getTotalSize();
+  const activeMenuColumn = columnMenu ? columns.find((column) => column.name === columnMenu.column) : null;
 
   return (
     <div
@@ -302,31 +459,39 @@ export default function ResultGrid({
       <div
         className={`min-w-fit ${allRows.length ? '' : 'hidden'}`}
         style={{
+          width: `${totalGridWidth}px`,
           height: `${rowVirtualizer.getTotalSize() + headerHeight}px`,
           position: 'relative',
         }}
       >
         <div
-          className="sticky top-0 z-10 flex border-b border-border/80 bg-surface/95 text-[11px] text-muted backdrop-blur"
-          style={{ height: headerHeight }}
+          className="sticky top-0 z-10 border-b border-border/80 bg-surface/95 text-[11px] text-muted backdrop-blur"
+          style={{ height: headerHeight, width: `${totalGridWidth}px` }}
         >
-          <div className="sticky left-0 w-12 shrink-0 select-none border-r border-border/35 bg-surface/95 px-2 py-2 text-center opacity-45">
+          <div className="sticky left-0 z-30 flex h-full w-12 shrink-0 select-none items-center justify-center border-r border-border/35 bg-surface/95 px-2 py-2 text-center opacity-85">
             #
           </div>
-          {columns.map((col, idx) => {
+          {[...pinnedVisibleColumns, ...virtualColumns.map((item) => scrollVisibleColumns[item.index]).filter(Boolean)].map((col) => {
             const isSorted = sortConfig?.column === col.name;
+            const virtualItem = pinnedColumns.has(col.name)
+              ? null
+              : virtualColumns.find((item) => scrollVisibleColumns[item.index]?.name === col.name);
+            const left = pinnedColumns.has(col.name)
+              ? pinnedOffsets[col.name]
+              : 48 + pinnedWidth + (virtualItem?.start ?? 0);
             return (
               <div
-                key={idx}
-                className="relative border-r border-border/35"
-                style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
+                key={col.name}
+                className={`absolute top-0 h-full border-r border-border/35 bg-surface/95 ${pinnedColumns.has(col.name) ? 'sticky z-20' : ''}`}
+                style={{ left, width: `${resolvedWidths[col.name]}px` }}
               >
                 <div
-                  className="cursor-pointer select-none overflow-hidden whitespace-nowrap px-3 py-1.5 leading-tight text-ellipsis hover:bg-background/28"
+                  className="flex h-full cursor-pointer select-none items-center gap-1.5 overflow-hidden whitespace-nowrap px-3 py-1.5 leading-tight text-ellipsis hover:bg-background/28"
                   onClick={() => handleSortToggle(col.name)}
                   title={`Ordenar por ${col.name}`}
                 >
-                  <div className="flex items-center gap-1.5 overflow-hidden">
+                  <div className="min-w-0 flex-1 overflow-hidden">
+                    <div className="flex items-center gap-1.5 overflow-hidden">
                     <span className={`overflow-hidden text-ellipsis font-mono text-[12px] normal-case tracking-normal ${isSorted ? 'text-primary' : 'text-text/92'}`}>
                       {col.name}
                     </span>
@@ -345,12 +510,26 @@ export default function ResultGrid({
                         FK
                       </span>
                     ) : null}
-                  </div>
-                  {col.subtitle ? (
-                    <div className="overflow-hidden text-ellipsis text-[10px] font-normal normal-case tracking-normal text-muted/60">
-                      {col.subtitle}
+                    {columnFilters[col.name]?.trim() ? <Filter size={10} className="shrink-0 text-primary" /> : null}
+                    {pinnedColumns.has(col.name) ? <Pin size={10} className="shrink-0 text-primary" /> : null}
                     </div>
-                  ) : null}
+                    {col.subtitle ? (
+                      <div className="overflow-hidden text-ellipsis text-[10px] font-normal normal-case tracking-normal text-muted/60">
+                        {col.subtitle}
+                      </div>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setColumnMenu({ x: event.clientX, y: event.clientY, column: col.name });
+                    }}
+                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted hover:bg-border/30 hover:text-text"
+                    title="Menu da coluna"
+                  >
+                    <MoreVertical size={12} />
+                  </button>
                 </div>
                 <div
                   role="separator"
@@ -373,10 +552,10 @@ export default function ResultGrid({
           })}
         </div>
         
-        <div className="absolute w-full" style={{ top: `${headerHeight}px` }}>
+        <div className="absolute" style={{ top: `${headerHeight}px`, width: `${totalGridWidth}px` }}>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const row = allRows[virtualRow.index] as Record<string, unknown>;
-            const isNewRow = virtualRow.index >= sortedRows.length;
+            const isNewRow = virtualRow.index >= filteredRows.length;
             const rowPendingEdits = isNewRow ? null : (pendingRowEdits?.get(row) ?? null);
             const isDirtyRow = !isNewRow && rowPendingEdits != null;
             const rowTone = virtualRow.index % 2 === 0 ? 'bg-background/70' : 'bg-surface/26';
@@ -385,7 +564,7 @@ export default function ResultGrid({
             return (
               <div
                 key={virtualRow.key}
-                className={`group absolute flex w-full border-b text-sm transition-colors ${
+                className={`group absolute w-full border-b text-sm transition-colors ${
                   isNewRow
                     ? 'border-emerald-400/20 bg-emerald-400/6'
                     : isDirtyRow
@@ -400,6 +579,7 @@ export default function ResultGrid({
                 }`}
                 style={{
                   height: `${virtualRow.size}px`,
+                  width: `${totalGridWidth}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
@@ -419,7 +599,7 @@ export default function ResultGrid({
                 >
                   {isNewRow ? '+' : rowNumberOffset + virtualRow.index + 1}
                 </button>
-                {columns.map((col, cIdx) => {
+                {[...pinnedVisibleColumns, ...virtualColumns.map((item) => scrollVisibleColumns[item.index]).filter(Boolean)].map((col) => {
                   const stagedValue = rowPendingEdits?.[col.name];
                   const hasStagedValue = col.name in (rowPendingEdits ?? {});
                   const val = hasStagedValue ? stagedValue : row[col.name];
@@ -428,22 +608,35 @@ export default function ResultGrid({
                   const isCopied = copiedCell === cellKey;
                   const isEditing = activeEditCell === cellKey;
                   const isSelectedCell = selectedCell?.rowIndex === virtualRow.index && selectedCell.column === col.name;
+                  const columnIndex = visibleColumns.findIndex((column) => column.name === col.name);
+                  const isInRange = selectedRange
+                    ? virtualRow.index >= selectedRange.rowStart
+                      && virtualRow.index <= selectedRange.rowEnd
+                      && columnIndex >= selectedRange.colStart
+                      && columnIndex <= selectedRange.colEnd
+                    : false;
                   const isInactiveCell = isThisRowLocked && !isEditing;
                   const canOpenDetail = shouldOfferDetail(presentation);
+                  const virtualItem = pinnedColumns.has(col.name)
+                    ? null
+                    : virtualColumns.find((item) => scrollVisibleColumns[item.index]?.name === col.name);
+                  const left = pinnedColumns.has(col.name)
+                    ? pinnedOffsets[col.name]
+                    : 48 + pinnedWidth + (virtualItem?.start ?? 0);
                   return (
                     <div
-                      key={cIdx}
-                      onClick={() => {
+                      key={col.name}
+                      onClick={(event) => {
                         if (isNewRow && !isEditing) {
                           openEdit(cellKey, val);
                           return;
                         }
-                        handleCellClick(col.name, virtualRow.index);
+                        handleCellClick(col.name, virtualRow.index, event.shiftKey);
                       }}
                       onDoubleClick={() => {
                         if (!isNewRow) openEdit(cellKey, val);
                       }}
-                      className={`flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-r border-border/20 px-3.5 font-mono text-[13px] transition-colors ${presentation.alignClass} ${
+                      className={`absolute top-0 flex h-full items-center gap-1.5 overflow-hidden whitespace-nowrap border-r border-border/20 px-3.5 font-mono text-[13px] transition-colors ${presentation.alignClass} ${
                         isEditing
                           ? 'bg-primary/10 outline outline-1 outline-primary/60 p-0'
                           : hasStagedValue
@@ -454,9 +647,11 @@ export default function ResultGrid({
                                 ? 'bg-emerald-400/16 text-emerald-100'
                                 : isSelectedCell
                                   ? 'cursor-pointer text-ellipsis bg-primary/10 text-text ring-1 ring-inset ring-primary/45'
-                                  : 'cursor-pointer text-ellipsis text-text/94'
+                                  : isInRange
+                                    ? 'cursor-pointer text-ellipsis bg-primary/6 text-text/94'
+                                    : 'cursor-pointer text-ellipsis text-text/94'
                       }`}
-                      style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
+                      style={{ left, width: `${resolvedWidths[col.name]}px` }}
                       title={presentation.rawValue}
                     >
                       {isEditing ? (
@@ -599,6 +794,86 @@ export default function ResultGrid({
           </pre>
         </div>
       ) : null}
+      {columnMenu && activeMenuColumn ? (
+        <div
+          className="fixed z-50 w-64 rounded-lg border border-border bg-surface p-2 text-xs text-text shadow-2xl"
+          style={{ left: columnMenu.x, top: columnMenu.y }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <div className="mb-2 border-b border-border/60 px-1 pb-2">
+            <div className="truncate font-mono text-[12px] font-semibold">{activeMenuColumn.name}</div>
+            <div className="mt-0.5 truncate text-[11px] text-muted">
+              {activeMenuColumn.subtitle ?? 'tipo desconhecido'}
+              {activeMenuColumn.isPrimaryKey ? ' · PK' : ''}
+              {activeMenuColumn.isForeignKey ? ' · FK' : ''}
+            </div>
+          </div>
+          <div className="grid gap-1">
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => { setSortConfig({ column: activeMenuColumn.name, dir: 'asc' }); setColumnMenu(null); }}>
+              <ArrowUp size={12} /> Ordenar crescente
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => { setSortConfig({ column: activeMenuColumn.name, dir: 'desc' }); setColumnMenu(null); }}>
+              <ArrowDown size={12} /> Ordenar decrescente
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => { setSortConfig((current) => current?.column === activeMenuColumn.name ? null : current); setColumnMenu(null); }}>
+              <X size={12} /> Limpar ordenacao
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => { void clipboardWriteText(activeMenuColumn.name); setColumnMenu(null); }}>
+              <Copy size={12} /> Copiar nome
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => {
+              setColumnWidths((current) => ({ ...current, [activeMenuColumn.name]: estimateColumnWidth(activeMenuColumn, allRows) }));
+              setColumnMenu(null);
+            }}>
+              <Check size={12} /> Autoajustar largura
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => {
+              setPinnedColumns((current) => {
+                const next = new Set(current);
+                if (next.has(activeMenuColumn.name)) next.delete(activeMenuColumn.name);
+                else next.add(activeMenuColumn.name);
+                return next;
+              });
+              setColumnMenu(null);
+            }}>
+              <Pin size={12} /> {pinnedColumns.has(activeMenuColumn.name) ? 'Desfixar coluna' : 'Fixar coluna'}
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => {
+              setHiddenColumns((current) => {
+                const next = new Set(current);
+                next.add(activeMenuColumn.name);
+                return next.size >= columns.length ? current : next;
+              });
+              setPinnedColumns((current) => {
+                const next = new Set(current);
+                next.delete(activeMenuColumn.name);
+                return next;
+              });
+              setColumnMenu(null);
+            }}>
+              <EyeOff size={12} /> Ocultar coluna
+            </button>
+          </div>
+          <label className="mt-2 flex items-center gap-2 rounded-md border border-border/70 bg-background/30 px-2 py-1.5">
+            <Filter size={12} className="text-muted" />
+            <input
+              value={columnFilters[activeMenuColumn.name] ?? ''}
+              onChange={(event) => setColumnFilters((current) => ({ ...current, [activeMenuColumn.name]: event.target.value }))}
+              placeholder="Filtro local"
+              className="min-w-0 flex-1 bg-transparent text-xs text-text outline-none placeholder:text-muted"
+            />
+          </label>
+          {hiddenColumns.size ? (
+            <button
+              type="button"
+              className="mt-2 w-full rounded-md border border-border/70 px-2 py-1.5 text-left text-xs text-muted hover:bg-border/30 hover:text-text"
+              onClick={() => setHiddenColumns(new Set())}
+            >
+              Mostrar colunas ocultas ({hiddenColumns.size})
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -646,6 +921,43 @@ function formatCellValue(value: unknown) {
   }
 
   return String(value);
+}
+
+function formatTsvValue(value: unknown) {
+  return formatCellValue(value)
+    .replace(/\t/g, ' ')
+    .replace(/\r?\n/g, ' ');
+}
+
+function matchColumnFilter(value: unknown, rawFilter: string) {
+  const filter = rawFilter.trim();
+  if (!filter) return true;
+  const normalizedValue = formatCellValue(value).toLowerCase();
+  const normalizedFilter = filter.toLowerCase();
+
+  if (normalizedFilter === 'null' || normalizedFilter === 'is:null') {
+    return value === null || typeof value === 'undefined';
+  }
+
+  if (normalizedFilter === '!null' || normalizedFilter === 'not:null') {
+    return value !== null && typeof value !== 'undefined';
+  }
+
+  const operator = filter.match(/^(>=|<=|>|<|=)\s*(.+)$/);
+  if (operator) {
+    const target = Number(operator[2]);
+    const actual = typeof value === 'number' ? value : Number(String(value ?? '').replace(',', '.'));
+    if (!Number.isFinite(actual) || !Number.isFinite(target)) {
+      return normalizedValue === operator[2].toLowerCase();
+    }
+    if (operator[1] === '>') return actual > target;
+    if (operator[1] === '>=') return actual >= target;
+    if (operator[1] === '<') return actual < target;
+    if (operator[1] === '<=') return actual <= target;
+    return actual === target;
+  }
+
+  return normalizedValue.includes(normalizedFilter);
 }
 
 function formatDetailValue(value: unknown) {

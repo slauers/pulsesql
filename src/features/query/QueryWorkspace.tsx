@@ -217,12 +217,14 @@ export default function QueryWorkspace() {
   const [focusNewRowToken, setFocusNewRowToken] = useState(0);
   const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
   const [gridFullscreen, setGridFullscreen] = useState(false);
+  const [resultsCollapsed, setResultsCollapsed] = useState(false);
   const [activePanel, setActivePanel] = useState<'results' | 'logs'>('results');
   const editErrorTimeoutRef = useRef<number | null>(null);
   const executeQueryRef = useRef<() => void>(() => {});
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const connectionMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const quickFilterInputRef = useRef<HTMLInputElement | null>(null);
   const tabDragRef = useRef<{ tabId: string; startX: number; dragging: boolean } | null>(null);
   const suppressTabClickRef = useRef(false);
   const lastCursorPositionRef = useRef<{ lineNumber: number; column: number } | null>(null);
@@ -412,6 +414,7 @@ export default function QueryWorkspace() {
       setLoading(true);
       setTabError(activeTabId, null);
       setActivePanel('results');
+      setResultsCollapsed(false);
     });
     return window.performance.now();
   }, [activeTabId, setSemanticBackgroundState, setTabError]);
@@ -1380,6 +1383,7 @@ export default function QueryWorkspace() {
     try {
       await ensureExecutionConnectionReady(resolvedConnectionId);
 
+      const pendingSql: string[] = [];
       for (const [row, changes] of pendingRowEdits.entries()) {
         if (!pkCols.length) continue;
         const sql = buildMultiColUpdateSql(
@@ -1390,24 +1394,30 @@ export default function QueryWorkspace() {
           pkCols,
           engine ?? 'postgres',
         );
-        const payload = await invoke<ExecuteQueryPayload>('execute_query', {
-          connId: resolvedConnectionId,
-          query: sql,
-          page: 1,
-          pageSize: 1,
-        });
-        syncTransactionState(resolvedConnectionId, payload);
-        appendDiagnostics(resolvedConnectionId, payload.diagnostics);
+        pendingSql.push(sql);
       }
 
       for (const newRow of pendingNewRows) {
-        const sql = buildInsertSql(
+        pendingSql.push(buildInsertSql(
           activeSourceTable.schemaName,
           activeSourceTable.tableName,
           newRow,
           activeResult.column_meta ?? [],
           engine ?? 'postgres',
-        );
+        ));
+      }
+
+      if (!pendingSql.length) {
+        return;
+      }
+
+      const preview = pendingSql.slice(0, 12).join('\n\n');
+      const suffix = pendingSql.length > 12 ? `\n\n... +${pendingSql.length - 12} comandos` : '';
+      if (!window.confirm(`Aplicar ${pendingSql.length} alteracao(oes) pendente(s)?\n\n${preview}${suffix}`)) {
+        return;
+      }
+
+      for (const sql of pendingSql) {
         const payload = await invoke<ExecuteQueryPayload>('execute_query', {
           connId: resolvedConnectionId,
           query: sql,
@@ -1752,10 +1762,25 @@ export default function QueryWorkspace() {
                     ? 'bg-amber-400/12 text-amber-200 hover:bg-amber-400/18'
                     : 'text-muted hover:bg-border/30 hover:text-text'
                 }`}
-                title={t('saveChanges')}
+                title={hasPendingChanges ? `${t('saveChanges')} (${pendingRowEdits.size + pendingNewRows.length})` : t('saveChanges')}
               >
                 <Save size={13} />
               </button>
+              {hasPendingChanges ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingRowEdits(new Map());
+                    setPendingNewRows([]);
+                    setSaveError(null);
+                  }}
+                  disabled={loading}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-35"
+                  title="Desfazer alteracoes pendentes"
+                >
+                  <RotateCcw size={13} />
+                </button>
+              ) : null}
             </div>
 
             <div className="hidden lg:flex shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-background/18 px-2.5 py-1.5 text-xs text-muted" style={{ fontFamily: 'ui-monospace, monospace' }}>
@@ -1854,6 +1879,7 @@ export default function QueryWorkspace() {
             <label className="flex min-w-[150px] max-w-[260px] flex-1 items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5">
               <Search size={13} className="shrink-0 text-muted" />
               <input
+                ref={quickFilterInputRef}
                 value={quickFilterInput}
                 onChange={(event) => setQuickFilterInput(event.target.value)}
                 placeholder={t('quickFilter')}
@@ -1862,6 +1888,15 @@ export default function QueryWorkspace() {
             </label>
 
             <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
+              <button
+                type="button"
+                onClick={() => setResultsCollapsed(true)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text"
+                title="Fechar grid"
+                aria-label="Fechar grid"
+              >
+                <X size={13} />
+              </button>
               <button
                 type="button"
                 onClick={() => setGridFullscreen((current) => !current)}
@@ -1876,7 +1911,7 @@ export default function QueryWorkspace() {
             <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
               <button
                 onClick={() => {
-                  exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel));
+                  exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel, 'filtered'));
                   if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
                   setExportedFormat('csv');
                   exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
@@ -1893,7 +1928,7 @@ export default function QueryWorkspace() {
               </button>
               <button
                 onClick={() => {
-                  exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel));
+                  exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel, 'filtered'));
                   if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
                   setExportedFormat('json');
                   exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
@@ -1907,6 +1942,33 @@ export default function QueryWorkspace() {
               >
                 {exportedFormat === 'json' ? <Check size={13} /> : <FileJson size={13} />}
                 JSON
+              </button>
+              <button
+                onClick={() => {
+                  exportRowsAsCsv(activeResult.columns, activeResult.rows, buildExportBaseName(connectionLabel, 'page'));
+                  if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
+                  setExportedFormat('csv');
+                  exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-transparent px-2.5 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text"
+                title="Exportar pagina atual em CSV"
+              >
+                <Download size={13} />
+                Pagina
+              </button>
+              <button
+                onClick={() => {
+                  const loadedRows = collectLoadedPageRows(activeResult);
+                  exportRowsAsJsonLines(loadedRows, buildExportBaseName(connectionLabel, 'loaded-pages'));
+                  if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
+                  setExportedFormat('json');
+                  exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-transparent px-2.5 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text"
+                title="Exportar paginas carregadas em JSON Lines"
+              >
+                <FileJson size={13} />
+                JSONL
               </button>
             </div>
 
@@ -2009,6 +2071,8 @@ export default function QueryWorkspace() {
                   rows={filteredRows}
                   rowNumberOffset={quickFilter ? 0 : rowNumberOffset}
                   density={density}
+                  layoutKey={buildGridLayoutKey(resolvedConnectionId, activeResult.statement, activeSourceTable)}
+                  onFocusQuickFilter={() => quickFilterInputRef.current?.focus()}
                   onCellChange={canEditGrid ? handleCellChange : undefined}
                   pendingRowEdits={pendingRowEdits}
                   pendingNewRows={canEditGrid ? pendingNewRows : undefined}
@@ -2406,7 +2470,7 @@ export default function QueryWorkspace() {
             );
           })()}
 
-          {!gridFullscreen ? (
+          {!gridFullscreen && !resultsCollapsed ? (
             <>
               <div
                 role="separator"
@@ -2422,6 +2486,15 @@ export default function QueryWorkspace() {
               </div>
               {renderResultsPanel(false)}
             </>
+          ) : null}
+          {!gridFullscreen && resultsCollapsed ? (
+            <button
+              type="button"
+              onClick={() => setResultsCollapsed(false)}
+              className="absolute bottom-3 right-3 z-20 rounded-lg border border-border bg-surface/95 px-3 py-1.5 text-xs text-muted shadow-lg hover:bg-border/30 hover:text-text"
+            >
+              Mostrar resultados
+            </button>
           ) : null}
         </div>
       </div>
@@ -3198,6 +3271,25 @@ function exportRowsAsJson(rows: any[], baseName: string) {
   downloadTextFile(`${baseName}.json`, JSON.stringify(rows, null, 2), 'application/json;charset=utf-8;');
 }
 
+function exportRowsAsJsonLines(rows: any[], baseName: string) {
+  downloadTextFile(
+    `${baseName}.jsonl`,
+    rows.map((row) => JSON.stringify(row)).join('\n'),
+    'application/x-ndjson;charset=utf-8;',
+  );
+}
+
+function collectLoadedPageRows(result: QueryExecutionResult) {
+  const pages = result.pageCache
+    ? Object.entries(result.pageCache)
+        .map(([page, pageResult]) => [Number(page), pageResult] as const)
+        .sort((a, b) => a[0] - b[0])
+        .map(([, pageResult]) => pageResult.rows)
+    : [result.rows];
+
+  return pages.flat();
+}
+
 function downloadTextFile(filename: string, contents: string, contentType: string) {
   const blob = new Blob([contents], { type: contentType });
   const url = URL.createObjectURL(blob);
@@ -3214,13 +3306,33 @@ function escapeCsvValue(value: unknown) {
   return `"${escaped}"`;
 }
 
-function buildExportBaseName(connectionLabel?: string) {
+function buildExportBaseName(connectionLabel?: string, scope = 'results') {
   const safeConnection = (connectionLabel || 'results')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
-  return `${safeConnection || 'results'}-${Date.now()}`;
+  return `${safeConnection || 'results'}-${scope}-${Date.now()}`;
+}
+
+function buildGridLayoutKey(
+  connectionId: string | null,
+  statement: string,
+  sourceTable: ReturnType<typeof resolveSimpleSourceTable>,
+) {
+  if (connectionId && sourceTable?.schemaName && sourceTable.tableName) {
+    return `${connectionId}:${sourceTable.schemaName}.${sourceTable.tableName}`;
+  }
+
+  return `query:${hashString(statement.replace(/\s+/g, ' ').trim())}`;
+}
+
+function hashString(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index++) {
+    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash).toString(36);
 }
 
 function summarizeStatementForLog(statement: string) {
