@@ -126,6 +126,28 @@ pub async fn execute_query_on_connection(
     .await
 }
 
+pub async fn count_query(pool: &MySqlPool, query: &str) -> Result<u64, String> {
+    let trimmed = query.trim();
+    if !is_paginable_result_query(trimmed) {
+        return Err("Only SELECT/WITH queries can be counted.".into());
+    }
+
+    let count_sql =
+        format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
+    let execution = async {
+        sqlx::query_scalar::<_, i64>(&count_sql)
+            .fetch_one(pool)
+            .await
+            .map(|value| value.max(0) as u64)
+            .map_err(|error| error.to_string())
+    };
+
+    match tokio::time::timeout(Duration::from_secs(30), execution).await {
+        Ok(result) => result,
+        Err(_) => Err("Count query timed out after 30 seconds.".into()),
+    }
+}
+
 pub async fn begin_transaction(connection: &mut PoolConnection<MySql>) -> Result<(), String> {
     sqlx::query("START TRANSACTION")
         .execute(connection.as_mut())
@@ -161,35 +183,21 @@ async fn execute_query_on_pool(
     let started_at = Instant::now();
     let normalized_page = page.max(1);
     let normalized_page_size = page_size.clamp(1, 1_000);
+    let fetch_page_size = normalized_page_size + 1;
     let offset = u64::from(normalized_page - 1) * u64::from(normalized_page_size);
 
     let execution = async {
         if is_paginable_result_query(trimmed) {
             let paged_sql = format!(
-                "SELECT * FROM ({trimmed}) AS blacktable_page LIMIT {normalized_page_size} OFFSET {offset}"
+                "SELECT * FROM ({trimmed}) AS blacktable_page LIMIT {fetch_page_size} OFFSET {offset}"
             );
-            let count_sql =
-                format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
+            let rows = sqlx::query(&paged_sql)
+                .fetch_all(pool)
+                .await
+                .map_err(|error| error.to_string())?;
 
-            // Run paged data and COUNT in parallel.
-            // When total rows is already known (page navigation), skip the COUNT query.
-            let (rows, total_rows) = tokio::try_join!(
-                async {
-                    sqlx::query(&paged_sql)
-                        .fetch_all(pool)
-                        .await
-                        .map_err(|error| error.to_string())
-                },
-                async {
-                    match known_total_rows {
-                        Some(known) => Ok::<i64, String>(known as i64),
-                        None => sqlx::query_scalar::<_, i64>(&count_sql)
-                            .fetch_one(pool)
-                            .await
-                            .map_err(|error| error.to_string()),
-                    }
-                },
-            )?;
+            let data_has_more = rows.len() > normalized_page_size as usize;
+            let rows = trim_extra_row(rows, normalized_page_size);
 
             let columns = rows
                 .first()
@@ -230,9 +238,16 @@ async fn execute_query_on_pool(
                 rows,
                 execution_time: started_at.elapsed().as_millis() as u64,
                 summary: None,
-                total_rows: Some(total_rows.max(0) as u64),
+                total_rows: known_total_rows,
                 page: Some(normalized_page),
                 page_size: Some(normalized_page_size),
+                has_more: Some(
+                    data_has_more
+                        || known_total_rows.is_some_and(|total_rows| {
+                            has_more_from_total(total_rows, normalized_page, normalized_page_size)
+                        }),
+                ),
+                diagnostics: Vec::new(),
             })
         } else if is_result_set_query(trimmed) {
             let rows = sqlx::query(trimmed)
@@ -282,6 +297,8 @@ async fn execute_query_on_pool(
                 total_rows: None,
                 page: None,
                 page_size: None,
+                has_more: None,
+                diagnostics: Vec::new(),
             })
         } else {
             let result = sqlx::query(trimmed)
@@ -301,6 +318,8 @@ async fn execute_query_on_pool(
                 total_rows: None,
                 page: None,
                 page_size: None,
+                has_more: None,
+                diagnostics: Vec::new(),
             })
         }
     };
@@ -322,28 +341,22 @@ async fn execute_query_on_active_connection(
     let started_at = Instant::now();
     let normalized_page = page.max(1);
     let normalized_page_size = page_size.clamp(1, 1_000);
+    let fetch_page_size = normalized_page_size + 1;
     let offset = u64::from(normalized_page - 1) * u64::from(normalized_page_size);
 
     let execution = async {
         if is_paginable_result_query(trimmed) {
             let paged_sql = format!(
-                "SELECT * FROM ({trimmed}) AS blacktable_page LIMIT {normalized_page_size} OFFSET {offset}"
+                "SELECT * FROM ({trimmed}) AS blacktable_page LIMIT {fetch_page_size} OFFSET {offset}"
             );
-            let count_sql =
-                format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
 
-            // Single connection — cannot parallelize; skip COUNT when already known.
             let rows = sqlx::query(&paged_sql)
                 .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
-            let total_rows = match known_total_rows {
-                Some(known) => known as i64,
-                None => sqlx::query_scalar::<_, i64>(&count_sql)
-                    .fetch_one(&mut *connection)
-                    .await
-                    .map_err(|error| error.to_string())?,
-            };
+
+            let data_has_more = rows.len() > normalized_page_size as usize;
+            let rows = trim_extra_row(rows, normalized_page_size);
 
             let columns = rows
                 .first()
@@ -384,9 +397,16 @@ async fn execute_query_on_active_connection(
                 rows,
                 execution_time: started_at.elapsed().as_millis() as u64,
                 summary: None,
-                total_rows: Some(total_rows.max(0) as u64),
+                total_rows: known_total_rows,
                 page: Some(normalized_page),
                 page_size: Some(normalized_page_size),
+                has_more: Some(
+                    data_has_more
+                        || known_total_rows.is_some_and(|total_rows| {
+                            has_more_from_total(total_rows, normalized_page, normalized_page_size)
+                        }),
+                ),
+                diagnostics: Vec::new(),
             })
         } else if is_result_set_query(trimmed) {
             let rows = sqlx::query(trimmed)
@@ -436,6 +456,8 @@ async fn execute_query_on_active_connection(
                 total_rows: None,
                 page: None,
                 page_size: None,
+                has_more: None,
+                diagnostics: Vec::new(),
             })
         } else {
             let result = sqlx::query(trimmed)
@@ -455,6 +477,8 @@ async fn execute_query_on_active_connection(
                 total_rows: None,
                 page: None,
                 page_size: None,
+                has_more: None,
+                diagnostics: Vec::new(),
             })
         }
     };
@@ -501,6 +525,15 @@ fn strip_leading_sql_comments(query: &str) -> &str {
 
         return rest;
     }
+}
+
+fn has_more_from_total(total_rows: u64, page: u32, page_size: u32) -> bool {
+    u64::from(page) * u64::from(page_size) < total_rows
+}
+
+fn trim_extra_row(mut rows: Vec<sqlx::mysql::MySqlRow>, page_size: u32) -> Vec<sqlx::mysql::MySqlRow> {
+    rows.truncate(page_size as usize);
+    rows
 }
 
 fn mysql_value_to_json(row: &sqlx::mysql::MySqlRow, index: usize) -> Value {
