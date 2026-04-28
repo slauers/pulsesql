@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { ArrowUp, ArrowDown, Check } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
@@ -46,6 +46,12 @@ export default function ResultGrid({
   const copyTimeoutRef = useRef<number | null>(null);
   const [activeEditCell, setActiveEditCell] = useState<string | null>(null);
   const [selectedCell, setSelectedCell] = useState<{ rowIndex: number; column: string } | null>(null);
+  const [cellMenu, setCellMenu] = useState<{
+    x: number;
+    y: number;
+    cellKey: string;
+    value: unknown;
+  } | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const skipNextBlurRef = useRef(false);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -173,7 +179,27 @@ export default function ResultGrid({
   const handleCellClick = (colName: string, rowIndex: number) => {
     if (anyEditActive && lockedRowIndex === rowIndex) return;
     if (activeEditCell) return;
+    setCellMenu(null);
     setSelectedCell({ rowIndex, column: colName });
+    parentRef.current?.focus();
+  };
+
+  const handleCellContextMenu = (
+    event: ReactMouseEvent<HTMLDivElement>,
+    cellKey: string,
+    colName: string,
+    rowIndex: number,
+    value: unknown,
+  ) => {
+    event.preventDefault();
+    if (activeEditCell) return;
+    setSelectedCell({ rowIndex, column: colName });
+    setCellMenu({
+      x: event.clientX,
+      y: event.clientY,
+      cellKey,
+      value,
+    });
     parentRef.current?.focus();
   };
 
@@ -203,6 +229,18 @@ export default function ResultGrid({
   }, [activeEditCell]);
 
   useEffect(() => {
+    if (!cellMenu) return;
+
+    const close = () => setCellMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [cellMenu]);
+
+  useEffect(() => {
     if (!selectedCell) return;
     if (selectedCell.rowIndex >= allRows.length || !columns.some((column) => column.name === selectedCell.column)) {
       setSelectedCell(null);
@@ -219,6 +257,7 @@ export default function ResultGrid({
       event.preventDefault();
       const cellKey = `${selectedCell.rowIndex}-${selectedCell.column}`;
       handleCopyCell(cellKey, row[selectedCell.column]);
+      setCellMenu(null);
       return;
     }
 
@@ -239,6 +278,7 @@ export default function ResultGrid({
           : selectedCell.rowIndex;
 
       setSelectedCell({ rowIndex: nextRowIndex, column: columns[nextColumnIndex].name });
+      setCellMenu(null);
       rowVirtualizer.scrollToIndex(nextRowIndex, { behavior: 'auto' });
       return;
     }
@@ -247,6 +287,7 @@ export default function ResultGrid({
       const row = allRows[selectedCell.rowIndex] as Record<string, unknown> | undefined;
       if (!row) return;
       event.preventDefault();
+      setCellMenu(null);
       openEdit(`${selectedCell.rowIndex}-${selectedCell.column}`, row[selectedCell.column]);
     }
   };
@@ -406,6 +447,7 @@ export default function ResultGrid({
                       onDoubleClick={() => {
                         if (!isNewRow) openEdit(cellKey, val);
                       }}
+                      onContextMenu={(event) => handleCellContextMenu(event, cellKey, col.name, virtualRow.index, val)}
                       className={`flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-r border-border/20 px-3.5 font-mono text-[13px] transition-colors ${
                         isEditing
                           ? 'bg-primary/10 outline outline-1 outline-primary/60 p-0'
@@ -483,6 +525,25 @@ export default function ResultGrid({
           })}
         </div>
       </div>
+      {cellMenu ? (
+        <div
+          className="fixed z-50 min-w-[150px] rounded-md border border-border bg-surface py-1 text-xs text-text shadow-xl"
+          style={{ left: cellMenu.x, top: cellMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-border/35"
+            onClick={() => {
+              handleCopyCell(cellMenu.cellKey, cellMenu.value);
+              setCellMenu(null);
+            }}
+          >
+            <Check size={12} className="text-muted" />
+            Copiar valor
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
