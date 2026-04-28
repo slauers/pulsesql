@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { CheckCircle, Eye, EyeOff } from 'lucide-react';
 import { createDefaultConnectionForm, ENGINE_DEFINITIONS } from './connection-engines';
-import { CONNECTION_COLOR_PALETTE, ConnectionConfig, DatabaseEngine, OracleConnectionType, PostgresSslMode, SshAuthMethod, useConnectionsStore } from '../../store/connections';
+import { CONNECTION_COLOR_PALETTE, ConnectionConfig, DatabaseEngine, OracleConnectionType, PostgresSslMode, SshAuthMethod, hexToRgba, useConnectionsStore } from '../../store/connections';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
 import { translate } from '../../i18n';
 import AppSelect from '../../components/ui/AppSelect';
@@ -185,76 +185,92 @@ export default function ConnectionForm({
     setTestMessage('');
   };
 
+  const cc = formConnectionColor;
+  const ccBorder = hexToRgba(cc, 0.3);
+  const ccBg = hexToRgba(cc, 0.07);
+  const ccBgHover = hexToRgba(cc, 0.14);
+
   return (
-    <div className="h-full overflow-auto p-3 md:p-4">
-      <div className="mx-auto max-w-3xl">
-      <div className="mb-3 flex items-center justify-between">
-        <div>
-          <h2 className="bg-gradient-to-r from-primary to-blue-300 bg-clip-text text-xl font-bold text-transparent">
-            {initialConnection ? 'Edit Connection' : 'New Connection'}
-          </h2>
-          {initialConnection ? (
-            <p className="mt-0.5 text-xs text-muted/70">
-              {buildConnectionSubtitle(initialConnection)}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowImportPanel((current) => !current)}
-            className="rounded border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
-          >
-            Import from connection string
-          </button>
-          <button onClick={onClose} className="text-muted hover:text-text">
-            ✕
-          </button>
-        </div>
-      </div>
+    <div className="flex h-full flex-col overflow-hidden">
 
-      {/* Metadata strip — only shown when editing an existing connection */}
-      {initialConnection ? (
-        <div className="mb-3 grid grid-cols-4 divide-x divide-border/50 rounded-lg border border-border/60 bg-background/30">
-          <MetaItem label={t('metaCreated')} value={initialConnection.createdAt ? formatMetaDate(initialConnection.createdAt) : t('never')} />
-          <MetaItem label={t('metaLastConnected')} value={initialConnection.lastConnectedAt ? formatMetaDate(initialConnection.lastConnectedAt) : t('never')} />
-          <MetaItem
-            label={t('metaAvgLatency')}
-            value={initialConnection.avgLatencyMs != null ? `${initialConnection.avgLatencyMs} ms` : '—'}
-          />
-          <MetaItem
-            label={t('metaEngine')}
-            value={initialConnection.engine === 'oracle' ? 'Oracle' : initialConnection.engine === 'mysql' ? 'MySQL' : 'PostgreSQL'}
-          />
-        </div>
-      ) : null}
-
-      {showImportPanel ? (
-        <div className="mb-3 rounded-lg border border-border/70 bg-surface/65 p-3 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
-          <div className="mb-2 text-sm font-medium text-text">Import Connection String</div>
-          <textarea
-            value={connectionString}
-            onChange={(event) => setConnectionString(event.target.value)}
-            placeholder="postgresql://postgres:password@host:5432/postgres?sslmode=require"
-            className="min-h-16 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono text-text outline-none transition-colors focus:border-primary"
-          />
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <div className="text-xs text-muted">
-              Suporta `postgres://` e `postgresql://`. Para Supabase, use `sslmode=require`.
-            </div>
+      {/* ── Fixed header ── */}
+      <div className="shrink-0 border-b border-border/60 px-5 pt-5 pb-0">
+        <div className="flex items-start justify-between gap-4 pb-4">
+          <div>
+            <h2 className="text-xl font-bold text-text">
+              {initialConnection ? 'Edit Connection' : 'New Connection'}
+            </h2>
+            {initialConnection ? (
+              <p className="mt-0.5 text-xs text-muted/60">
+                {buildConnectionSubtitle(initialConnection)}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              onClick={handleImportConnectionString}
-              className="rounded border border-border px-3 py-2 text-sm text-text hover:bg-border/30"
+              onClick={() => setShowImportPanel((current) => !current)}
+              className="rounded border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text"
             >
-              Import
+              Import from connection string
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded border border-border p-1.5 text-muted hover:bg-border/30 hover:text-text"
+            >
+              ✕
             </button>
           </div>
-          {importMessage ? <div className="mt-3 text-xs text-primary/80">{importMessage}</div> : null}
         </div>
-      ) : null}
 
-      <form onSubmit={handleSubmit} className="glass-panel space-y-3 rounded-lg border border-border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.35)] md:p-4">
+        {/* Metadata strip */}
+        {initialConnection ? (
+          <div className="mb-0 grid grid-cols-4 divide-x divide-border/40 border-t border-border/40">
+            <MetaItem label={t('metaCreated')} value={initialConnection.createdAt ? formatMetaDate(initialConnection.createdAt) : t('never')} />
+            <MetaItem label={t('metaLastConnected')} value={initialConnection.lastConnectedAt ? formatMetaRelative(initialConnection.lastConnectedAt) : t('never')} />
+            <MetaItem
+              label={t('metaAvgLatency')}
+              value={initialConnection.avgLatencyMs != null ? `${initialConnection.avgLatencyMs}ms` : '—'}
+            />
+            <MetaItem
+              label={t('metaEngine')}
+              value={initialConnection.engineVersion ?? (initialConnection.engine === 'oracle' ? 'Oracle' : initialConnection.engine === 'mysql' ? 'MySQL' : 'PostgreSQL')}
+            />
+          </div>
+        ) : null}
+      </div>
+
+      {/* ── Scrollable body ── */}
+      <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
+        <div className="mx-auto max-w-3xl space-y-3">
+
+        {showImportPanel ? (
+          <div className="rounded-lg border border-border/70 bg-surface/65 p-3 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
+            <div className="mb-2 text-sm font-medium text-text">Import Connection String</div>
+            <textarea
+              value={connectionString}
+              onChange={(event) => setConnectionString(event.target.value)}
+              placeholder="postgresql://postgres:password@host:5432/postgres?sslmode=require"
+              className="min-h-16 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono text-text outline-none transition-colors focus:border-primary"
+            />
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <div className="text-xs text-muted">
+                Suporta `postgres://` e `postgresql://`. Para Supabase, use `sslmode=require`.
+              </div>
+              <button
+                type="button"
+                onClick={handleImportConnectionString}
+                className="rounded border border-border px-3 py-2 text-sm text-text hover:bg-border/30"
+              >
+                Import
+              </button>
+            </div>
+            {importMessage ? <div className="mt-3 text-xs text-primary/80">{importMessage}</div> : null}
+          </div>
+        ) : null}
+
+      <form id="connection-form" onSubmit={handleSubmit} className="space-y-3">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <label className="block text-sm text-muted mb-1">Connection Name</label>
@@ -463,44 +479,50 @@ export default function ConnectionForm({
                 type="checkbox"
                 checked={Boolean(formData.autoReconnect ?? true)}
                 onChange={(event) => updateField('autoReconnect', event.target.checked)}
-                className="accent-primary"
+                style={{ accentColor: cc }}
               />
               <span className="text-sm text-text">Auto-reconnect on open failure</span>
             </label>
           </div>
           <div className="flex items-end">
-            <label className="flex w-full cursor-pointer select-none items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">
+            <label
+              className="flex w-full cursor-pointer select-none items-center gap-2 rounded border px-3 py-2"
+              style={{ borderColor: ccBorder, background: ccBg }}
+            >
               <input
                 type="checkbox"
                 checked={sshEnabled}
                 onChange={(event) => updateSshField('enabled', event.target.checked)}
-                className="accent-primary"
+                style={{ accentColor: cc }}
               />
-              <span className="text-sm font-medium text-emerald-400">Use SSH Tunnel</span>
+              <span className="text-sm font-medium" style={{ color: cc }}>Use SSH Tunnel</span>
             </label>
           </div>
         </div>
 
         {sshEnabled && (
-          <div className="animate-in fade-in slide-in-from-top-2 space-y-3 rounded border border-emerald-500/30 bg-surface/50 p-3">
+          <div
+            className="animate-in fade-in slide-in-from-top-2 space-y-3 rounded border bg-surface/50 p-3"
+            style={{ borderColor: ccBorder }}
+          >
             <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
               <div className="md:col-span-3">
-                <label className="block text-sm text-emerald-400/80 mb-1">SSH Host</label>
+                <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>SSH Host</label>
                 <input
                   value={formData.ssh?.host}
                   onChange={(event) => updateSshField('host', event.target.value)}
-                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none"
                   placeholder="203.0.113.50"
                   required={sshEnabled}
                 />
               </div>
               <div>
-                <label className="block text-sm text-emerald-400/80 mb-1">SSH Port</label>
+                <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>SSH Port</label>
                 <input
                   type="number"
                   value={formData.ssh?.port}
                   onChange={(event) => updateSshField('port', Number(event.target.value))}
-                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none"
                   required={sshEnabled}
                 />
               </div>
@@ -508,16 +530,16 @@ export default function ConnectionForm({
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
-                <label className="block text-sm text-emerald-400/80 mb-1">SSH User</label>
+                <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>SSH User</label>
                 <input
                   value={formData.ssh?.user}
                   onChange={(event) => updateSshField('user', event.target.value)}
-                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none"
                   required={sshEnabled}
                 />
               </div>
               <div>
-                <label className="block text-sm text-emerald-400/80 mb-1">Authentication Method</label>
+                <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>Authentication Method</label>
                 <AppSelect
                   value={sshAuthMethod}
                   onChange={(value) => handleSshAuthMethodChange(value as SshAuthMethod)}
@@ -525,20 +547,19 @@ export default function ConnectionForm({
                     { value: 'password', label: 'Password' },
                     { value: 'privateKey', label: 'Public Key (SSH key pair)' },
                   ]}
-                  className="focus:border-emerald-500 hover:border-emerald-500/40"
                 />
               </div>
             </div>
 
             {sshAuthMethod === 'password' ? (
               <div>
-                <label className="block text-sm text-emerald-400/80 mb-1">SSH Password</label>
+                <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>SSH Password</label>
                 <div className="relative">
                   <input
                     type={showSshPassword ? 'text' : 'password'}
                     value={formData.ssh?.password}
                     onChange={(event) => updateSshField('password', event.target.value)}
-                    className="w-full rounded border border-border bg-background px-3 py-1.5 pr-10 text-sm focus:border-emerald-500 focus:outline-none"
+                    className="w-full rounded border border-border bg-background px-3 py-1.5 pr-10 text-sm focus:outline-none"
                     placeholder="Optional"
                   />
                   <button
@@ -554,23 +575,23 @@ export default function ConnectionForm({
             ) : (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
-                  <label className="block text-sm text-emerald-400/80 mb-1">Private Key Path</label>
+                  <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>Private Key Path</label>
                   <input
                     value={formData.ssh?.privateKeyPath}
                     onChange={(event) => updateSshField('privateKeyPath', event.target.value)}
-                    className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+                    className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none"
                     placeholder="~/.ssh/id_rsa"
                     required={sshAuthMethod === 'privateKey'}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-emerald-400/80 mb-1">Passphrase</label>
+                  <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>Passphrase</label>
                   <div className="relative">
                     <input
                       type={showPassphrase ? 'text' : 'password'}
                       value={formData.ssh?.passphrase}
                       onChange={(event) => updateSshField('passphrase', event.target.value)}
-                      className="w-full rounded border border-border bg-background px-3 py-1.5 pr-10 text-sm focus:border-emerald-500 focus:outline-none"
+                      className="w-full rounded border border-border bg-background px-3 py-1.5 pr-10 text-sm focus:outline-none"
                       placeholder="Optional"
                     />
                     <button
@@ -603,61 +624,67 @@ export default function ConnectionForm({
         ) : null}
 
         {saveAsNewToast ? (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+          <div className="rounded-lg border border-border px-3 py-2 text-sm" style={{ borderColor: ccBorder, background: ccBg, color: cc }}>
             {saveAsNewToast}
           </div>
         ) : null}
-
-        <div className="flex justify-end gap-3 pt-2">
-          <button
-            type="button"
-            onClick={() => void handleTestConnection()}
-            disabled={testState === 'testing'}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40 transition-colors disabled:opacity-50"
-          >
-            {testState === 'testing' ? <PulseLoader color={formConnectionColor} size="xs" surface="transparent" /> : <CheckCircle size={14} />}
-            {testState === 'testing' ? 'Testing...' : 'Test Connection'}
-          </button>
-          {initialConnection ? (
-            <button
-              type="button"
-              onClick={() => {
-                const payload = buildPayload(formData);
-                if (!payload) return;
-                const cloned: typeof payload = {
-                  ...payload,
-                  id: crypto.randomUUID(),
-                  name: `${payload.name} (copy)`,
-                  createdAt: Date.now(),
-                  lastConnectedAt: undefined,
-                  avgLatencyMs: undefined,
-                  engineVersion: undefined,
-                };
-                addConnection(cloned);
-                setSaveAsNewToast(`Connection "${cloned.name}" created.`);
-                window.setTimeout(() => setSaveAsNewToast(null), 2500);
-              }}
-              className="px-4 py-2 rounded text-sm border border-border text-text hover:bg-border/40 transition-colors"
-            >
-              {t('saveAsNew')}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded text-sm text-text hover:bg-border border border-transparent transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="px-4 py-2 rounded text-sm bg-primary text-white hover:bg-blue-600 transition-colors"
-          >
-            {initialConnection ? 'Update Connection' : 'Save Connection'}
-          </button>
-        </div>
       </form>
     </div>
+    </div>
+
+      {/* ── Fixed footer ── */}
+      <div className="shrink-0 flex items-center justify-end gap-3 border-t border-border/60 px-5 py-4">
+        <button
+          type="button"
+          onClick={() => void handleTestConnection()}
+          disabled={testState === 'testing'}
+          className="inline-flex items-center gap-2 rounded border px-4 py-2 text-sm transition-colors disabled:opacity-50"
+          style={{ borderColor: ccBorder, color: cc, background: ccBg }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = ccBgHover; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = ccBg; }}
+        >
+          {testState === 'testing' ? <PulseLoader color={cc} size="xs" surface="transparent" /> : <CheckCircle size={14} />}
+          {testState === 'testing' ? 'Testing...' : 'Test Connection'}
+        </button>
+        {initialConnection ? (
+          <button
+            type="button"
+            onClick={() => {
+              const payload = buildPayload(formData);
+              if (!payload) return;
+              const cloned: typeof payload = {
+                ...payload,
+                id: crypto.randomUUID(),
+                name: `${payload.name} (copy)`,
+                createdAt: Date.now(),
+                lastConnectedAt: undefined,
+                avgLatencyMs: undefined,
+                engineVersion: undefined,
+              };
+              addConnection(cloned);
+              setSaveAsNewToast(`Connection "${cloned.name}" created.`);
+              window.setTimeout(() => setSaveAsNewToast(null), 2500);
+            }}
+            className="rounded border border-border px-4 py-2 text-sm text-text transition-colors hover:bg-border/40"
+          >
+            {t('saveAsNew')}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded border border-transparent px-4 py-2 text-sm text-text transition-colors hover:bg-border"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          form="connection-form"
+          className="rounded bg-primary px-4 py-2 text-sm text-white transition-colors hover:bg-blue-600"
+        >
+          {initialConnection ? 'Update Connection' : 'Save Connection'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -842,4 +869,17 @@ function MetaItem({ label, value }: { label: string; value: string }) {
 
 function formatMetaDate(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatMetaRelative(timestamp: number): string {
+  const diffMs = Date.now() - timestamp;
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 30) return `${diffDay}d ago`;
+  return formatMetaDate(timestamp);
 }
