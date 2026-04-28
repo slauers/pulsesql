@@ -37,6 +37,10 @@ pub struct QueryResult {
     pub total_rows: Option<u64>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
+    #[serde(default)]
+    pub has_more: Option<bool>,
+    #[serde(default, skip_serializing)]
+    pub diagnostics: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -340,8 +344,31 @@ pub fn execute_query(
                 let row_count =
                     i64::try_from(result.result.total_rows.unwrap_or(result.result.rows.len() as u64))
                         .unwrap_or(i64::MAX);
+                let result_payload_bytes = serde_json::to_vec(&result.result)
+                    .map(|payload| payload.len())
+                    .unwrap_or_default();
+                let mut diagnostics = result.result.diagnostics.clone();
+                diagnostics.extend([
+                    format!("[db] resolve_connection_details: {resolve_ms}ms"),
+                    format!("[db] execute_query_on_managed_connection: {execute_ms}ms"),
+                    format!("[db] result rows_returned: {}", result.result.rows.len()),
+                    format!(
+                        "[db] result page: {}",
+                        result.result.page.map_or_else(|| "none".into(), |value| value.to_string())
+                    ),
+                    format!(
+                        "[db] result page_size: {}",
+                        result
+                            .result
+                            .page_size
+                            .map_or_else(|| "none".into(), |value| value.to_string())
+                    ),
+                    format!("[db] result payload_bytes: {result_payload_bytes}"),
+                    format!("[db] total execute_query command: {}ms", t_total.elapsed().as_millis()),
+                ]);
 
                 // Fire-and-forget: history write does not block the response to the frontend.
+                let history_started = Instant::now();
                 history.record_spawned(NewQueryHistoryItem {
                     id: history_item_id.clone(),
                     connection_id: conn_id,
@@ -357,17 +384,17 @@ pub fn execute_query(
                     error_message: None,
                     row_count: Some(row_count),
                 });
+                diagnostics.push(format!(
+                    "[db] history_enqueue_ms: {}",
+                    history_started.elapsed().as_millis()
+                ));
 
                 let payload = ExecuteQueryPayload {
                     result: result.result,
                     history_item_id,
                     autocommit_enabled: result.autocommit_enabled,
                     transaction_open: result.transaction_open,
-                    diagnostics: vec![
-                        format!("[db] resolve_connection_details: {resolve_ms}ms"),
-                        format!("[db] execute_query_on_managed_connection: {execute_ms}ms"),
-                        format!("[db] total execute_query command: {}ms", t_total.elapsed().as_millis()),
-                    ],
+                    diagnostics,
                 };
                 Ok(payload)
             }
@@ -754,5 +781,7 @@ fn build_transaction_summary_result(summary: &str) -> QueryResult {
         total_rows: None,
         page: None,
         page_size: None,
+        has_more: None,
+        diagnostics: Vec::new(),
     }
 }

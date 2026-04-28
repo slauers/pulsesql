@@ -56,6 +56,7 @@ interface QueryResult {
   total_rows?: number | null;
   page?: number | null;
   page_size?: number | null;
+  has_more?: boolean | null;
 }
 
 interface QueryColumnMeta {
@@ -410,13 +411,15 @@ export default function QueryWorkspace() {
     statement: string;
     result: QueryResult;
   }) => {
-    if (!tabId || result.page == null || result.page_size == null || result.total_rows == null) {
+    if (!tabId || result.page == null || result.page_size == null) {
       return;
     }
 
     const nextPage = result.page + 1;
-    const totalPagesForResult = Math.ceil(result.total_rows / Math.max(result.page_size, 1));
-    if (nextPage > totalPagesForResult) {
+    const totalPagesForResult = result.total_rows == null
+      ? null
+      : Math.ceil(result.total_rows / Math.max(result.page_size, 1));
+    if (totalPagesForResult == null ? result.has_more !== true : nextPage > totalPagesForResult) {
       return;
     }
 
@@ -432,7 +435,7 @@ export default function QueryWorkspace() {
         query: statement,
         page: nextPage,
         pageSize: result.page_size,
-        knownTotalRows: result.total_rows,
+        knownTotalRows: result.total_rows ?? undefined,
       });
       appendDiagnostics(connectionId, payload.diagnostics);
 
@@ -901,11 +904,23 @@ export default function QueryWorkspace() {
   const cachedSourceColumns = resolvedConnectionId && activeSourceTable?.schemaName && activeSourceTable.tableName
     ? metadataByConnection[resolvedConnectionId]?.schemasByName[activeSourceTable.schemaName]?.tablesByName[activeSourceTable.tableName]?.columns
     : undefined;
-  const totalRows = activeResult?.total_rows ?? activeResult?.rows.length ?? 0;
+  const totalRowsKnown = activeResult?.total_rows != null;
+  const loadedRows = activeResult?.rows.length ?? 0;
+  const totalRows = activeResult?.total_rows ?? loadedRows;
   const currentPage = activeResult?.page ?? 1;
   const pageSize = activeResult?.page_size ?? resultPageSize;
-  const totalPages = Math.max(1, Math.ceil(totalRows / Math.max(pageSize, 1)));
   const canPaginate = hasGridResult && activeResult?.page != null && activeResult?.page_size != null;
+  const hasMorePages = activeResult?.has_more === true;
+  const totalPages = totalRowsKnown
+    ? Math.max(1, Math.ceil(totalRows / Math.max(pageSize, 1)))
+    : hasMorePages
+      ? currentPage + 1
+      : currentPage;
+  const canLoadNextPage = canPaginate && (totalRowsKnown ? currentPage < totalPages : hasMorePages);
+  const paginationTotalLabel = totalRowsKnown ? String(totalPages) : hasMorePages ? '...' : String(currentPage);
+  const displayedTotalRows = totalRowsKnown
+    ? formatNumber(locale, totalRows)
+    : `${formatNumber(locale, loadedRows)}${hasMorePages ? '+' : ''}`;
   const rowNumberOffset = canPaginate ? (currentPage - 1) * pageSize : 0;
   const selectedDisplayRowIndex =
     selectedSourceRowIndex != null && activeResult
@@ -1434,15 +1449,17 @@ export default function QueryWorkspace() {
                   <span>
                     {formatNumber(locale, filteredRows.length)}
                     {' / '}
-                    {formatNumber(locale, quickFilter ? activeResult.rows.length : totalRows)}
-                    {quickFilter && totalRows !== activeResult.rows.length ? ` / ${formatNumber(locale, totalRows)}` : ''}
+                    {quickFilter ? formatNumber(locale, activeResult.rows.length) : displayedTotalRows}
+                    {quickFilter && (totalRowsKnown ? totalRows !== activeResult.rows.length : hasMorePages)
+                      ? ` / ${displayedTotalRows}`
+                      : ''}
                     {' '}
                     {t('rowsLabel')}
                   </span>
                   {canPaginate ? (
                     <>
                       <span style={{ opacity: 0.4 }}>│</span>
-                      <span>{t('pageOf', { page: currentPage, total: totalPages })}</span>
+                      <span>{t('pageOf', { page: currentPage, total: paginationTotalLabel })}</span>
                     </>
                   ) : null}
                   <span style={{ opacity: 0.4 }}>│</span>
@@ -1498,11 +1515,11 @@ export default function QueryWorkspace() {
                     <ChevronLeft size={14} />
                   </button>
                   <span className="px-1 text-[11px] text-muted">
-                    {currentPage}/{totalPages}
+                    {currentPage}/{paginationTotalLabel}
                   </span>
                   <button
                     onClick={() => void loadResultPage(activeResultIndex, currentPage + 1)}
-                    disabled={loading || currentPage >= totalPages}
+                    disabled={loading || !canLoadNextPage}
                     className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                     aria-label={t('nextPage')}
                   >

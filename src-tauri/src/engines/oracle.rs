@@ -57,7 +57,10 @@ struct OracleSuccessResponse {
     total_rows: Option<u64>,
     page: Option<u32>,
     page_size: Option<u32>,
+    #[serde(default)]
+    has_more: Option<bool>,
     column_defs: Option<Vec<ColumnDef>>,
+    diagnostics: Option<Vec<String>>,
 }
 
 /// Request sent to the persistent sidecar over stdin (one JSON line per call).
@@ -150,6 +153,7 @@ pub async fn execute_query(
     page_size: Option<u32>,
 ) -> Result<QueryResult, String> {
     let started_at = Instant::now();
+    let sidecar_started = Instant::now();
     let response = invoke_sidecar(
         "executeQuery",
         handle,
@@ -159,11 +163,19 @@ pub async fn execute_query(
         None,
         None,
     )?;
+    let sidecar_ms = sidecar_started.elapsed().as_millis();
+
+    let rows = response.rows.unwrap_or_default();
+    let mut diagnostics = response.diagnostics.unwrap_or_default();
+    diagnostics.extend([
+        format!("[oracle] sidecar_roundtrip_ms: {sidecar_ms}"),
+        format!("[oracle] rows_returned: {}", rows.len()),
+    ]);
 
     Ok(QueryResult {
         columns: response.columns.unwrap_or_default(),
         column_meta: response.column_meta.unwrap_or_default(),
-        rows: response.rows.unwrap_or_default(),
+        rows,
         execution_time: response
             .execution_time
             .unwrap_or_else(|| started_at.elapsed().as_millis() as u64),
@@ -171,6 +183,8 @@ pub async fn execute_query(
         total_rows: response.total_rows,
         page: response.page,
         page_size: response.page_size,
+        has_more: response.has_more,
+        diagnostics,
     })
 }
 

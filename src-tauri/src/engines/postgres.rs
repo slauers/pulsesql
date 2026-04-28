@@ -173,6 +173,7 @@ async fn execute_query_on_pool(
 
     let execution = async {
         if is_paginable_result_query(trimmed) {
+            let prepare_started = Instant::now();
             let count_sql =
                 format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
 
@@ -181,26 +182,35 @@ async fn execute_query_on_pool(
                  FROM ({trimmed}) AS blacktable_page
                  LIMIT {normalized_page_size} OFFSET {offset}"
             );
+            let prepare_ms = prepare_started.elapsed().as_millis();
 
             // Run COUNT and data queries in parallel.
             // When total rows is already known (page navigation), skip the COUNT query.
-            let (total_rows, rows_raw) = tokio::try_join!(
+            let ((total_rows, count_ms), (rows_raw, data_ms)) = tokio::try_join!(
                 async {
+                    let count_started = Instant::now();
                     match known_total_rows {
-                        Some(known) => Ok::<i64, String>(known as i64),
-                        None => fetch_total_rows_on_pool(pool, &count_sql).await,
+                        Some(known) => Ok::<(i64, u128), String>((known as i64, 0)),
+                        None => fetch_total_rows_on_pool(pool, &count_sql)
+                            .await
+                            .map(|total| (total, count_started.elapsed().as_millis())),
                     }
                 },
                 async {
+                    let data_started = Instant::now();
                     raw_sql(&data_sql)
                         .fetch_all(pool)
                         .await
+                        .map(|rows| (rows, data_started.elapsed().as_millis()))
                         .map_err(|error| error.to_string())
                 },
             )?;
 
+            let serialize_started = Instant::now();
             let (columns, column_meta) = extract_columns_and_meta_from_jsonb(&rows_raw);
             let rows = decode_jsonb_rows(rows_raw)?;
+            let rows_returned = rows.len();
+            let serialize_ms = serialize_started.elapsed().as_millis();
 
             Ok(QueryResult {
                 columns,
@@ -211,20 +221,39 @@ async fn execute_query_on_pool(
                 total_rows: Some(total_rows.max(0) as u64),
                 page: Some(normalized_page),
                 page_size: Some(normalized_page_size),
+                has_more: Some(has_more_from_total(
+                    total_rows.max(0) as u64,
+                    normalized_page,
+                    normalized_page_size,
+                )),
+                diagnostics: vec![
+                    format!("[postgres] prepare_ms: {prepare_ms}"),
+                    format!("[postgres] count_ms: {count_ms}"),
+                    format!("[postgres] data_ms: {data_ms}"),
+                    format!("[postgres] serialize_ms: {serialize_ms}"),
+                    format!("[postgres] rows_returned: {rows_returned}"),
+                ],
             })
         } else if is_result_set_query(trimmed) {
+            let prepare_started = Instant::now();
             let data_sql = format!(
                 "SELECT to_jsonb(blacktable_row) AS __blacktable_json, blacktable_row.*
                  FROM ({trimmed}) AS blacktable_row"
             );
+            let prepare_ms = prepare_started.elapsed().as_millis();
 
+            let data_started = Instant::now();
             let rows_raw = raw_sql(&data_sql)
                 .fetch_all(pool)
                 .await
                 .map_err(|error| error.to_string())?;
+            let data_ms = data_started.elapsed().as_millis();
 
+            let serialize_started = Instant::now();
             let (columns, column_meta) = extract_columns_and_meta_from_jsonb(&rows_raw);
             let rows = decode_jsonb_rows(rows_raw)?;
+            let rows_returned = rows.len();
+            let serialize_ms = serialize_started.elapsed().as_millis();
 
             Ok(QueryResult {
                 columns,
@@ -235,18 +264,36 @@ async fn execute_query_on_pool(
                 total_rows: None,
                 page: None,
                 page_size: None,
+                has_more: None,
+                diagnostics: vec![
+                    format!("[postgres] prepare_ms: {prepare_ms}"),
+                    "[postgres] count_ms: 0".into(),
+                    format!("[postgres] data_ms: {data_ms}"),
+                    format!("[postgres] serialize_ms: {serialize_ms}"),
+                    format!("[postgres] rows_returned: {rows_returned}"),
+                ],
             })
         } else {
+            let data_started = Instant::now();
             let result = raw_sql(trimmed)
                 .execute(pool)
                 .await
                 .map_err(|error| error.to_string())?;
+            let data_ms = data_started.elapsed().as_millis();
 
-            Ok(build_command_result(
+            let mut result = build_command_result(
                 trimmed,
                 result.rows_affected(),
                 started_at.elapsed().as_millis() as u64,
-            ))
+            );
+            result.diagnostics = vec![
+                "[postgres] prepare_ms: 0".into(),
+                "[postgres] count_ms: 0".into(),
+                format!("[postgres] data_ms: {data_ms}"),
+                "[postgres] serialize_ms: 0".into(),
+                format!("[postgres] rows_returned: {}", result.rows.len()),
+            ];
+            Ok(result)
         }
     };
 
@@ -273,6 +320,7 @@ async fn execute_query_on_active_connection(
 
     let execution = async {
         if is_paginable_result_query(trimmed) {
+            let prepare_started = Instant::now();
             let count_sql =
                 format!("SELECT COUNT(*) AS blacktable_total FROM ({trimmed}) AS blacktable_count");
 
@@ -281,20 +329,32 @@ async fn execute_query_on_active_connection(
                  FROM ({trimmed}) AS blacktable_page
                  LIMIT {normalized_page_size} OFFSET {offset}"
             );
+            let prepare_ms = prepare_started.elapsed().as_millis();
 
             // Single connection — cannot parallelize; skip COUNT when already known.
+            let count_started = Instant::now();
             let total_rows = match known_total_rows {
                 Some(known) => known as i64,
                 None => fetch_total_rows_on_connection(connection, &count_sql).await?,
             };
+            let count_ms = if known_total_rows.is_some() {
+                0
+            } else {
+                count_started.elapsed().as_millis()
+            };
 
+            let data_started = Instant::now();
             let rows_raw = raw_sql(&data_sql)
                 .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
+            let data_ms = data_started.elapsed().as_millis();
 
+            let serialize_started = Instant::now();
             let (columns, column_meta) = extract_columns_and_meta_from_jsonb(&rows_raw);
             let rows = decode_jsonb_rows(rows_raw)?;
+            let rows_returned = rows.len();
+            let serialize_ms = serialize_started.elapsed().as_millis();
 
             Ok(QueryResult {
                 columns,
@@ -305,20 +365,39 @@ async fn execute_query_on_active_connection(
                 total_rows: Some(total_rows.max(0) as u64),
                 page: Some(normalized_page),
                 page_size: Some(normalized_page_size),
+                has_more: Some(has_more_from_total(
+                    total_rows.max(0) as u64,
+                    normalized_page,
+                    normalized_page_size,
+                )),
+                diagnostics: vec![
+                    format!("[postgres] prepare_ms: {prepare_ms}"),
+                    format!("[postgres] count_ms: {count_ms}"),
+                    format!("[postgres] data_ms: {data_ms}"),
+                    format!("[postgres] serialize_ms: {serialize_ms}"),
+                    format!("[postgres] rows_returned: {rows_returned}"),
+                ],
             })
         } else if is_result_set_query(trimmed) {
+            let prepare_started = Instant::now();
             let data_sql = format!(
                 "SELECT to_jsonb(blacktable_row) AS __blacktable_json, blacktable_row.*
                  FROM ({trimmed}) AS blacktable_row"
             );
+            let prepare_ms = prepare_started.elapsed().as_millis();
 
+            let data_started = Instant::now();
             let rows_raw = raw_sql(&data_sql)
                 .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
+            let data_ms = data_started.elapsed().as_millis();
 
+            let serialize_started = Instant::now();
             let (columns, column_meta) = extract_columns_and_meta_from_jsonb(&rows_raw);
             let rows = decode_jsonb_rows(rows_raw)?;
+            let rows_returned = rows.len();
+            let serialize_ms = serialize_started.elapsed().as_millis();
 
             Ok(QueryResult {
                 columns,
@@ -329,18 +408,36 @@ async fn execute_query_on_active_connection(
                 total_rows: None,
                 page: None,
                 page_size: None,
+                has_more: None,
+                diagnostics: vec![
+                    format!("[postgres] prepare_ms: {prepare_ms}"),
+                    "[postgres] count_ms: 0".into(),
+                    format!("[postgres] data_ms: {data_ms}"),
+                    format!("[postgres] serialize_ms: {serialize_ms}"),
+                    format!("[postgres] rows_returned: {rows_returned}"),
+                ],
             })
         } else {
+            let data_started = Instant::now();
             let result = raw_sql(trimmed)
                 .execute(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
+            let data_ms = data_started.elapsed().as_millis();
 
-            Ok(build_command_result(
+            let mut result = build_command_result(
                 trimmed,
                 result.rows_affected(),
                 started_at.elapsed().as_millis() as u64,
-            ))
+            );
+            result.diagnostics = vec![
+                "[postgres] prepare_ms: 0".into(),
+                "[postgres] count_ms: 0".into(),
+                format!("[postgres] data_ms: {data_ms}"),
+                "[postgres] serialize_ms: 0".into(),
+                format!("[postgres] rows_returned: {}", result.rows.len()),
+            ];
+            Ok(result)
         }
     };
 
@@ -397,6 +494,8 @@ fn build_command_result(query: &str, rows_affected: u64, execution_time: u64) ->
             total_rows: None,
             page: None,
             page_size: None,
+            has_more: None,
+            diagnostics: Vec::new(),
         };
     }
 
@@ -412,7 +511,13 @@ fn build_command_result(query: &str, rows_affected: u64, execution_time: u64) ->
         total_rows: None,
         page: None,
         page_size: None,
+        has_more: None,
+        diagnostics: Vec::new(),
     }
+}
+
+fn has_more_from_total(total_rows: u64, page: u32, page_size: u32) -> bool {
+    u64::from(page) * u64::from(page_size) < total_rows
 }
 
 fn decode_jsonb_rows(rows: Vec<sqlx::postgres::PgRow>) -> Result<Vec<Value>, String> {

@@ -233,6 +233,12 @@ async fn execute_query_on_pool(
                 total_rows: Some(total_rows.max(0) as u64),
                 page: Some(normalized_page),
                 page_size: Some(normalized_page_size),
+                has_more: Some(has_more_from_total(
+                    total_rows.max(0) as u64,
+                    normalized_page,
+                    normalized_page_size,
+                )),
+                diagnostics: Vec::new(),
             })
         } else if is_result_set_query(trimmed) {
             let rows = sqlx::query(trimmed)
@@ -282,6 +288,8 @@ async fn execute_query_on_pool(
                 total_rows: None,
                 page: None,
                 page_size: None,
+                has_more: None,
+                diagnostics: Vec::new(),
             })
         } else {
             let result = sqlx::query(trimmed)
@@ -301,6 +309,8 @@ async fn execute_query_on_pool(
                 total_rows: None,
                 page: None,
                 page_size: None,
+                has_more: None,
+                diagnostics: Vec::new(),
             })
         }
     };
@@ -387,6 +397,12 @@ async fn execute_query_on_active_connection(
                 total_rows: Some(total_rows.max(0) as u64),
                 page: Some(normalized_page),
                 page_size: Some(normalized_page_size),
+                has_more: Some(has_more_from_total(
+                    total_rows.max(0) as u64,
+                    normalized_page,
+                    normalized_page_size,
+                )),
+                diagnostics: Vec::new(),
             })
         } else if is_result_set_query(trimmed) {
             let rows = sqlx::query(trimmed)
@@ -436,6 +452,8 @@ async fn execute_query_on_active_connection(
                 total_rows: None,
                 page: None,
                 page_size: None,
+                has_more: None,
+                diagnostics: Vec::new(),
             })
         } else {
             let result = sqlx::query(trimmed)
@@ -455,6 +473,8 @@ async fn execute_query_on_active_connection(
                 total_rows: None,
                 page: None,
                 page_size: None,
+                has_more: None,
+                diagnostics: Vec::new(),
             })
         }
     };
@@ -501,6 +521,10 @@ fn strip_leading_sql_comments(query: &str) -> &str {
 
         return rest;
     }
+}
+
+fn has_more_from_total(total_rows: u64, page: u32, page_size: u32) -> bool {
+    u64::from(page) * u64::from(page_size) < total_rows
 }
 
 fn mysql_value_to_json(row: &sqlx::mysql::MySqlRow, index: usize) -> Value {
