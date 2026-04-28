@@ -24,6 +24,14 @@ interface UiPreferencesState {
   commandPaletteShortcut: string;
   newQueryTabShortcut: string;
   closeQueryTabShortcut: string;
+  runQueryShortcut: string;
+  nextQueryTabShortcut: string;
+  prevQueryTabShortcut: string;
+  duplicateTabShortcut: string;
+  saveTabAsSqlShortcut: string;
+  toggleSidebarShortcut: string;
+  toggleResultGridShortcut: string;
+  formatQueryShortcut: string;
   setSemanticBackgroundEnabled: (enabled: boolean) => void;
   setShowServerTimeInStatusBar: (enabled: boolean) => void;
   setShowAutocommitInStatusBar: (enabled: boolean) => void;
@@ -42,6 +50,14 @@ interface UiPreferencesState {
   setCommandPaletteShortcut: (shortcut: string) => void;
   setNewQueryTabShortcut: (shortcut: string) => void;
   setCloseQueryTabShortcut: (shortcut: string) => void;
+  setRunQueryShortcut: (shortcut: string) => void;
+  setNextQueryTabShortcut: (shortcut: string) => void;
+  setPrevQueryTabShortcut: (shortcut: string) => void;
+  setDuplicateTabShortcut: (shortcut: string) => void;
+  setSaveTabAsSqlShortcut: (shortcut: string) => void;
+  setToggleSidebarShortcut: (shortcut: string) => void;
+  setToggleResultGridShortcut: (shortcut: string) => void;
+  setFormatQueryShortcut: (shortcut: string) => void;
 }
 
 const systemConfig = readSystemConfig();
@@ -64,6 +80,14 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
   commandPaletteShortcut: systemConfig.shortcuts.commandPalette,
   newQueryTabShortcut: systemConfig.shortcuts.newQueryTab,
   closeQueryTabShortcut: systemConfig.shortcuts.closeQueryTab,
+  runQueryShortcut: systemConfig.shortcuts.runQuery,
+  nextQueryTabShortcut: systemConfig.shortcuts.nextQueryTab,
+  prevQueryTabShortcut: systemConfig.shortcuts.prevQueryTab,
+  duplicateTabShortcut: systemConfig.shortcuts.duplicateTab,
+  saveTabAsSqlShortcut: systemConfig.shortcuts.saveTabAsSql,
+  toggleSidebarShortcut: systemConfig.shortcuts.toggleSidebar,
+  toggleResultGridShortcut: systemConfig.shortcuts.toggleResultGrid,
+  formatQueryShortcut: systemConfig.shortcuts.formatQuery,
   semanticBackgroundState: 'idle',
   semanticBackgroundVersion: 0,
   setLocale: (locale) =>
@@ -249,12 +273,81 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
       const normalized = normalizeShortcut(shortcut, 'CmdOrCtrl+W');
       updateSystemConfig((current) => ({
         ...current,
-        shortcuts: {
-          ...current.shortcuts,
-          closeQueryTab: normalized,
-        },
+        shortcuts: { ...current.shortcuts, closeQueryTab: normalized },
       }));
       return { closeQueryTabShortcut: normalized };
+    }),
+  setRunQueryShortcut: (shortcut) =>
+    set(() => {
+      const normalized = normalizeShortcut(shortcut, 'CmdOrCtrl+Enter');
+      updateSystemConfig((current) => ({
+        ...current,
+        shortcuts: { ...current.shortcuts, runQuery: normalized },
+      }));
+      return { runQueryShortcut: normalized };
+    }),
+  setNextQueryTabShortcut: (shortcut) =>
+    set(() => {
+      const normalized = normalizeShortcut(shortcut, 'CmdOrCtrl+Alt+ArrowRight');
+      updateSystemConfig((current) => ({
+        ...current,
+        shortcuts: { ...current.shortcuts, nextQueryTab: normalized },
+      }));
+      return { nextQueryTabShortcut: normalized };
+    }),
+  setPrevQueryTabShortcut: (shortcut) =>
+    set(() => {
+      const normalized = normalizeShortcut(shortcut, 'CmdOrCtrl+Alt+ArrowLeft');
+      updateSystemConfig((current) => ({
+        ...current,
+        shortcuts: { ...current.shortcuts, prevQueryTab: normalized },
+      }));
+      return { prevQueryTabShortcut: normalized };
+    }),
+  setDuplicateTabShortcut: (shortcut) =>
+    set(() => {
+      const normalized = normalizeShortcut(shortcut, 'CmdOrCtrl+Alt+D');
+      updateSystemConfig((current) => ({
+        ...current,
+        shortcuts: { ...current.shortcuts, duplicateTab: normalized },
+      }));
+      return { duplicateTabShortcut: normalized };
+    }),
+  setSaveTabAsSqlShortcut: (shortcut) =>
+    set(() => {
+      const normalized = normalizeShortcut(shortcut, 'CmdOrCtrl+Shift+S');
+      updateSystemConfig((current) => ({
+        ...current,
+        shortcuts: { ...current.shortcuts, saveTabAsSql: normalized },
+      }));
+      return { saveTabAsSqlShortcut: normalized };
+    }),
+  setToggleSidebarShortcut: (shortcut) =>
+    set(() => {
+      const normalized = normalizeShortcut(shortcut, 'CmdOrCtrl+B');
+      updateSystemConfig((current) => ({
+        ...current,
+        shortcuts: { ...current.shortcuts, toggleSidebar: normalized },
+      }));
+      return { toggleSidebarShortcut: normalized };
+    }),
+  setToggleResultGridShortcut: (shortcut) =>
+    set(() => {
+      const normalized = normalizeShortcut(shortcut, 'CmdOrCtrl+Shift+G');
+      updateSystemConfig((current) => ({
+        ...current,
+        shortcuts: { ...current.shortcuts, toggleResultGrid: normalized },
+      }));
+      return { toggleResultGridShortcut: normalized };
+    }),
+  setFormatQueryShortcut: (shortcut) =>
+    set(() => {
+      const normalized = normalizeShortcut(shortcut, 'CmdOrCtrl+Shift+L');
+      updateSystemConfig((current) => ({
+        ...current,
+        shortcuts: { ...current.shortcuts, formatQuery: normalized },
+      }));
+      return { formatQueryShortcut: normalized };
     }),
 }));
 

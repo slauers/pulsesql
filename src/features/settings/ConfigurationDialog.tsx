@@ -48,6 +48,14 @@ export default function ConfigurationDialog({
   const commandPaletteShortcut = useUiPreferencesStore((state) => state.commandPaletteShortcut);
   const newQueryTabShortcut = useUiPreferencesStore((state) => state.newQueryTabShortcut);
   const closeQueryTabShortcut = useUiPreferencesStore((state) => state.closeQueryTabShortcut);
+  const runQueryShortcut = useUiPreferencesStore((state) => state.runQueryShortcut);
+  const nextQueryTabShortcut = useUiPreferencesStore((state) => state.nextQueryTabShortcut);
+  const prevQueryTabShortcut = useUiPreferencesStore((state) => state.prevQueryTabShortcut);
+  const duplicateTabShortcut = useUiPreferencesStore((state) => state.duplicateTabShortcut);
+  const saveTabAsSqlShortcut = useUiPreferencesStore((state) => state.saveTabAsSqlShortcut);
+  const toggleSidebarShortcut = useUiPreferencesStore((state) => state.toggleSidebarShortcut);
+  const toggleResultGridShortcut = useUiPreferencesStore((state) => state.toggleResultGridShortcut);
+  const formatQueryShortcut = useUiPreferencesStore((state) => state.formatQueryShortcut);
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
   const setShowServerTimeInStatusBar = useUiPreferencesStore((state) => state.setShowServerTimeInStatusBar);
   const setShowAutocommitInStatusBar = useUiPreferencesStore((state) => state.setShowAutocommitInStatusBar);
@@ -65,6 +73,14 @@ export default function ConfigurationDialog({
   const setCommandPaletteShortcut = useUiPreferencesStore((state) => state.setCommandPaletteShortcut);
   const setNewQueryTabShortcut = useUiPreferencesStore((state) => state.setNewQueryTabShortcut);
   const setCloseQueryTabShortcut = useUiPreferencesStore((state) => state.setCloseQueryTabShortcut);
+  const setRunQueryShortcut = useUiPreferencesStore((state) => state.setRunQueryShortcut);
+  const setNextQueryTabShortcut = useUiPreferencesStore((state) => state.setNextQueryTabShortcut);
+  const setPrevQueryTabShortcut = useUiPreferencesStore((state) => state.setPrevQueryTabShortcut);
+  const setDuplicateTabShortcut = useUiPreferencesStore((state) => state.setDuplicateTabShortcut);
+  const setSaveTabAsSqlShortcut = useUiPreferencesStore((state) => state.setSaveTabAsSqlShortcut);
+  const setToggleSidebarShortcut = useUiPreferencesStore((state) => state.setToggleSidebarShortcut);
+  const setToggleResultGridShortcut = useUiPreferencesStore((state) => state.setToggleResultGridShortcut);
+  const setFormatQueryShortcut = useUiPreferencesStore((state) => state.setFormatQueryShortcut);
   const connections = useConnectionsStore((state) => state.connections);
   const activeConnectionId = useConnectionsStore((state) => state.activeConnectionId);
   const favoriteConnectionId = useConnectionsStore((state) => state.favoriteConnectionId);
@@ -99,6 +115,14 @@ export default function ConfigurationDialog({
         commandPalette: commandPaletteShortcut,
         newQueryTab: newQueryTabShortcut,
         closeQueryTab: closeQueryTabShortcut,
+        runQuery: runQueryShortcut,
+        nextQueryTab: nextQueryTabShortcut,
+        prevQueryTab: prevQueryTabShortcut,
+        duplicateTab: duplicateTabShortcut,
+        saveTabAsSql: saveTabAsSqlShortcut,
+        toggleSidebar: toggleSidebarShortcut,
+        toggleResultGrid: toggleResultGridShortcut,
+        formatQuery: formatQueryShortcut,
       },
       startup: {
         favoriteConnectionId,
@@ -108,21 +132,29 @@ export default function ConfigurationDialog({
       closeQueryTabShortcut,
       commandPaletteShortcut,
       density,
+      duplicateTabShortcut,
       editorFontSize,
       formatOnSave,
+      formatQueryShortcut,
       autoCloseBrackets,
       locale,
       monacoThemeName,
       favoriteConnectionId,
       logsExpandedByDefault,
       newQueryTabShortcut,
+      nextQueryTabShortcut,
+      prevQueryTabShortcut,
       resultPageSize,
+      runQueryShortcut,
+      saveTabAsSqlShortcut,
       semanticBackgroundEnabled,
       showServerTimeInStatusBar,
       showAutocommitInStatusBar,
       sidebarCollapsed,
       sidebarWidth,
       themeId,
+      toggleResultGridShortcut,
+      toggleSidebarShortcut,
     ],
   );
 
@@ -210,6 +242,14 @@ export default function ConfigurationDialog({
     setCommandPaletteShortcut(nextConfig.shortcuts.commandPalette);
     setNewQueryTabShortcut(nextConfig.shortcuts.newQueryTab);
     setCloseQueryTabShortcut(nextConfig.shortcuts.closeQueryTab);
+    setRunQueryShortcut(nextConfig.shortcuts.runQuery);
+    setNextQueryTabShortcut(nextConfig.shortcuts.nextQueryTab);
+    setPrevQueryTabShortcut(nextConfig.shortcuts.prevQueryTab);
+    setDuplicateTabShortcut(nextConfig.shortcuts.duplicateTab);
+    setSaveTabAsSqlShortcut(nextConfig.shortcuts.saveTabAsSql);
+    setToggleSidebarShortcut(nextConfig.shortcuts.toggleSidebar);
+    setToggleResultGridShortcut(nextConfig.shortcuts.toggleResultGrid);
+    setFormatQueryShortcut(nextConfig.shortcuts.formatQuery);
     setFavoriteConnection(nextConfig.startup.favoriteConnectionId);
   };
 
@@ -287,9 +327,17 @@ export default function ConfigurationDialog({
     { section: 'workbench', label: t('sidebarWidth'), description: t('sidebarWidthDescription'), key: 'sidebarWidth' },
     { section: 'workbench', label: t('sidebarCollapsedOnStartup'), description: t('sidebarCollapsedOnStartupDescription'), key: 'sidebarCollapsed' },
     { section: 'workbench', label: t('logsExpandedByDefault'), description: t('logsExpandedByDefaultDescription'), key: 'logsExpanded' },
-    { section: 'shortcuts', label: t('commandPaletteLabel'), description: t('shortcutExampleCommandPalette'), key: 'commandPalette' },
-    { section: 'shortcuts', label: t('newQueryTabLabel'), description: t('shortcutExampleNewQueryTab'), key: 'newQueryTab' },
-    { section: 'shortcuts', label: t('closeQueryTabLabel'), description: t('shortcutExampleCloseQueryTab'), key: 'closeQueryTab' },
+    { section: 'shortcuts', label: t('commandPaletteLabel'), description: '', key: 'commandPalette' },
+    { section: 'shortcuts', label: t('newQueryTabLabel'), description: '', key: 'newQueryTab' },
+    { section: 'shortcuts', label: t('closeQueryTabLabel'), description: '', key: 'closeQueryTab' },
+    { section: 'shortcuts', label: t('runQueryLabel'), description: '', key: 'runQuery' },
+    { section: 'shortcuts', label: t('nextQueryTabLabel'), description: '', key: 'nextQueryTab' },
+    { section: 'shortcuts', label: t('prevQueryTabLabel'), description: '', key: 'prevQueryTab' },
+    { section: 'shortcuts', label: t('duplicateTabLabel'), description: '', key: 'duplicateTab' },
+    { section: 'shortcuts', label: t('saveTabAsSqlLabel'), description: '', key: 'saveTabAsSql' },
+    { section: 'shortcuts', label: t('toggleSidebarLabel'), description: '', key: 'toggleSidebar' },
+    { section: 'shortcuts', label: t('toggleResultGridLabel'), description: '', key: 'toggleResultGrid' },
+    { section: 'shortcuts', label: t('formatQueryLabel'), description: '', key: 'formatQuery' },
     { section: 'startup', label: t('favoriteConnection'), description: t('favoriteConnectionDescription'), key: 'favoriteConnection' },
   ];
 
@@ -709,49 +757,34 @@ export default function ConfigurationDialog({
                       ) : null}
 
                       {/* Shortcuts section */}
-                      {(!q || ['commandPalette','newQueryTab','closeQueryTab'].some(k => matchingKeys?.has(k))) && activeSection === 'shortcuts' ? (
+                      {(!q || ['commandPalette','newQueryTab','closeQueryTab','runQuery','nextQueryTab','prevQueryTab','duplicateTab','saveTabAsSql','toggleSidebar','toggleResultGrid','formatQuery'].some(k => matchingKeys?.has(k))) && activeSection === 'shortcuts' ? (
                         <SectionBlock title={t('globalShortcuts')}>
-                          {shouldShow('commandPalette') && (
-                            <SettingRow label={t('commandPaletteLabel')} description={t('shortcutExampleCommandPalette')}>
-                              <input
-                                value={draft.shortcuts.commandPalette}
-                                onChange={(event) =>
-                                  setDraft((current) => ({
-                                    ...current,
-                                    shortcuts: { ...current.shortcuts, commandPalette: event.target.value },
-                                  }))
-                                }
-                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                              />
-                            </SettingRow>
-                          )}
-                          {shouldShow('newQueryTab') && (
-                            <SettingRow label={t('newQueryTabLabel')} description={t('shortcutExampleNewQueryTab')}>
-                              <input
-                                value={draft.shortcuts.newQueryTab}
-                                onChange={(event) =>
-                                  setDraft((current) => ({
-                                    ...current,
-                                    shortcuts: { ...current.shortcuts, newQueryTab: event.target.value },
-                                  }))
-                                }
-                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                              />
-                            </SettingRow>
-                          )}
-                          {shouldShow('closeQueryTab') && (
-                            <SettingRow label={t('closeQueryTabLabel')} description={t('shortcutExampleCloseQueryTab')}>
-                              <input
-                                value={draft.shortcuts.closeQueryTab}
-                                onChange={(event) =>
-                                  setDraft((current) => ({
-                                    ...current,
-                                    shortcuts: { ...current.shortcuts, closeQueryTab: event.target.value },
-                                  }))
-                                }
-                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
-                              />
-                            </SettingRow>
+                          {([
+                            { key: 'runQuery', label: t('runQueryLabel'), field: 'runQuery' },
+                            { key: 'newQueryTab', label: t('newQueryTabLabel'), field: 'newQueryTab' },
+                            { key: 'closeQueryTab', label: t('closeQueryTabLabel'), field: 'closeQueryTab' },
+                            { key: 'nextQueryTab', label: t('nextQueryTabLabel'), field: 'nextQueryTab' },
+                            { key: 'prevQueryTab', label: t('prevQueryTabLabel'), field: 'prevQueryTab' },
+                            { key: 'duplicateTab', label: t('duplicateTabLabel'), field: 'duplicateTab' },
+                            { key: 'saveTabAsSql', label: t('saveTabAsSqlLabel'), field: 'saveTabAsSql' },
+                            { key: 'toggleSidebar', label: t('toggleSidebarLabel'), field: 'toggleSidebar' },
+                            { key: 'toggleResultGrid', label: t('toggleResultGridLabel'), field: 'toggleResultGrid' },
+                            { key: 'formatQuery', label: t('formatQueryLabel'), field: 'formatQuery' },
+                            { key: 'commandPalette', label: t('commandPaletteLabel'), field: 'commandPalette' },
+                          ] as Array<{ key: string; label: string; field: keyof SystemConfig['shortcuts'] }>).map(({ key, label, field }) =>
+                            shouldShow(key) ? (
+                              <SettingRow key={key} label={label} description="">
+                                <ShortcutInput
+                                  value={draft.shortcuts[field]}
+                                  onChange={(v) =>
+                                    setDraft((current) => ({
+                                      ...current,
+                                      shortcuts: { ...current.shortcuts, [field]: v },
+                                    }))
+                                  }
+                                />
+                              </SettingRow>
+                            ) : null
                           )}
                         </SectionBlock>
                       ) : null}
@@ -1036,6 +1069,14 @@ function normalizeJsonConfig(input: unknown): SystemConfig {
       commandPalette: normalizeShortcut(shortcuts.commandPalette, 'CmdOrCtrl+Shift+P'),
       newQueryTab: normalizeShortcut(shortcuts.newQueryTab, 'CmdOrCtrl+Alt+N'),
       closeQueryTab: normalizeShortcut(shortcuts.closeQueryTab, 'CmdOrCtrl+W'),
+      runQuery: normalizeShortcut(shortcuts.runQuery, 'CmdOrCtrl+Enter'),
+      nextQueryTab: normalizeShortcut(shortcuts.nextQueryTab, 'CmdOrCtrl+Alt+ArrowRight'),
+      prevQueryTab: normalizeShortcut(shortcuts.prevQueryTab, 'CmdOrCtrl+Alt+ArrowLeft'),
+      duplicateTab: normalizeShortcut(shortcuts.duplicateTab, 'CmdOrCtrl+Alt+D'),
+      saveTabAsSql: normalizeShortcut(shortcuts.saveTabAsSql, 'CmdOrCtrl+Shift+S'),
+      toggleSidebar: normalizeShortcut(shortcuts.toggleSidebar, 'CmdOrCtrl+B'),
+      toggleResultGrid: normalizeShortcut(shortcuts.toggleResultGrid, 'CmdOrCtrl+Shift+G'),
+      formatQuery: normalizeShortcut(shortcuts.formatQuery, 'CmdOrCtrl+Shift+L'),
     },
     startup: {
       favoriteConnectionId:
@@ -1083,4 +1124,136 @@ function normalizeSidebarWidth(value: unknown) {
 
 function normalizeShortcut(value: unknown, fallback: string) {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+// ---------- ShortcutInput ----------
+
+function ShortcutInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [recording, setRecording] = useState(false);
+  const [liveMods, setLiveMods] = useState<string[]>([]);
+  const ref = useRef<HTMLDivElement>(null);
+  const isMac = navigator.platform.toLowerCase().includes('mac');
+
+  useEffect(() => {
+    if (!recording) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.key === 'Escape') { setRecording(false); setLiveMods([]); return; }
+      if (e.key === 'Backspace' || e.key === 'Delete') { onChange(''); setRecording(false); setLiveMods([]); return; }
+
+      const mods: string[] = [];
+      if (e.metaKey || e.ctrlKey) mods.push('CmdOrCtrl');
+      if (e.shiftKey) mods.push('Shift');
+      if (e.altKey) mods.push('Alt');
+
+      if (['Meta', 'Control', 'Shift', 'Alt'].includes(e.key)) { setLiveMods(mods); return; }
+
+      const key = normalizeEventKey(e.key);
+      onChange([...mods, key].join('+'));
+      setRecording(false);
+      setLiveMods([]);
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (['Meta', 'Control', 'Shift', 'Alt'].includes(e.key)) {
+        const mods: string[] = [];
+        if (e.metaKey || e.ctrlKey) mods.push('CmdOrCtrl');
+        if (e.shiftKey) mods.push('Shift');
+        if (e.altKey) mods.push('Alt');
+        setLiveMods(mods);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+    };
+  }, [recording, onChange]);
+
+  useEffect(() => {
+    if (!recording) return;
+    const handler = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) { setRecording(false); setLiveMods([]); }
+    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [recording]);
+
+  const displayParts = recording && liveMods.length > 0
+    ? liveMods
+    : value
+      ? value.split('+').map(s => s.trim()).filter(Boolean)
+      : [];
+
+  return (
+    <div ref={ref} className="flex items-center gap-2">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setRecording(true)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setRecording(true); }}
+        className={`flex min-h-[34px] min-w-[180px] cursor-pointer select-none items-center gap-1 rounded-lg border px-3 py-1.5 transition-colors ${
+          recording
+            ? 'border-primary bg-primary/8 text-primary'
+            : 'border-border bg-background hover:border-primary/40'
+        }`}
+      >
+        {recording && liveMods.length === 0 ? (
+          <span className="text-[11px] text-muted/70 italic">Pressione as teclas…</span>
+        ) : displayParts.length > 0 ? (
+          displayParts.map((part, i) => (
+            <kbd key={i} className="rounded bg-border/70 px-1.5 py-0.5 font-mono text-[11px] leading-none text-text">
+              {formatKeyPart(part, isMac)}
+            </kbd>
+          ))
+        ) : (
+          <span className="text-[11px] text-muted/60">—</span>
+        )}
+      </div>
+      {value ? (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          className="text-muted/60 hover:text-muted"
+          title="Limpar atalho"
+        >
+          <X size={12} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function normalizeEventKey(key: string): string {
+  const map: Record<string, string> = {
+    ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown',
+    ' ': 'Space', Enter: 'Enter', Tab: 'Tab', Escape: 'Escape',
+  };
+  return map[key] ?? key;
+}
+
+function formatKeyPart(part: string, isMac: boolean): string {
+  switch (part.toLowerCase()) {
+    case 'cmdorctrl': return isMac ? '⌘' : 'Ctrl';
+    case 'cmd': return '⌘';
+    case 'ctrl': return isMac ? '⌃' : 'Ctrl';
+    case 'shift': return '⇧';
+    case 'alt': return isMac ? '⌥' : 'Alt';
+    case 'arrowleft': return '←';
+    case 'arrowright': return '→';
+    case 'arrowup': return '↑';
+    case 'arrowdown': return '↓';
+    case 'enter': return '↵';
+    case 'backspace': return '⌫';
+    case 'delete': return '⌦';
+    case 'escape': return 'Esc';
+    case 'space': return 'Space';
+    case 'tab': return '⇥';
+    default: return part.toUpperCase();
+  }
 }

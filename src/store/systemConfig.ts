@@ -22,6 +22,14 @@ export interface SystemConfig {
     commandPalette: string;
     newQueryTab: string;
     closeQueryTab: string;
+    runQuery: string;
+    nextQueryTab: string;
+    prevQueryTab: string;
+    duplicateTab: string;
+    saveTabAsSql: string;
+    toggleSidebar: string;
+    toggleResultGrid: string;
+    formatQuery: string;
   };
   startup: {
     favoriteConnectionId: string | null;
@@ -91,6 +99,14 @@ export function defaultSystemConfig(): SystemConfig {
       commandPalette: 'CmdOrCtrl+Shift+P',
       newQueryTab: 'CmdOrCtrl+Alt+N',
       closeQueryTab: 'CmdOrCtrl+W',
+      runQuery: 'CmdOrCtrl+Enter',
+      nextQueryTab: 'CmdOrCtrl+Alt+ArrowRight',
+      prevQueryTab: 'CmdOrCtrl+Alt+ArrowLeft',
+      duplicateTab: 'CmdOrCtrl+Alt+D',
+      saveTabAsSql: 'CmdOrCtrl+Shift+S',
+      toggleSidebar: 'CmdOrCtrl+B',
+      toggleResultGrid: 'CmdOrCtrl+Shift+G',
+      formatQuery: 'CmdOrCtrl+Shift+L',
     },
     startup: {
       favoriteConnectionId: null,
@@ -132,6 +148,14 @@ function normalizeSystemConfig(input: unknown): SystemConfig {
       commandPalette: normalizeShortcut(shortcuts.commandPalette, 'CmdOrCtrl+Shift+P'),
       newQueryTab: normalizeShortcut(shortcuts.newQueryTab, 'CmdOrCtrl+Alt+N'),
       closeQueryTab: normalizeShortcut(shortcuts.closeQueryTab, 'CmdOrCtrl+W'),
+      runQuery: normalizeShortcut(shortcuts.runQuery, 'CmdOrCtrl+Enter'),
+      nextQueryTab: normalizeShortcut(shortcuts.nextQueryTab, 'CmdOrCtrl+Alt+ArrowRight'),
+      prevQueryTab: normalizeShortcut(shortcuts.prevQueryTab, 'CmdOrCtrl+Alt+ArrowLeft'),
+      duplicateTab: normalizeShortcut(shortcuts.duplicateTab, 'CmdOrCtrl+Alt+D'),
+      saveTabAsSql: normalizeShortcut(shortcuts.saveTabAsSql, 'CmdOrCtrl+Shift+S'),
+      toggleSidebar: normalizeShortcut(shortcuts.toggleSidebar, 'CmdOrCtrl+B'),
+      toggleResultGrid: normalizeShortcut(shortcuts.toggleResultGrid, 'CmdOrCtrl+Shift+G'),
+      formatQuery: normalizeShortcut(shortcuts.formatQuery, 'CmdOrCtrl+Shift+L'),
     },
     startup: {
       favoriteConnectionId:

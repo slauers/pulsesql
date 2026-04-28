@@ -1163,6 +1163,22 @@ export default function QueryWorkspace() {
   }, [executeQuery]);
 
   useEffect(() => {
+    const handleRunQuery = () => { executeQueryRef.current(); };
+    const handleToggleGrid = () => { setResultsCollapsed((c) => !c); };
+    const handleFormatQuery = () => {
+      editorRef.current?.getAction('editor.action.formatDocument')?.run();
+    };
+    window.addEventListener('pulsesql:run-query', handleRunQuery);
+    window.addEventListener('pulsesql:toggle-result-grid', handleToggleGrid);
+    window.addEventListener('pulsesql:format-query', handleFormatQuery);
+    return () => {
+      window.removeEventListener('pulsesql:run-query', handleRunQuery);
+      window.removeEventListener('pulsesql:toggle-result-grid', handleToggleGrid);
+      window.removeEventListener('pulsesql:format-query', handleFormatQuery);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!pendingExecutionTabId || pendingExecutionTabId !== activeTabId) {
       return;
     }

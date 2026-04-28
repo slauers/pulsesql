@@ -22,6 +22,8 @@ function App() {
   const activeTabId = useQueriesStore((state) => state.activeTabId);
   const addTab = useQueriesStore((state) => state.addTab);
   const closeTab = useQueriesStore((state) => state.closeTab);
+  const setActiveTab = useQueriesStore((state) => state.setActiveTab);
+  const addTabWithContent = useQueriesStore((state) => state.addTabWithContent);
   const connections = useConnectionsStore((state) => state.connections);
   const activeConnectionId = useConnectionsStore((state) => state.activeConnectionId);
   const favoriteConnectionId = useConnectionsStore((state) => state.favoriteConnectionId);
@@ -36,6 +38,14 @@ function App() {
   const commandPaletteShortcut = useUiPreferencesStore((state) => state.commandPaletteShortcut);
   const newQueryTabShortcut = useUiPreferencesStore((state) => state.newQueryTabShortcut);
   const closeQueryTabShortcut = useUiPreferencesStore((state) => state.closeQueryTabShortcut);
+  const runQueryShortcut = useUiPreferencesStore((state) => state.runQueryShortcut);
+  const nextQueryTabShortcut = useUiPreferencesStore((state) => state.nextQueryTabShortcut);
+  const prevQueryTabShortcut = useUiPreferencesStore((state) => state.prevQueryTabShortcut);
+  const duplicateTabShortcut = useUiPreferencesStore((state) => state.duplicateTabShortcut);
+  const saveTabAsSqlShortcut = useUiPreferencesStore((state) => state.saveTabAsSqlShortcut);
+  const toggleSidebarShortcut = useUiPreferencesStore((state) => state.toggleSidebarShortcut);
+  const toggleResultGridShortcut = useUiPreferencesStore((state) => state.toggleResultGridShortcut);
+  const formatQueryShortcut = useUiPreferencesStore((state) => state.formatQueryShortcut);
   const runtimeStatus = useConnectionRuntimeStore((state) => state.runtimeStatus);
   const appendLog = useConnectionRuntimeStore((state) => state.appendLog);
   const setRuntimeStatus = useConnectionRuntimeStore((state) => state.setRuntimeStatus);
@@ -287,15 +297,71 @@ function App() {
 
       if (matchesShortcut(event, closeQueryTabShortcut)) {
         event.preventDefault();
-        if (activeTabId) {
-          closeTab(activeTabId);
-        }
+        if (activeTabId) closeTab(activeTabId);
+        return;
+      }
+
+      if (matchesShortcut(event, runQueryShortcut)) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('pulsesql:run-query'));
+        return;
+      }
+
+      if (matchesShortcut(event, nextQueryTabShortcut)) {
+        event.preventDefault();
+        const idx = tabs.findIndex(t => t.id === activeTabId);
+        if (idx >= 0 && idx < tabs.length - 1) setActiveTab(tabs[idx + 1].id);
+        return;
+      }
+
+      if (matchesShortcut(event, prevQueryTabShortcut)) {
+        event.preventDefault();
+        const idx = tabs.findIndex(t => t.id === activeTabId);
+        if (idx > 0) setActiveTab(tabs[idx - 1].id);
+        return;
+      }
+
+      if (matchesShortcut(event, duplicateTabShortcut)) {
+        event.preventDefault();
+        const activeTab = tabs.find(t => t.id === activeTabId);
+        if (activeTab) addTabWithContent(activeTab.content, activeTab.title, activeTab.connectionId);
+        return;
+      }
+
+      if (matchesShortcut(event, saveTabAsSqlShortcut)) {
+        event.preventDefault();
+        void handlersRef.current.saveActiveTabAsSql();
+        return;
+      }
+
+      if (matchesShortcut(event, toggleSidebarShortcut)) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('pulsesql:toggle-sidebar'));
+        return;
+      }
+
+      if (matchesShortcut(event, toggleResultGridShortcut)) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('pulsesql:toggle-result-grid'));
+        return;
+      }
+
+      if (matchesShortcut(event, formatQueryShortcut)) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('pulsesql:format-query'));
+        return;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTabId, addTab, closeQueryTabShortcut, closeTab, commandPaletteShortcut, newQueryTabShortcut]);
+  }, [
+    activeTabId, addTab, addTabWithContent, closeQueryTabShortcut, closeTab,
+    commandPaletteShortcut, duplicateTabShortcut, formatQueryShortcut,
+    newQueryTabShortcut, nextQueryTabShortcut, prevQueryTabShortcut,
+    runQueryShortcut, saveTabAsSqlShortcut, setActiveTab, tabs,
+    toggleResultGridShortcut, toggleSidebarShortcut,
+  ]);
 
   useEffect(() => {
     if (!isTauriRuntime()) {
