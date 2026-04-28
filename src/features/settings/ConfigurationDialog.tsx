@@ -343,30 +343,26 @@ export default function ConfigurationDialog({
         {/* Tab bar */}
         <div className="border-b border-border px-5 py-3">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveTab('form')}
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs ${
-                activeTab === 'form'
-                  ? 'border-primary/40 bg-primary/10 text-primary'
-                  : 'border-border text-muted hover:bg-border/30 hover:text-text'
-              }`}
-            >
-              <SlidersHorizontal size={13} />
-              {t('visual')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('json')}
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs ${
-                activeTab === 'json'
-                  ? 'border-primary/40 bg-primary/10 text-primary'
-                  : 'border-border text-muted hover:bg-border/30 hover:text-text'
-              }`}
-            >
-              <FileJson size={13} />
-              {t('json')}
-            </button>
+            {([
+              { id: 'form', Icon: SlidersHorizontal, label: t('visual') },
+              { id: 'json', Icon: FileJson, label: t('json') },
+            ] as const).map(({ id, Icon, label }) => {
+              const active = activeTab === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setActiveTab(id)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                    active ? '' : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                  }`}
+                  style={active ? { borderColor: ccBorder, background: ccBg, color: cc } : undefined}
+                >
+                  <Icon size={13} />
+                  {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
