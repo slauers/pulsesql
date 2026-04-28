@@ -13,7 +13,7 @@ interface ResultGridProps {
   }>;
   rows: any[];
   rowNumberOffset?: number;
-  density?: 'compact' | 'comfortable';
+  density?: 'compact' | 'comfortable' | 'spacious';
   onCellChange?: (colName: string, rowIndex: number, newValue: string | null, row: Record<string, unknown>) => void;
   pendingRowEdits?: Map<object, Record<string, string | null>>;
   pendingNewRows?: Record<string, unknown>[];
@@ -82,8 +82,8 @@ export default function ResultGrid({
     });
   };
 
-  const rowHeight = density === 'compact' ? 26 : 30;
-  const headerHeight = density === 'compact' ? 40 : 44;
+  const rowHeight = density === 'compact' ? 26 : density === 'spacious' ? 36 : 30;
+  const headerHeight = density === 'compact' ? 40 : density === 'spacious' ? 50 : 44;
   const allRows = [...sortedRows, ...(pendingNewRows ?? [])];
 
   const rowVirtualizer = useVirtualizer({

@@ -35,7 +35,7 @@ import TitleBar from './TitleBar';
 import { formatNumber, translate } from '../../i18n';
 
 const RECONNECT_DELAYS_MS = [800, 1600, 3200];
-const CONNECTION_MENU_WIDTH = 180;
+const CONNECTION_MENU_WIDTH = 220;
 
 type ConnectionContextMenuState = {
   x: number;
@@ -120,6 +120,7 @@ export default function ConnectionManager() {
   const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(new Set());
   const [exportSavedPath, setExportSavedPath] = useState<string | null>(null);
   const [removeConfirmConn, setRemoveConfirmConn] = useState<ConnectionConfig | null>(null);
+  const [contextMenuToast, setContextMenuToast] = useState<string | null>(null);
 
   const activeConnection =
     connections.find((connection) => connection.id === activeConnectionId) ?? null;
@@ -439,7 +440,19 @@ export default function ConnectionManager() {
       setConnectionState(conn.id, isRetry ? 'reconnecting' : 'connecting');
 
       try {
+        const connectStart = Date.now();
         await invoke('open_connection', { config: conn });
+        const latencyMs = Date.now() - connectStart;
+        const now = Date.now();
+
+        // Update lastConnectedAt and avgLatencyMs (rolling average of last 10)
+        const fresh = connections.find((c) => c.id === conn.id) ?? conn;
+        const prevAvg = fresh.avgLatencyMs;
+        const newAvg = prevAvg != null
+          ? Math.round(prevAvg * 0.9 + latencyMs * 0.1)
+          : latencyMs;
+        updateConnection({ ...fresh, lastConnectedAt: now, avgLatencyMs: newAvg });
+
         setConnectionState(conn.id, 'connected');
         initializeConnectionRuntime(conn.id, true);
         setAutocommitEnabled(conn.id, true);
@@ -875,10 +888,33 @@ export default function ConnectionManager() {
 
       {connectionContextMenu ? (
         <div
-          className="fixed z-[130] min-w-[180px] rounded-lg border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+          className="fixed z-[130] min-w-[220px] rounded-lg border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
           style={{ left: connectionContextMenu.x, top: connectionContextMenu.y }}
           onMouseDown={(event) => event.stopPropagation()}
         >
+          {/* Mini-header */}
+          {contextMenuConnection ? (
+            <div className="mb-1 flex items-center gap-2 rounded-lg px-3 py-2">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: getConnectionColor(connections, contextMenuConnection.id) }}
+              />
+              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-text">
+                {contextMenuConnection.name}
+              </span>
+              <span
+                className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-muted"
+                style={{ background: 'rgba(var(--bt-background-rgb),0.5)', border: '1px solid var(--bt-border)' }}
+              >
+                {contextMenuConnection.engine === 'oracle' ? 'ORA' : contextMenuConnection.engine === 'mysql' ? 'MY' : 'PG'}
+              </span>
+              <span className={`shrink-0 text-[10px] ${contextMenuState === 'connected' ? 'text-emerald-300' : 'text-muted/60'}`}>
+                {contextMenuState === 'connected' ? '● connected' : '○ disconnected'}
+              </span>
+            </div>
+          ) : null}
+          <div className="my-1 border-t border-border/50" />
+
           <button
             type="button"
             onClick={() => {
@@ -919,10 +955,67 @@ export default function ConnectionManager() {
               setEditingConnectionId(connectionContextMenu.connId);
               setShowForm(true);
             }}
+            className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+          >
+            <span className="flex items-center gap-2">
+              <FileText size={14} className="text-muted" />
+              {t('editConnection')}
+            </span>
+            <kbd className="font-mono text-[10px] text-muted/60">⌘E</kbd>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const conn = connections.find((item) => item.id === connectionContextMenu.connId);
+              setConnectionContextMenu(null);
+              if (conn) {
+                const cloned = {
+                  ...conn,
+                  id: crypto.randomUUID(),
+                  name: `${conn.name} (copy)`,
+                  createdAt: Date.now(),
+                  lastConnectedAt: undefined,
+                  avgLatencyMs: undefined,
+                  engineVersion: undefined,
+                };
+                addConnection(cloned);
+                setEditingConnectionId(cloned.id);
+                setShowForm(true);
+              }
+            }}
+            className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+          >
+            <span className="flex items-center gap-2">
+              <Copy size={14} className="text-muted" />
+              {t('duplicateConnection')}
+            </span>
+            <kbd className="font-mono text-[10px] text-muted/60">⌘D</kbd>
+          </button>
+          <div className="my-1 border-t border-border/50" />
+          <button
+            type="button"
+            onClick={() => {
+              const conn = connections.find((item) => item.id === connectionContextMenu.connId);
+              setConnectionContextMenu(null);
+              if (conn) {
+                let str = '';
+                if (conn.engine === 'oracle') {
+                  str = `jdbc:oracle:thin:@${conn.host}:${conn.port}:${conn.database}`;
+                } else if (conn.engine === 'mysql') {
+                  str = `mysql://${conn.user}:***@${conn.host}:${conn.port}/${conn.database}`;
+                } else {
+                  str = `postgres://${conn.user}:***@${conn.host}:${conn.port}/${conn.database}`;
+                }
+                void clipboardWriteText(str).then(() => {
+                  setContextMenuToast(t('connectionStringCopied'));
+                  window.setTimeout(() => setContextMenuToast(null), 2000);
+                });
+              }
+            }}
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
           >
-            <FileText size={14} className="text-muted" />
-            <span>{t('editConnection')}</span>
+            <Copy size={14} className="text-muted" />
+            <span>{t('copyConnectionString')}</span>
           </button>
           <button
             type="button"
@@ -933,7 +1026,7 @@ export default function ConnectionManager() {
             }}
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
           >
-            <Copy size={14} className="text-muted" />
+            <FileText size={14} className="text-muted" />
             <span>{t('technicalHistory')}</span>
           </button>
           <button
@@ -945,15 +1038,18 @@ export default function ConnectionManager() {
                 void disconnectConnection(conn);
               }
             }}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+            className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
           >
-            <PlugZap size={14} className="text-muted" />
-            <span>{t('disconnect')}</span>
+            <span className="flex items-center gap-2">
+              <PlugZap size={14} className="text-muted" />
+              {t('disconnect')}
+            </span>
+            <kbd className="font-mono text-[10px] text-muted/60">⌘⇧D</kbd>
           </button>
           {contextMenuConnection ? (
             <div className="px-3 py-2">
               <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
-                Cor
+                Color
               </div>
               <ConnectionColorQuickActions
                 connection={contextMenuConnection}
@@ -1121,6 +1217,15 @@ export default function ConnectionManager() {
           </div>
         </div>,
         document.body
+      ) : null}
+
+      {contextMenuToast ? (
+        <div
+          className="fixed bottom-12 left-1/2 z-[250] -translate-x-1/2 rounded-lg border border-border/80 bg-surface/95 px-4 py-2 text-xs text-text shadow-[0_8px_32px_rgba(0,0,0,0.4)] backdrop-blur-xl"
+          style={{ pointerEvents: 'none' }}
+        >
+          {contextMenuToast}
+        </div>
       ) : null}
 
       <div
