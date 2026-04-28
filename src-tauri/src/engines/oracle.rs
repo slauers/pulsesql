@@ -77,6 +77,7 @@ struct OracleRequest<'a> {
     query: Option<&'a str>,
     page: Option<u32>,
     page_size: Option<u32>,
+    known_total_rows: Option<u64>,
     schema: Option<&'a str>,
     table: Option<&'a str>,
 }
@@ -109,23 +110,23 @@ pub fn create_handle(
 }
 
 pub async fn test_connection(handle: &OracleConnectionHandle) -> Result<(), String> {
-    invoke_sidecar("test", handle, None, None, None, None, None).map(|_| ())
+    invoke_sidecar("test", handle, None, None, None, None, None, None).map(|_| ())
 }
 
 pub async fn open_connection(
     handle: &OracleConnectionHandle,
 ) -> Result<OracleConnectionHandle, String> {
-    invoke_sidecar("open", handle, None, None, None, None, None)?;
+    invoke_sidecar("open", handle, None, None, None, None, None, None)?;
     Ok(handle.clone())
 }
 
 pub async fn list_databases(handle: &OracleConnectionHandle) -> Result<Vec<String>, String> {
-    let response = invoke_sidecar("listDatabases", handle, None, None, None, None, None)?;
+    let response = invoke_sidecar("listDatabases", handle, None, None, None, None, None, None)?;
     Ok(response.items.unwrap_or_default())
 }
 
 pub async fn list_schemas(handle: &OracleConnectionHandle) -> Result<Vec<String>, String> {
-    let response = invoke_sidecar("listSchemas", handle, None, None, None, None, None)?;
+    let response = invoke_sidecar("listSchemas", handle, None, None, None, None, None, None)?;
     Ok(response.items.unwrap_or_default())
 }
 
@@ -133,7 +134,7 @@ pub async fn list_tables(
     handle: &OracleConnectionHandle,
     schema: &str,
 ) -> Result<Vec<String>, String> {
-    let response = invoke_sidecar("listTables", handle, None, None, None, Some(schema), None)?;
+    let response = invoke_sidecar("listTables", handle, None, None, None, None, Some(schema), None)?;
     Ok(response.items.unwrap_or_default())
 }
 
@@ -142,7 +143,7 @@ pub async fn list_columns(
     schema: &str,
     table: &str,
 ) -> Result<Vec<ColumnDef>, String> {
-    let response = invoke_sidecar("listColumns", handle, None, None, None, Some(schema), Some(table))?;
+    let response = invoke_sidecar("listColumns", handle, None, None, None, None, Some(schema), Some(table))?;
     Ok(response.column_defs.unwrap_or_default())
 }
 
@@ -151,6 +152,7 @@ pub async fn execute_query(
     query: &str,
     page: Option<u32>,
     page_size: Option<u32>,
+    known_total_rows: Option<u64>,
 ) -> Result<QueryResult, String> {
     let started_at = Instant::now();
     let sidecar_started = Instant::now();
@@ -160,6 +162,7 @@ pub async fn execute_query(
         Some(query),
         page,
         page_size,
+        known_total_rows,
         None,
         None,
     )?;
@@ -186,6 +189,30 @@ pub async fn execute_query(
         has_more: response.has_more,
         diagnostics,
     })
+}
+
+pub async fn count_query(handle: &OracleConnectionHandle, query: &str) -> Result<(u64, Vec<String>), String> {
+    let sidecar_started = Instant::now();
+    let response = invoke_sidecar(
+        "countQuery",
+        handle,
+        Some(query),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+    let mut diagnostics = response.diagnostics.unwrap_or_default();
+    diagnostics.push(format!(
+        "[oracle] count_sidecar_roundtrip_ms: {}",
+        sidecar_started.elapsed().as_millis()
+    ));
+
+    response
+        .total_rows
+        .map(|total_rows| (total_rows, diagnostics))
+        .ok_or_else(|| "Oracle count query did not return total_rows.".to_string())
 }
 
 pub fn sidecar_root() -> Result<PathBuf, String> {
@@ -217,6 +244,7 @@ fn invoke_sidecar(
     query: Option<&str>,
     page: Option<u32>,
     page_size: Option<u32>,
+    known_total_rows: Option<u64>,
     schema: Option<&str>,
     table: Option<&str>,
 ) -> Result<OracleSuccessResponse, String> {
@@ -244,6 +272,7 @@ fn invoke_sidecar(
         query,
         page,
         page_size,
+        known_total_rows,
         schema,
         table,
     };

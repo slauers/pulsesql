@@ -101,6 +101,13 @@ pub struct ExecuteQueryPayload {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct CountQueryPayload {
+    pub total_rows: u64,
+    pub execution_time: u64,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ServerTimePayload {
     pub value: String,
 }
@@ -421,6 +428,56 @@ pub fn execute_query(
 }
 
 #[tauri::command]
+pub fn count_query(
+    state: tauri::State<'_, DbState>,
+    conn_id: String,
+    query: String,
+) -> Result<CountQueryPayload, String> {
+    tauri::async_runtime::block_on(async {
+        let started_at = Instant::now();
+        let pool = {
+            let connections = state.connections.lock().await;
+            let connection = connections
+                .get(&conn_id)
+                .ok_or_else(|| "Connection not found".to_string())?;
+
+            if !connection.autocommit_enabled && !matches!(connection.pool, ConnectionPool::Oracle(_)) {
+                return Err("Background count is not available while autocommit is OFF.".to_string());
+            }
+
+            connection_pool_from_managed(connection)
+        };
+
+        let mut diagnostics = Vec::new();
+        let count_started = Instant::now();
+        let total_rows = match pool {
+            ConnectionPool::Postgres(pool) => postgres::count_query(&pool, &query).await?,
+            ConnectionPool::Mysql(pool) => mysql::count_query(&pool, &query).await?,
+            ConnectionPool::Oracle(handle) => {
+                let (total_rows, oracle_diagnostics) = oracle::count_query(&handle, &query).await?;
+                diagnostics.extend(oracle_diagnostics);
+                total_rows
+            }
+        };
+        diagnostics.push(format!(
+            "[db] count_query engine_ms: {}",
+            count_started.elapsed().as_millis()
+        ));
+        diagnostics.push(format!("[db] count_query total_rows: {total_rows}"));
+        diagnostics.push(format!(
+            "[db] count_query total command: {}ms",
+            started_at.elapsed().as_millis()
+        ));
+
+        Ok(CountQueryPayload {
+            total_rows,
+            execution_time: started_at.elapsed().as_millis() as u64,
+            diagnostics,
+        })
+    })
+}
+
+#[tauri::command]
 pub fn set_connection_autocommit(
     state: tauri::State<'_, DbState>,
     conn_id: String,
@@ -465,7 +522,7 @@ pub async fn get_server_time(
         ConnectionPool::Postgres(pool) => postgres::execute_query(&pool, query, None, None, None).await,
         ConnectionPool::Mysql(pool) => mysql::execute_query(&pool, query, None, None, None).await,
         ConnectionPool::Oracle(connection) => {
-            oracle::execute_query(&connection, query, None, None).await
+            oracle::execute_query(&connection, query, None, None, None).await
         }
     }?;
 
@@ -514,7 +571,7 @@ async fn execute_query_on_managed_connection(
                 mysql::execute_query(&pool, query, page, page_size, known_total_rows).await
             }
             ConnectionPool::Oracle(handle) => {
-                oracle::execute_query(&handle, query, page, page_size).await
+                oracle::execute_query(&handle, query, page, page_size, known_total_rows).await
             }
         }?;
 
@@ -584,7 +641,7 @@ async fn execute_manual_transaction_query(
                     mysql::execute_query(pool, query, page, page_size, known_total_rows).await
                 }
                 ConnectionPool::Oracle(handle) => {
-                    oracle::execute_query(handle, query, page, page_size).await
+                    oracle::execute_query(handle, query, page, page_size, known_total_rows).await
                 }
             },
         },
