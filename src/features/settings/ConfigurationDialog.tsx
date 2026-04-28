@@ -246,13 +246,13 @@ export default function ConfigurationDialog({
 
   const t = (key: Parameters<typeof translate>[1]) => translate(locale, key);
 
-  const navItems: Array<{ id: ConfigSection; label: string }> = [
-    { id: 'interface', label: t('interfaceSection') },
-    { id: 'editor', label: t('editorSection') },
-    { id: 'workbench', label: t('workbench') },
-    { id: 'shortcuts', label: t('globalShortcuts') },
-    { id: 'startup', label: t('startup') },
-    { id: 'advanced', label: t('advancedSection') },
+  const navItems: Array<{ id: ConfigSection; label: string; icon: string }> = [
+    { id: 'interface', label: t('interfaceSection'), icon: '🎨' },
+    { id: 'editor', label: t('editorSection'), icon: '✏️' },
+    { id: 'workbench', label: t('workbench'), icon: '⊞' },
+    { id: 'shortcuts', label: t('globalShortcuts'), icon: '⌘' },
+    { id: 'startup', label: t('startup'), icon: '⚡' },
+    { id: 'advanced', label: t('advancedSection'), icon: '⚙️' },
   ];
 
   // All settings rows with their section, label, and description for search filtering
@@ -261,8 +261,8 @@ export default function ConfigurationDialog({
     { section: 'interface', label: t('language'), description: t('languageDescription'), key: 'language' },
     { section: 'interface', label: t('theme'), description: t('themeDescription'), key: 'theme' },
     { section: 'interface', label: t('density'), description: t('densityDescription'), key: 'density' },
-    { section: 'interface', label: t('semanticBackground'), description: t('semanticBackgroundDescription'), key: 'semanticBackground' },
     { section: 'interface', label: t('rowsPerPage'), description: t('rowsPerPageDescription'), key: 'rowsPerPage' },
+    { section: 'interface', label: t('semanticBackground'), description: t('semanticBackgroundDescription'), key: 'semanticBackground' },
     { section: 'interface', label: t('showServerTimeInStatusBar'), description: t('showServerTimeInStatusBarDescription'), key: 'showServerTime' },
     { section: 'interface', label: t('showAutocommitInStatusBar'), description: t('showAutocommitInStatusBarDescription'), key: 'showAutocommit' },
     { section: 'editor', label: t('monacoThemeName'), description: t('monacoThemeNameDescription'), key: 'monacoTheme' },
@@ -366,7 +366,30 @@ export default function ConfigurationDialog({
         {/* Content */}
         <div className="min-h-0 flex-1 overflow-hidden">
           {activeTab === 'form' ? (
-            <div className="flex h-full">
+            <div className="flex h-full flex-col">
+              {/* Search bar — full width above sidebar + content */}
+              <div className="border-b border-border/50 px-4 py-2.5">
+                <div className="relative">
+                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted/50 pointer-events-none" />
+                  <input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search settings…"
+                    className="w-full rounded-lg border border-border/50 bg-background/30 py-2 pl-8 pr-8 text-xs text-text placeholder:text-muted/40 outline-none focus:border-primary/40 focus:bg-background/50"
+                  />
+                  {searchQuery ? (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted/50 hover:text-text"
+                    >
+                      <X size={12} />
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="flex min-h-0 flex-1">
               {/* Left nav sidebar */}
               <div className="w-44 shrink-0 border-r border-border/60 overflow-y-auto py-3 px-2">
                 <nav className="space-y-0.5">
@@ -375,12 +398,13 @@ export default function ConfigurationDialog({
                       key={item.id}
                       type="button"
                       onClick={() => handleSectionChange(item.id)}
-                      className={`w-full rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
                         activeSection === item.id
-                          ? 'bg-primary/12 text-primary'
-                          : 'text-muted hover:bg-background/40 hover:text-text'
+                          ? 'bg-background/60 text-text shadow-sm'
+                          : 'text-muted hover:bg-background/30 hover:text-text'
                       }`}
                     >
+                      <span className="shrink-0 opacity-70">{item.icon}</span>
                       {item.label}
                     </button>
                   ))}
@@ -389,28 +413,6 @@ export default function ConfigurationDialog({
 
               {/* Section content */}
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                {/* Search bar */}
-                <div className="border-b border-border/50 px-4 py-2.5">
-                  <div className="relative">
-                    <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted/60 pointer-events-none" />
-                    <input
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search settings…"
-                      className="w-full rounded-lg border border-border/60 bg-background/40 py-1.5 pl-8 pr-8 text-xs text-text placeholder:text-muted/50 outline-none focus:border-primary/50"
-                    />
-                    {searchQuery ? (
-                      <button
-                        type="button"
-                        onClick={() => setSearchQuery('')}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted/60 hover:text-text"
-                      >
-                        <X size={12} />
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-
                 <div className="flex-1 overflow-auto p-5">
                   {q && matchingKeys && matchingKeys.size === 0 ? (
                     <div className="flex items-center justify-center py-12 text-sm text-muted/60">
@@ -475,19 +477,6 @@ export default function ConfigurationDialog({
                               />
                             </SettingRow>
                           )}
-                          {shouldShow('semanticBackground') && (
-                            <ToggleRow
-                              label={t('semanticBackground')}
-                              description={t('semanticBackgroundDescription')}
-                              checked={draft.ui.semanticBackgroundEnabled}
-                              onChange={(checked) =>
-                                setDraft((current) => ({
-                                  ...current,
-                                  ui: { ...current.ui, semanticBackgroundEnabled: checked },
-                                }))
-                              }
-                            />
-                          )}
                           {shouldShow('rowsPerPage') && (
                             <SettingRow label={t('rowsPerPage')} description={t('rowsPerPageDescription')}>
                               <input
@@ -506,37 +495,52 @@ export default function ConfigurationDialog({
                             </SettingRow>
                           )}
                           {/* Status Bar sub-section */}
-                          {(shouldShow('showServerTime') || shouldShow('showAutocommit')) && (
-                            <div className="mt-4">
-                              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/70">
+                          {(shouldShow('semanticBackground') || shouldShow('showServerTime') || shouldShow('showAutocommit')) && (
+                            <div className="mt-2 rounded-lg border border-border/50 bg-background/18 p-3">
+                              <div className="mb-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/60">
                                 {t('statusBarSection')}
                               </div>
-                              {shouldShow('showServerTime') && (
-                                <ToggleRow
-                                  label={t('showServerTimeInStatusBar')}
-                                  description={t('showServerTimeInStatusBarDescription')}
-                                  checked={draft.ui.showServerTimeInStatusBar}
-                                  onChange={(checked) =>
-                                    setDraft((current) => ({
-                                      ...current,
-                                      ui: { ...current.ui, showServerTimeInStatusBar: checked },
-                                    }))
-                                  }
-                                />
-                              )}
-                              {shouldShow('showAutocommit') && (
-                                <ToggleRow
-                                  label={t('showAutocommitInStatusBar')}
-                                  description={t('showAutocommitInStatusBarDescription')}
-                                  checked={draft.ui.showAutocommitInStatusBar}
-                                  onChange={(checked) =>
-                                    setDraft((current) => ({
-                                      ...current,
-                                      ui: { ...current.ui, showAutocommitInStatusBar: checked },
-                                    }))
-                                  }
-                                />
-                              )}
+                              <div className="space-y-2">
+                                {shouldShow('semanticBackground') && (
+                                  <ToggleRow
+                                    label={t('semanticBackground')}
+                                    description={t('semanticBackgroundDescription')}
+                                    checked={draft.ui.semanticBackgroundEnabled}
+                                    onChange={(checked) =>
+                                      setDraft((current) => ({
+                                        ...current,
+                                        ui: { ...current.ui, semanticBackgroundEnabled: checked },
+                                      }))
+                                    }
+                                  />
+                                )}
+                                {shouldShow('showServerTime') && (
+                                  <ToggleRow
+                                    label={t('showServerTimeInStatusBar')}
+                                    description={t('showServerTimeInStatusBarDescription')}
+                                    checked={draft.ui.showServerTimeInStatusBar}
+                                    onChange={(checked) =>
+                                      setDraft((current) => ({
+                                        ...current,
+                                        ui: { ...current.ui, showServerTimeInStatusBar: checked },
+                                      }))
+                                    }
+                                  />
+                                )}
+                                {shouldShow('showAutocommit') && (
+                                  <ToggleRow
+                                    label={t('showAutocommitInStatusBar')}
+                                    description={t('showAutocommitInStatusBarDescription')}
+                                    checked={draft.ui.showAutocommitInStatusBar}
+                                    onChange={(checked) =>
+                                      setDraft((current) => ({
+                                        ...current,
+                                        ui: { ...current.ui, showAutocommitInStatusBar: checked },
+                                      }))
+                                    }
+                                  />
+                                )}
+                              </div>
                             </div>
                           )}
                         </SectionBlock>
@@ -736,6 +740,7 @@ export default function ConfigurationDialog({
                   )}
                 </div>
               </div>
+              </div>{/* end flex min-h-0 flex-1 */}
             </div>
           ) : (
             <div className="flex h-full flex-col">
@@ -833,18 +838,46 @@ function ToggleRow({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
+    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
       <div>
         <div className="text-sm text-text">{label}</div>
         <div className="text-xs text-muted">{description}</div>
       </div>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        className="accent-primary"
-      />
+      <ToggleSwitch checked={checked} onChange={onChange} />
     </label>
+  );
+}
+
+function ToggleSwitch({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="relative shrink-0 rounded-full transition-colors duration-200 focus:outline-none"
+      style={{
+        width: 36,
+        height: 20,
+        background: checked ? 'var(--bt-primary)' : 'var(--bt-border)',
+      }}
+    >
+      <span
+        className="absolute top-0.5 rounded-full bg-white shadow-sm transition-transform duration-200"
+        style={{
+          width: 16,
+          height: 16,
+          left: 2,
+          transform: checked ? 'translateX(16px)' : 'translateX(0)',
+        }}
+      />
+    </button>
   );
 }
 
@@ -858,17 +891,17 @@ function DensitySegmentedControl({
   options: Array<{ value: string; label: string }>;
 }) {
   return (
-    <div className="flex rounded-lg border border-border overflow-hidden">
-      {options.map((option, index) => (
+    <div className="flex gap-1 rounded-lg border border-border/60 bg-background/40 p-1">
+      {options.map((option) => (
         <button
           key={option.value}
           type="button"
           onClick={() => onChange(option.value as 'compact' | 'comfortable' | 'spacious')}
-          className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+          className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all duration-150 ${
             value === option.value
-              ? 'bg-primary/18 text-primary'
-              : 'text-muted hover:bg-background/40 hover:text-text'
-          } ${index > 0 ? 'border-l border-border' : ''}`}
+              ? 'bg-surface shadow-sm text-text'
+              : 'text-muted hover:text-text'
+          }`}
         >
           {option.label}
         </button>

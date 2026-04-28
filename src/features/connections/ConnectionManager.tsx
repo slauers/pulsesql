@@ -924,9 +924,9 @@ export default function ConnectionManager() {
               }
             }}
             disabled={contextMenuState === 'connecting' || contextMenuState === 'reconnecting'}
-            className="mb-1 flex w-full items-center gap-2 rounded-lg border border-emerald-400/35 bg-emerald-400/14 px-3 py-2 text-sm font-medium text-emerald-200 transition-colors hover:bg-emerald-400/22 disabled:cursor-not-allowed disabled:opacity-45"
+            className="mb-1 flex w-full items-center gap-2 rounded-lg border border-primary/35 bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/18 disabled:cursor-not-allowed disabled:opacity-45"
           >
-            <Plug size={14} className="text-emerald-300" />
+            <Plug size={14} className="text-primary" />
             <span>
               {contextMenuState === 'connected'
                 ? t('reconnectAction')

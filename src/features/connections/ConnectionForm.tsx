@@ -189,9 +189,16 @@ export default function ConnectionForm({
     <div className="h-full overflow-auto p-3 md:p-4">
       <div className="mx-auto max-w-3xl">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="bg-gradient-to-r from-primary to-blue-300 bg-clip-text text-xl font-bold text-transparent">
-          {initialConnection ? 'Edit Connection' : 'New Connection'}
-        </h2>
+        <div>
+          <h2 className="bg-gradient-to-r from-primary to-blue-300 bg-clip-text text-xl font-bold text-transparent">
+            {initialConnection ? 'Edit Connection' : 'New Connection'}
+          </h2>
+          {initialConnection ? (
+            <p className="mt-0.5 text-xs text-muted/70">
+              {buildConnectionSubtitle(initialConnection)}
+            </p>
+          ) : null}
+        </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -812,6 +819,16 @@ function extractRawErrorMessage(error: unknown): string {
   }
 
   return 'Erro desconhecido ao testar a conexao.';
+}
+
+function buildConnectionSubtitle(conn: ConnectionConfig): string {
+  const parts: string[] = [];
+  if (conn.engine === 'oracle') parts.push('Oracle');
+  else if (conn.engine === 'mysql') parts.push('MySQL');
+  else parts.push('PostgreSQL');
+  if (conn.ssh?.enabled) parts.push('SSH');
+  if (conn.name) parts.push(conn.name);
+  return parts.join(' · ');
 }
 
 function MetaItem({ label, value }: { label: string; value: string }) {
