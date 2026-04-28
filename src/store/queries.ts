@@ -18,6 +18,7 @@ interface QueriesState {
   setTabConnection: (id: string, connectionId: string | null) => void;
   reorderTab: (fromIndex: number, toIndex: number) => void;
   closeTab: (id: string) => void;
+  closeOtherTabs: (id: string) => void;
   setActiveTab: (id: string) => void;
   requestTabExecution: (id: string) => void;
   clearPendingExecution: () => void;
@@ -140,6 +141,13 @@ export const useQueriesStore = create<QueriesState>((set) => ({
       newActiveId = newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null;
     }
     const next = ensureQueriesState({ tabs: newTabs, activeTabId: newActiveId });
+    writeQueriesState(next);
+    return next;
+  }),
+
+  closeOtherTabs: (id) => set((state) => {
+    const newTabs = state.tabs.filter(t => t.id === id);
+    const next = ensureQueriesState({ tabs: newTabs, activeTabId: id });
     writeQueriesState(next);
     return next;
   }),
