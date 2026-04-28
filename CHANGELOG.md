@@ -2,6 +2,53 @@
 
 All notable changes to PulseSQL are documented here.
 
+## [0.2.7] - 2026-04-28
+
+### Fixed
+
+- Grid: clicar em uma célula limpa a seleção de linha e vice-versa
+- Grid: executar a query novamente reseta imediatamente célula e linha selecionadas
+
+## [0.2.6] - 2026-04-28
+
+### Added
+
+- Aba ativa destacada com a cor da conexão (fundo + bordas com transparência)
+- Botão Run sem legenda `⌘↵`
+
+### Changed
+
+- ConnectionForm: layout fixo com header/footer pinados e corpo com scroll
+- ConnectionForm: renderizado como dialog modal via portal — QueryWorkspace sempre visível
+- ConnectionForm: cor da conexão aplicada em todo o formulário (bordas, SSH, badges, botões)
+- ConnectionForm: seção SSH redesenhada com toggle ENABLED/DISABLED e card colorido
+- ConnectionForm: timeout + reconexão em linha única; botão "Save as new" e metadata strip
+- ConfigurationDialog: sidebar de navegação com ícones Lucide e cor da conexão ativa
+- ConfigurationDialog: cor da conexão ativa no cabeçalho, nav, toggles e botão Salvar
+- ConfigurationDialog: tabs Visual/JSON como segmented control com ícones
+- ConfigurationDialog: aba Editor com Format on save (Cmd+S) e Auto-close brackets
+- ConfigurationDialog: aviso de funcionalidades em preview no rodapé
+
+## [0.2.5] - 2026-04-28
+
+### Added
+
+- Diagnósticos de performance por engine: `prepare_ms`, `count_ms`, `data_ms`, `serialize_ms`, `payload_bytes` visíveis no log técnico
+- Grid: seleção de célula com clique simples; setas navegam; `Cmd/Ctrl+C` copia
+- Grid: range selection com `Shift+click` e `Shift+seta`; `Cmd+A` seleciona tudo; copia como TSV
+- Grid: renderização por tipo — números à direita, datas formatadas, boolean com chip, JSON em âmbar, null discreto
+- Grid: painel de detalhe com valor completo, cópia e edição
+- Grid: menu de coluna — ordenar, copiar nome, autoajustar largura, fixar, ocultar, filtro local
+- Grid: colunas fixadas e ocultas persistidas em localStorage por layout
+- Toolbar do resultado reorganizada em grupos visuais
+
+### Changed
+
+- `COUNT(*)` removido do caminho crítico: primeira página de SELECT/WITH responde com uma única operação SQL
+- Contagem total agora ocorre em background (`count_query`) — UI atualiza quando disponível
+- Oracle: conexão JDBC persistente por sessão — sem reconexão por query
+- Oracle: chamadas ao sidecar rodam via `spawn_blocking` sem bloquear workers do Tauri
+
 ## [0.1.15] - 2026-04-22
 
 ### Added
