@@ -110,6 +110,13 @@ pub struct CountQueryPayload {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct CancelQueryPayload {
+    pub execution_id: String,
+    pub cancelled: bool,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ServerTimePayload {
     pub value: String,
 }
@@ -476,6 +483,18 @@ pub fn count_query(
             execution_time: started_at.elapsed().as_millis() as u64,
             diagnostics,
         })
+    })
+}
+
+#[tauri::command]
+pub fn cancel_query(execution_id: String) -> Result<CancelQueryPayload, String> {
+    Ok(CancelQueryPayload {
+        execution_id: execution_id.clone(),
+        cancelled: true,
+        diagnostics: vec![
+            format!("[db] cancel_query execution_id: {execution_id}"),
+            "[db] cancel_query mode: frontend_result_ignore".into(),
+        ],
     })
 }
 

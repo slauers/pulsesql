@@ -296,6 +296,7 @@ pub fn run() {
             db::list_columns,
             db::execute_query,
             db::count_query,
+            db::cancel_query,
             db::set_connection_autocommit,
             db::get_server_time,
             db::list_query_history,
