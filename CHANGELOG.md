@@ -2,6 +2,21 @@
 
 All notable changes to PulseSQL are documented here.
 
+## [0.2.8] - 2026-04-28
+
+### Added
+
+- Abas: menu de contexto com botão direito — Nova Aba, Duplicar Aba, Fechar Aba, Fechar Todas as Outras
+
+### Changed
+
+- Botão de atualização disponível redesenhado como pill com indicador pulsante — mais visível no topo da janela
+- Aba ativa destacada com a cor da conexão (fundo + bordas com transparência)
+
+### Removed
+
+- Legenda `⌘↵` removida do botão Run
+
 ## [0.2.7] - 2026-04-28
 
 ### Fixed
