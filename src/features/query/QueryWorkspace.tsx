@@ -975,6 +975,17 @@ export default function QueryWorkspace() {
     startExecutionFeedback,
   ]);
 
+  const saveTabAsSql = useCallback(async (id: string) => {
+    const tab = tabs.find(t => t.id === id);
+    if (!tab) return;
+    const filename = `${tab.title.replace(/[/\\?%*:|"<>]/g, '_')}.sql`;
+    try {
+      await invoke('save_connections_export', { content: tab.content, filename });
+    } catch {
+      // silently ignore — user will notice nothing was saved
+    }
+  }, [tabs]);
+
   const openHistoryInNewTab = useCallback((item: QueryHistoryItem) => {
     addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId);
   }, [addTabWithContent]);
@@ -2548,6 +2559,7 @@ export default function QueryWorkspace() {
             const tab = tabs.find(t => t.id === id);
             if (tab) addTabWithContent(tab.content, tab.title, tab.connectionId);
           }}
+          onSaveAsSql={(id) => void saveTabAsSql(id)}
           onCloseTab={(id) => closeTab(id)}
           onCloseOtherTabs={(id) => closeOtherTabs(id)}
         />,
@@ -3516,6 +3528,7 @@ interface TabContextMenuProps {
   onClose: () => void;
   onNewTab: () => void;
   onDuplicateTab: (id: string) => void;
+  onSaveAsSql: (id: string) => void;
   onCloseTab: (id: string) => void;
   onCloseOtherTabs: (id: string) => void;
 }
@@ -3528,6 +3541,7 @@ function TabContextMenu({
   onClose,
   onNewTab,
   onDuplicateTab,
+  onSaveAsSql,
   onCloseTab,
   onCloseOtherTabs,
 }: TabContextMenuProps) {
@@ -3549,7 +3563,7 @@ function TabContextMenu({
   }, [onClose]);
 
   const menuX = Math.min(x, window.innerWidth - 200);
-  const menuY = Math.min(y, window.innerHeight - 180);
+  const menuY = Math.min(y, window.innerHeight - 210);
 
   const item = (label: string, action: () => void, disabled = false) => (
     <button
@@ -3566,12 +3580,14 @@ function TabContextMenu({
   return (
     <div
       ref={ref}
-      className="fixed z-[200] w-48 overflow-hidden rounded-xl border border-border/80 bg-surface/98 py-1 shadow-[0_16px_48px_rgba(0,0,0,0.45)] backdrop-blur-sm"
+      className="fixed z-[200] w-52 overflow-hidden rounded-xl border border-border/80 bg-surface/98 py-1 shadow-[0_16px_48px_rgba(0,0,0,0.45)] backdrop-blur-sm"
       style={{ top: menuY, left: menuX }}
       onMouseDown={(e) => e.stopPropagation()}
     >
       {item('Nova Aba', onNewTab)}
       {item('Duplicar Aba', () => onDuplicateTab(tabId))}
+      <div className="my-1 border-t border-border/50" />
+      {item('Salvar como .sql…', () => onSaveAsSql(tabId))}
       <div className="my-1 border-t border-border/50" />
       {item('Fechar Aba', () => onCloseTab(tabId))}
       {item('Fechar Todas as Outras', () => onCloseOtherTabs(tabId), tabs.length <= 1)}

@@ -52,6 +52,7 @@ function App() {
   const handlersRef = useRef({
     addTab,
     handleCloseCurrentTab: () => { if (activeTabId) closeTab(activeTabId); },
+    saveActiveTabAsSql: async () => { /* populated below */ },
     openCommandPalette: () => setCommandPaletteOpen(true),
     openNewConnectionForm: () => { window.dispatchEvent(new CustomEvent('pulsesql:new-connection')); },
     setConfigurationOpen,
@@ -251,6 +252,12 @@ function App() {
   handlersRef.current = {
     addTab,
     handleCloseCurrentTab: () => { if (activeTabId) closeTab(activeTabId); },
+    saveActiveTabAsSql: async () => {
+      const activeTab = tabs.find(t => t.id === activeTabId);
+      if (!activeTab) return;
+      const filename = `${activeTab.title.replace(/[/\\?%*:|"<>]/g, '_')}.sql`;
+      try { await invoke('save_connections_export', { content: activeTab.content, filename }); } catch { /* ignore */ }
+    },
     openCommandPalette: () => setCommandPaletteOpen(true),
     openNewConnectionForm: () => { window.dispatchEvent(new CustomEvent('pulsesql:new-connection')); },
     setConfigurationOpen,
@@ -304,6 +311,8 @@ function App() {
         items: [
           await MenuItem.new({ text: translate(locale, 'newConnection'), action: () => handlersRef.current.openNewConnectionForm() }),
           await MenuItem.new({ text: translate(locale, 'configuration'), action: () => handlersRef.current.setConfigurationOpen(true) }),
+          separator,
+          await MenuItem.new({ text: translate(locale, 'saveTabAsSql'), action: () => void handlersRef.current.saveActiveTabAsSql() }),
           separator,
           quit,
         ],
