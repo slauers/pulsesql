@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { ArrowUp, ArrowDown, Check } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUp, ArrowDown, Check, Copy, EyeOff, Filter, MoreVertical, PanelRightOpen, Pencil, Pin, X } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 
@@ -20,6 +20,9 @@ interface ResultGridProps {
   focusNewRowToken?: number;
   selectedRowIndex?: number | null;
   onRowSelect?: (rowIndex: number, row: Record<string, unknown>) => void;
+  layoutKey?: string | null;
+  onFocusQuickFilter?: () => void;
+  accentColor?: string;
 }
 
 export default function ResultGrid({
@@ -33,6 +36,9 @@ export default function ResultGrid({
   focusNewRowToken,
   selectedRowIndex = null,
   onRowSelect,
+  layoutKey = null,
+  onFocusQuickFilter,
+  accentColor = '#38bdf8',
 }: ResultGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -46,12 +52,13 @@ export default function ResultGrid({
   const copyTimeoutRef = useRef<number | null>(null);
   const [activeEditCell, setActiveEditCell] = useState<string | null>(null);
   const [selectedCell, setSelectedCell] = useState<{ rowIndex: number; column: string } | null>(null);
-  const [cellMenu, setCellMenu] = useState<{
-    x: number;
-    y: number;
-    cellKey: string;
-    value: unknown;
-  } | null>(null);
+  const [detailCell, setDetailCell] = useState<{ rowIndex: number; column: string } | null>(null);
+  const [selectionAnchor, setSelectionAnchor] = useState<{ rowIndex: number; column: string } | null>(null);
+  const [columnMenu, setColumnMenu] = useState<{ x: number; y: number; column: string } | null>(null);
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const [pinnedColumns, setPinnedColumns] = useState<Set<string>>(new Set());
+  const [hoveredRowIndex, setHoveredRowIndex] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const skipNextBlurRef = useRef(false);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -67,6 +74,40 @@ export default function ResultGrid({
     [columnWidths, columns, rows],
   );
 
+  const storageKey = useMemo(
+    () => `pulsesql:grid-layout:${layoutKey ?? columns.map((column) => column.name).join('|')}`,
+    [columns, layoutKey],
+  );
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        widths?: Record<string, number>;
+        hidden?: string[];
+        pinned?: string[];
+      };
+      if (parsed.widths) setColumnWidths(parsed.widths);
+      if (parsed.hidden) setHiddenColumns(new Set(parsed.hidden));
+      if (parsed.pinned) setPinnedColumns(new Set(parsed.pinned));
+    } catch {
+      // Ignore corrupted local layout state.
+    }
+  }, [storageKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify({
+        widths: columnWidths,
+        hidden: [...hiddenColumns],
+        pinned: [...pinnedColumns],
+      }));
+    } catch {
+      // Layout persistence is best-effort.
+    }
+  }, [columnWidths, hiddenColumns, pinnedColumns, storageKey]);
+
   const sortedRows = useMemo(() => {
     if (!sortConfig) return rows;
     const { column, dir } = sortConfig;
@@ -80,6 +121,38 @@ export default function ResultGrid({
     });
   }, [rows, sortConfig]);
 
+  const filteredRows = useMemo(() => {
+    const activeFilters = Object.entries(columnFilters).filter(([, value]) => value.trim());
+    if (!activeFilters.length) return sortedRows;
+
+    return sortedRows.filter((row) =>
+      activeFilters.every(([column, rawFilter]) => matchColumnFilter(row?.[column], rawFilter)),
+    );
+  }, [columnFilters, sortedRows]);
+
+  const visibleColumns = useMemo(
+    () => columns.filter((column) => !hiddenColumns.has(column.name)),
+    [columns, hiddenColumns],
+  );
+  const pinnedVisibleColumns = useMemo(
+    () => visibleColumns.filter((column) => pinnedColumns.has(column.name)),
+    [pinnedColumns, visibleColumns],
+  );
+  const scrollVisibleColumns = useMemo(
+    () => visibleColumns.filter((column) => !pinnedColumns.has(column.name)),
+    [pinnedColumns, visibleColumns],
+  );
+  const pinnedOffsets = useMemo(() => {
+    let left = 48;
+    const entries: Array<[string, number]> = [];
+    pinnedVisibleColumns.forEach((column) => {
+      entries.push([column.name, left]);
+      left += resolvedWidths[column.name];
+    });
+    return Object.fromEntries(entries);
+  }, [pinnedVisibleColumns, resolvedWidths]);
+  const pinnedWidth = pinnedVisibleColumns.reduce((total, column) => total + resolvedWidths[column.name], 0);
+
   const handleSortToggle = (colName: string) => {
     setSortConfig((current) => {
       if (current?.column === colName) {
@@ -89,15 +162,23 @@ export default function ResultGrid({
     });
   };
 
-  const rowHeight = density === 'compact' ? 26 : density === 'spacious' ? 36 : 30;
-  const headerHeight = density === 'compact' ? 40 : density === 'spacious' ? 50 : 44;
-  const allRows = [...sortedRows, ...(pendingNewRows ?? [])];
+  const rowHeight = density === 'compact' ? 26 : 30;
+  const headerHeight = density === 'compact' ? 40 : 44;
+  const allRows = [...filteredRows, ...(pendingNewRows ?? [])];
 
   const rowVirtualizer = useVirtualizer({
     count: allRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
     overscan: 20,
+  });
+
+  const columnVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: scrollVisibleColumns.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: (index) => resolvedWidths[scrollVisibleColumns[index]?.name] ?? 140,
+    overscan: 5,
   });
 
   useEffect(() => {
@@ -168,6 +249,37 @@ export default function ResultGrid({
     return Number.isNaN(idx) ? null : idx;
   })();
 
+  const selectedRange = useMemo(() => {
+    if (!selectionAnchor || !selectedCell) return null;
+    const startColumnIndex = visibleColumns.findIndex((column) => column.name === selectionAnchor.column);
+    const endColumnIndex = visibleColumns.findIndex((column) => column.name === selectedCell.column);
+    if (startColumnIndex < 0 || endColumnIndex < 0) return null;
+
+    return {
+      rowStart: Math.min(selectionAnchor.rowIndex, selectedCell.rowIndex),
+      rowEnd: Math.max(selectionAnchor.rowIndex, selectedCell.rowIndex),
+      colStart: Math.min(startColumnIndex, endColumnIndex),
+      colEnd: Math.max(startColumnIndex, endColumnIndex),
+    };
+  }, [selectedCell, selectionAnchor, visibleColumns]);
+
+  const copyRange = (includeHeaders = false) => {
+    if (!selectedRange) return false;
+    const selectedColumns = visibleColumns.slice(selectedRange.colStart, selectedRange.colEnd + 1);
+    const lines: string[] = [];
+    if (includeHeaders) {
+      lines.push(selectedColumns.map((column) => column.name).join('\t'));
+    }
+
+    for (let rowIndex = selectedRange.rowStart; rowIndex <= selectedRange.rowEnd; rowIndex++) {
+      const row = allRows[rowIndex] as Record<string, unknown> | undefined;
+      lines.push(selectedColumns.map((column) => formatTsvValue(row?.[column.name])).join('\t'));
+    }
+
+    void clipboardWriteText(lines.join('\n'));
+    return true;
+  };
+
   const handleCopyCell = (cellKey: string, value: unknown) => {
     const text = value === null ? '' : formatCellValue(value);
     void clipboardWriteText(text);
@@ -176,30 +288,15 @@ export default function ResultGrid({
     copyTimeoutRef.current = window.setTimeout(() => setCopiedCell(null), 1200);
   };
 
-  const handleCellClick = (colName: string, rowIndex: number) => {
+  const handleCellClick = (colName: string, rowIndex: number, shiftKey = false) => {
     if (anyEditActive && lockedRowIndex === rowIndex) return;
     if (activeEditCell) return;
-    setCellMenu(null);
+    if (shiftKey && selectedCell) {
+      setSelectionAnchor(selectionAnchor ?? selectedCell);
+    } else {
+      setSelectionAnchor({ rowIndex, column: colName });
+    }
     setSelectedCell({ rowIndex, column: colName });
-    parentRef.current?.focus();
-  };
-
-  const handleCellContextMenu = (
-    event: ReactMouseEvent<HTMLDivElement>,
-    cellKey: string,
-    colName: string,
-    rowIndex: number,
-    value: unknown,
-  ) => {
-    event.preventDefault();
-    if (activeEditCell) return;
-    setSelectedCell({ rowIndex, column: colName });
-    setCellMenu({
-      x: event.clientX,
-      y: event.clientY,
-      cellKey,
-      value,
-    });
     parentRef.current?.focus();
   };
 
@@ -229,45 +326,96 @@ export default function ResultGrid({
   }, [activeEditCell]);
 
   useEffect(() => {
-    if (!cellMenu) return;
-
-    const close = () => setCellMenu(null);
-    window.addEventListener('click', close);
-    window.addEventListener('scroll', close, true);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('scroll', close, true);
-    };
-  }, [cellMenu]);
-
-  useEffect(() => {
     if (!selectedCell) return;
     if (selectedCell.rowIndex >= allRows.length || !columns.some((column) => column.name === selectedCell.column)) {
       setSelectedCell(null);
     }
   }, [allRows.length, columns, selectedCell]);
 
+  useEffect(() => {
+    if (!detailCell) return;
+    if (detailCell.rowIndex >= allRows.length || !columns.some((column) => column.name === detailCell.column)) {
+      setDetailCell(null);
+    }
+  }, [allRows.length, columns, detailCell]);
+
+  useEffect(() => {
+    if (!columnMenu) return;
+    const close = () => setColumnMenu(null);
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [columnMenu]);
+
+  const detailContext = useMemo(() => {
+    if (!detailCell) return null;
+
+    const row = allRows[detailCell.rowIndex] as Record<string, unknown> | undefined;
+    const column = columns.find((item) => item.name === detailCell.column);
+    if (!row || !column) return null;
+
+    const rowPendingEdits = detailCell.rowIndex >= filteredRows.length ? null : (pendingRowEdits?.get(row) ?? null);
+    const hasStagedValue = column.name in (rowPendingEdits ?? {});
+    const value = hasStagedValue ? rowPendingEdits?.[column.name] : row[column.name];
+    const presentation = resolveCellPresentation(value, column.subtitle);
+
+    return {
+      row,
+      column,
+      value,
+      presentation,
+      cellKey: `${detailCell.rowIndex}-${column.name}`,
+      rowNumber: rowNumberOffset + detailCell.rowIndex + 1,
+    };
+  }, [allRows, columns, detailCell, filteredRows.length, pendingRowEdits, rowNumberOffset]);
+
   const handleGridKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape' && detailCell) {
+      event.preventDefault();
+      setDetailCell(null);
+      return;
+    }
+
     if (activeEditCell || !selectedCell) return;
 
     const isCopy = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c';
     if (isCopy) {
+      if (selectedRange && copyRange(event.shiftKey)) {
+        event.preventDefault();
+        return;
+      }
       const row = allRows[selectedCell.rowIndex] as Record<string, unknown> | undefined;
       if (!row) return;
       event.preventDefault();
       const cellKey = `${selectedCell.rowIndex}-${selectedCell.column}`;
       handleCopyCell(cellKey, row[selectedCell.column]);
-      setCellMenu(null);
       return;
     }
 
-    const currentColumnIndex = columns.findIndex((column) => column.name === selectedCell.column);
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      if (allRows.length && visibleColumns.length) {
+        setSelectionAnchor({ rowIndex: 0, column: visibleColumns[0].name });
+        setSelectedCell({
+          rowIndex: allRows.length - 1,
+          column: visibleColumns[visibleColumns.length - 1].name,
+        });
+      }
+      return;
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      onFocusQuickFilter?.();
+      return;
+    }
+
+    const currentColumnIndex = visibleColumns.findIndex((column) => column.name === selectedCell.column);
     if (currentColumnIndex < 0) return;
 
     if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       const nextColumnIndex = event.key === 'ArrowRight'
-        ? Math.min(columns.length - 1, currentColumnIndex + 1)
+        ? Math.min(visibleColumns.length - 1, currentColumnIndex + 1)
         : event.key === 'ArrowLeft'
           ? Math.max(0, currentColumnIndex - 1)
           : currentColumnIndex;
@@ -277,8 +425,12 @@ export default function ResultGrid({
           ? Math.max(0, selectedCell.rowIndex - 1)
           : selectedCell.rowIndex;
 
-      setSelectedCell({ rowIndex: nextRowIndex, column: columns[nextColumnIndex].name });
-      setCellMenu(null);
+      if (!event.shiftKey) {
+        setSelectionAnchor({ rowIndex: nextRowIndex, column: visibleColumns[nextColumnIndex].name });
+      } else {
+        setSelectionAnchor(selectionAnchor ?? selectedCell);
+      }
+      setSelectedCell({ rowIndex: nextRowIndex, column: visibleColumns[nextColumnIndex].name });
       rowVirtualizer.scrollToIndex(nextRowIndex, { behavior: 'auto' });
       return;
     }
@@ -287,10 +439,13 @@ export default function ResultGrid({
       const row = allRows[selectedCell.rowIndex] as Record<string, unknown> | undefined;
       if (!row) return;
       event.preventDefault();
-      setCellMenu(null);
       openEdit(`${selectedCell.rowIndex}-${selectedCell.column}`, row[selectedCell.column]);
     }
   };
+
+  const virtualColumns = columnVirtualizer.getVirtualItems();
+  const totalGridWidth = 48 + pinnedWidth + columnVirtualizer.getTotalSize();
+  const activeMenuColumn = columnMenu ? columns.find((column) => column.name === columnMenu.column) : null;
 
   return (
     <div
@@ -307,31 +462,39 @@ export default function ResultGrid({
       <div
         className={`min-w-fit ${allRows.length ? '' : 'hidden'}`}
         style={{
+          width: `${totalGridWidth}px`,
           height: `${rowVirtualizer.getTotalSize() + headerHeight}px`,
           position: 'relative',
         }}
       >
         <div
-          className="sticky top-0 z-10 flex border-b border-border/80 bg-surface/95 text-[11px] text-muted backdrop-blur"
-          style={{ height: headerHeight }}
+          className="sticky top-0 z-10 border-b border-border/80 bg-surface/95 text-[11px] text-muted backdrop-blur"
+          style={{ height: headerHeight, width: `${totalGridWidth}px` }}
         >
-          <div className="sticky left-0 w-12 shrink-0 select-none border-r border-border/35 bg-surface/95 px-2 py-2 text-center opacity-45">
+          <div className="sticky left-0 z-30 flex h-full w-12 shrink-0 select-none items-center justify-center border-r border-border/35 bg-surface/95 px-2 py-2 text-center opacity-85">
             #
           </div>
-          {columns.map((col, idx) => {
+          {[...pinnedVisibleColumns, ...virtualColumns.map((item) => scrollVisibleColumns[item.index]).filter(Boolean)].map((col) => {
             const isSorted = sortConfig?.column === col.name;
+            const virtualItem = pinnedColumns.has(col.name)
+              ? null
+              : virtualColumns.find((item) => scrollVisibleColumns[item.index]?.name === col.name);
+            const left = pinnedColumns.has(col.name)
+              ? pinnedOffsets[col.name]
+              : 48 + pinnedWidth + (virtualItem?.start ?? 0);
             return (
               <div
-                key={idx}
-                className="relative border-r border-border/35"
-                style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
+                key={col.name}
+                className={`absolute top-0 h-full border-r border-border/35 bg-surface/95 ${pinnedColumns.has(col.name) ? 'sticky z-20' : ''}`}
+                style={{ left, width: `${resolvedWidths[col.name]}px` }}
               >
                 <div
-                  className="cursor-pointer select-none overflow-hidden whitespace-nowrap px-3 py-1.5 leading-tight text-ellipsis hover:bg-background/28"
+                  className="flex h-full cursor-pointer select-none items-center gap-1.5 overflow-hidden whitespace-nowrap px-3 py-1.5 leading-tight text-ellipsis hover:bg-background/28"
                   onClick={() => handleSortToggle(col.name)}
                   title={`Ordenar por ${col.name}`}
                 >
-                  <div className="flex items-center gap-1.5 overflow-hidden">
+                  <div className="min-w-0 flex-1 overflow-hidden">
+                    <div className="flex items-center gap-1.5 overflow-hidden">
                     <span className={`overflow-hidden text-ellipsis font-mono text-[12px] normal-case tracking-normal ${isSorted ? 'text-primary' : 'text-text/92'}`}>
                       {col.name}
                     </span>
@@ -350,12 +513,26 @@ export default function ResultGrid({
                         FK
                       </span>
                     ) : null}
-                  </div>
-                  {col.subtitle ? (
-                    <div className="overflow-hidden text-ellipsis text-[10px] font-normal normal-case tracking-normal text-muted/60">
-                      {col.subtitle}
+                    {columnFilters[col.name]?.trim() ? <Filter size={10} className="shrink-0 text-primary" /> : null}
+                    {pinnedColumns.has(col.name) ? <Pin size={10} className="shrink-0 text-primary" /> : null}
                     </div>
-                  ) : null}
+                    {col.subtitle ? (
+                      <div className="overflow-hidden text-ellipsis text-[10px] font-normal normal-case tracking-normal text-muted/60">
+                        {col.subtitle}
+                      </div>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setColumnMenu({ x: event.clientX, y: event.clientY, column: col.name });
+                    }}
+                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted hover:bg-border/30 hover:text-text"
+                    title="Menu da coluna"
+                  >
+                    <MoreVertical size={12} />
+                  </button>
                 </div>
                 <div
                   role="separator"
@@ -377,34 +554,48 @@ export default function ResultGrid({
             );
           })}
         </div>
-        
-        <div className="absolute w-full" style={{ top: `${headerHeight}px` }}>
+
+        <div className="absolute" style={{ top: `${headerHeight}px`, width: `${totalGridWidth}px` }}>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const row = allRows[virtualRow.index] as Record<string, unknown>;
-            const isNewRow = virtualRow.index >= sortedRows.length;
+            const isNewRow = virtualRow.index >= filteredRows.length;
             const rowPendingEdits = isNewRow ? null : (pendingRowEdits?.get(row) ?? null);
             const isDirtyRow = !isNewRow && rowPendingEdits != null;
-            const rowTone = virtualRow.index % 2 === 0 ? 'bg-background/70' : 'bg-surface/26';
+            const rowTone = virtualRow.index % 2 === 0 ? 'rgba(var(--bt-background-rgb), 0.28)' : 'rgba(var(--bt-surface-rgb), 0.10)';
             const isThisRowLocked = lockedRowIndex === virtualRow.index;
             const isSelectedRow = selectedRowIndex === virtualRow.index;
+            const isHoveredRow = hoveredRowIndex === virtualRow.index;
+            const rowBackground = isNewRow
+              ? 'rgba(52, 211, 153, 0.06)'
+              : isDirtyRow
+                ? 'rgba(251, 191, 36, 0.06)'
+                : isHoveredRow
+                  ? colorToRgba(accentColor, 0.055)
+                  : isSelectedRow
+                    ? colorToRgba(accentColor, 0.075)
+                    : rowTone;
             return (
               <div
                 key={virtualRow.key}
-                className={`group absolute flex w-full border-b text-sm transition-colors ${
+                onMouseEnter={() => setHoveredRowIndex(virtualRow.index)}
+                onMouseLeave={() => setHoveredRowIndex((current) => current === virtualRow.index ? null : current)}
+                className={`group absolute w-full border-b text-sm transition-colors ${
                   isNewRow
-                    ? 'border-emerald-400/20 bg-emerald-400/6'
+                    ? 'border-emerald-400/20'
                     : isDirtyRow
-                      ? 'border-amber-400/20 bg-amber-400/6'
-                      : `border-border/20 ${rowTone}`
+                      ? 'border-amber-400/20'
+                      : 'border-border/20'
                 } ${
                   isSelectedRow
-                    ? 'ring-1 ring-inset ring-primary/20 bg-primary/5'
+                    ? 'ring-1 ring-inset ring-primary/20'
                     : isThisRowLocked
                       ? 'ring-1 ring-inset ring-primary/20'
-                      : 'hover:bg-surface/55'
+                      : ''
                 }`}
                 style={{
+                  backgroundColor: rowBackground,
                   height: `${virtualRow.size}px`,
+                  width: `${totalGridWidth}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
@@ -413,42 +604,56 @@ export default function ResultGrid({
                   onClick={() => onRowSelect?.(virtualRow.index, row)}
                   className={`sticky left-0 flex w-12 shrink-0 items-center justify-center border-r px-2 text-xs font-mono transition-colors ${
                     isNewRow
-                      ? 'border-emerald-400/20 bg-emerald-400/6 text-emerald-300/60'
+                      ? 'border-emerald-400/20 text-emerald-300/60'
                       : isDirtyRow
-                        ? 'border-amber-400/20 bg-amber-400/6 text-amber-300/60'
+                        ? 'border-amber-400/20 text-amber-300/60'
                         : isSelectedRow
-                          ? `bg-primary/5 text-text border-border/25`
-                          : `${rowTone} text-muted/45 border-border/25 ${isThisRowLocked ? '' : 'group-hover:bg-surface/55'}`
+                          ? 'text-text border-border/25'
+                          : 'text-muted/45 border-border/25'
                   }`}
+                  style={{ backgroundColor: rowBackground }}
                   title="Selecionar linha"
                 >
                   {isNewRow ? '+' : rowNumberOffset + virtualRow.index + 1}
                 </button>
-                {columns.map((col, cIdx) => {
+                {[...pinnedVisibleColumns, ...virtualColumns.map((item) => scrollVisibleColumns[item.index]).filter(Boolean)].map((col) => {
                   const stagedValue = rowPendingEdits?.[col.name];
                   const hasStagedValue = col.name in (rowPendingEdits ?? {});
                   const val = hasStagedValue ? stagedValue : row[col.name];
-                  const displayValue = formatCellValue(val);
+                  const presentation = resolveCellPresentation(val, col.subtitle);
                   const cellKey = `${virtualRow.index}-${col.name}`;
                   const isCopied = copiedCell === cellKey;
                   const isEditing = activeEditCell === cellKey;
                   const isSelectedCell = selectedCell?.rowIndex === virtualRow.index && selectedCell.column === col.name;
+                  const columnIndex = visibleColumns.findIndex((column) => column.name === col.name);
+                  const isInRange = selectedRange
+                    ? virtualRow.index >= selectedRange.rowStart
+                      && virtualRow.index <= selectedRange.rowEnd
+                      && columnIndex >= selectedRange.colStart
+                      && columnIndex <= selectedRange.colEnd
+                    : false;
                   const isInactiveCell = isThisRowLocked && !isEditing;
+                  const canOpenDetail = shouldOfferDetail(presentation);
+                  const virtualItem = pinnedColumns.has(col.name)
+                    ? null
+                    : virtualColumns.find((item) => scrollVisibleColumns[item.index]?.name === col.name);
+                  const left = pinnedColumns.has(col.name)
+                    ? pinnedOffsets[col.name]
+                    : 48 + pinnedWidth + (virtualItem?.start ?? 0);
                   return (
                     <div
-                      key={cIdx}
-                      onClick={() => {
+                      key={col.name}
+                      onClick={(event) => {
                         if (isNewRow && !isEditing) {
                           openEdit(cellKey, val);
                           return;
                         }
-                        handleCellClick(col.name, virtualRow.index);
+                        handleCellClick(col.name, virtualRow.index, event.shiftKey);
                       }}
                       onDoubleClick={() => {
                         if (!isNewRow) openEdit(cellKey, val);
                       }}
-                      onContextMenu={(event) => handleCellContextMenu(event, cellKey, col.name, virtualRow.index, val)}
-                      className={`flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-r border-border/20 px-3.5 font-mono text-[13px] transition-colors ${
+                      className={`absolute top-0 flex h-full items-center gap-1.5 overflow-hidden whitespace-nowrap border-r border-border/20 px-3.5 font-mono text-[13px] transition-colors ${presentation.alignClass} ${
                         isEditing
                           ? 'bg-primary/10 outline outline-1 outline-primary/60 p-0'
                           : hasStagedValue
@@ -459,10 +664,12 @@ export default function ResultGrid({
                                 ? 'bg-emerald-400/16 text-emerald-100'
                                 : isSelectedCell
                                   ? 'cursor-pointer text-ellipsis bg-primary/10 text-text ring-1 ring-inset ring-primary/45'
-                                  : 'cursor-pointer text-ellipsis text-text/94'
+                                  : isInRange
+                                    ? 'cursor-pointer text-ellipsis bg-primary/6 text-text/94'
+                                    : 'cursor-pointer text-ellipsis text-text/94'
                       }`}
-                      style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
-                      title={displayValue}
+                      style={{ left, width: `${resolvedWidths[col.name]}px` }}
+                      title={presentation.rawValue}
                     >
                       {isEditing ? (
                         <input
@@ -512,11 +719,29 @@ export default function ResultGrid({
                       ) : isCopied ? (
                         <>
                           <Check size={11} className="shrink-0 text-emerald-400" />
-                          <span className="overflow-hidden text-ellipsis">{val === null ? <span className="italic">null</span> : displayValue}</span>
+                          <span className={`min-w-0 overflow-hidden text-ellipsis ${presentation.valueClass}`}>
+                            {renderPresentedValue(presentation)}
+                          </span>
                         </>
                       ) : (
-                        val === null ? <span className="text-muted/50 italic">null</span> : displayValue
+                        renderPresentedValue(presentation)
                       )}
+                      {!isEditing && canOpenDetail ? (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedCell({ rowIndex: virtualRow.index, column: col.name });
+                            setDetailCell({ rowIndex: virtualRow.index, column: col.name });
+                          }}
+                          className={`ml-auto inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border/60 bg-background/40 text-muted transition-colors hover:border-primary/45 hover:text-text ${
+                            isSelectedCell ? 'opacity-100' : 'opacity-55 hover:opacity-100'
+                          }`}
+                          title="Abrir detalhe"
+                        >
+                          <PanelRightOpen size={12} />
+                        </button>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -525,23 +750,145 @@ export default function ResultGrid({
           })}
         </div>
       </div>
-      {cellMenu ? (
+      {detailContext ? (
+        <div className="absolute bottom-3 right-3 z-20 flex max-h-[min(70%,420px)] w-[min(520px,calc(100%-24px))] flex-col overflow-hidden rounded-lg border border-border bg-surface text-xs text-text shadow-2xl">
+          <div className="flex items-start gap-3 border-b border-border/70 px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate font-mono text-[12px] font-semibold text-text">
+                  {detailContext.column.name}
+                </span>
+                {detailContext.column.isPrimaryKey ? (
+                  <span className="shrink-0 rounded border border-amber-400/30 bg-amber-400/18 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-amber-300">
+                    PK
+                  </span>
+                ) : null}
+                {detailContext.column.isForeignKey ? (
+                  <span className="shrink-0 rounded border border-sky-400/30 bg-sky-400/18 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-sky-300">
+                    FK
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-0.5 truncate text-[11px] text-muted">
+                Linha {detailContext.rowNumber}
+                {detailContext.column.subtitle ? ` · ${detailContext.column.subtitle}` : ''}
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={() => handleCopyCell(detailContext.cellKey, detailContext.value)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-muted transition-colors hover:bg-border/30 hover:text-text"
+                title="Copiar valor"
+              >
+                <Copy size={13} />
+              </button>
+              {onCellChange && !detailContext.column.isAutoIncrement ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDetailCell(null);
+                    openEdit(detailContext.cellKey, detailContext.value);
+                  }}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-muted transition-colors hover:bg-border/30 hover:text-text"
+                  title="Editar valor"
+                >
+                  <Pencil size={13} />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setDetailCell(null)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-muted transition-colors hover:bg-border/30 hover:text-text"
+                title="Fechar"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          </div>
+          <pre className="min-h-[120px] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-[12px] leading-5 text-text/95">
+            {formatDetailValue(detailContext.value)}
+          </pre>
+        </div>
+      ) : null}
+      {columnMenu && activeMenuColumn ? (
         <div
-          className="fixed z-50 min-w-[150px] rounded-md border border-border bg-surface py-1 text-xs text-text shadow-xl"
-          style={{ left: cellMenu.x, top: cellMenu.y }}
-          onClick={(event) => event.stopPropagation()}
+          className="fixed z-50 w-64 rounded-lg border border-border bg-surface p-2 text-xs text-text shadow-2xl"
+          style={{ left: columnMenu.x, top: columnMenu.y }}
+          onMouseDown={(event) => event.stopPropagation()}
         >
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-border/35"
-            onClick={() => {
-              handleCopyCell(cellMenu.cellKey, cellMenu.value);
-              setCellMenu(null);
-            }}
-          >
-            <Check size={12} className="text-muted" />
-            Copiar valor
-          </button>
+          <div className="mb-2 border-b border-border/60 px-1 pb-2">
+            <div className="truncate font-mono text-[12px] font-semibold">{activeMenuColumn.name}</div>
+            <div className="mt-0.5 truncate text-[11px] text-muted">
+              {activeMenuColumn.subtitle ?? 'tipo desconhecido'}
+              {activeMenuColumn.isPrimaryKey ? ' · PK' : ''}
+              {activeMenuColumn.isForeignKey ? ' · FK' : ''}
+            </div>
+          </div>
+          <div className="grid gap-1">
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => { setSortConfig({ column: activeMenuColumn.name, dir: 'asc' }); setColumnMenu(null); }}>
+              <ArrowUp size={12} /> Ordenar crescente
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => { setSortConfig({ column: activeMenuColumn.name, dir: 'desc' }); setColumnMenu(null); }}>
+              <ArrowDown size={12} /> Ordenar decrescente
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => { setSortConfig((current) => current?.column === activeMenuColumn.name ? null : current); setColumnMenu(null); }}>
+              <X size={12} /> Limpar ordenacao
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => { void clipboardWriteText(activeMenuColumn.name); setColumnMenu(null); }}>
+              <Copy size={12} /> Copiar nome
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => {
+              setColumnWidths((current) => ({ ...current, [activeMenuColumn.name]: estimateColumnWidth(activeMenuColumn, allRows) }));
+              setColumnMenu(null);
+            }}>
+              <Check size={12} /> Autoajustar largura
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => {
+              setPinnedColumns((current) => {
+                const next = new Set(current);
+                if (next.has(activeMenuColumn.name)) next.delete(activeMenuColumn.name);
+                else next.add(activeMenuColumn.name);
+                return next;
+              });
+              setColumnMenu(null);
+            }}>
+              <Pin size={12} /> {pinnedColumns.has(activeMenuColumn.name) ? 'Desfixar coluna' : 'Fixar coluna'}
+            </button>
+            <button type="button" className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted transition-colors hover:bg-border/30 hover:text-text" onClick={() => {
+              setHiddenColumns((current) => {
+                const next = new Set(current);
+                next.add(activeMenuColumn.name);
+                return next.size >= columns.length ? current : next;
+              });
+              setPinnedColumns((current) => {
+                const next = new Set(current);
+                next.delete(activeMenuColumn.name);
+                return next;
+              });
+              setColumnMenu(null);
+            }}>
+              <EyeOff size={12} /> Ocultar coluna
+            </button>
+          </div>
+          <label className="mt-2 flex items-center gap-2 rounded-md border border-border/70 bg-background/30 px-2 py-1.5">
+            <Filter size={12} className="text-muted" />
+            <input
+              value={columnFilters[activeMenuColumn.name] ?? ''}
+              onChange={(event) => setColumnFilters((current) => ({ ...current, [activeMenuColumn.name]: event.target.value }))}
+              placeholder="Filtro local"
+              className="min-w-0 flex-1 bg-transparent text-xs text-text outline-none placeholder:text-muted"
+            />
+          </label>
+          {hiddenColumns.size ? (
+            <button
+              type="button"
+              className="mt-2 w-full rounded-md border border-border/70 px-2 py-1.5 text-left text-xs text-muted hover:bg-border/30 hover:text-text"
+              onClick={() => setHiddenColumns(new Set())}
+            >
+              Mostrar colunas ocultas ({hiddenColumns.size})
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -591,4 +938,166 @@ function formatCellValue(value: unknown) {
   }
 
   return String(value);
+}
+
+function formatTsvValue(value: unknown) {
+  return formatCellValue(value)
+    .replace(/\t/g, ' ')
+    .replace(/\r?\n/g, ' ');
+}
+
+function matchColumnFilter(value: unknown, rawFilter: string) {
+  const filter = rawFilter.trim();
+  if (!filter) return true;
+  const normalizedValue = formatCellValue(value).toLowerCase();
+  const normalizedFilter = filter.toLowerCase();
+
+  if (normalizedFilter === 'null' || normalizedFilter === 'is:null') {
+    return value === null || typeof value === 'undefined';
+  }
+
+  if (normalizedFilter === '!null' || normalizedFilter === 'not:null') {
+    return value !== null && typeof value !== 'undefined';
+  }
+
+  const operator = filter.match(/^(>=|<=|>|<|=)\s*(.+)$/);
+  if (operator) {
+    const target = Number(operator[2]);
+    const actual = typeof value === 'number' ? value : Number(String(value ?? '').replace(',', '.'));
+    if (!Number.isFinite(actual) || !Number.isFinite(target)) {
+      return normalizedValue === operator[2].toLowerCase();
+    }
+    if (operator[1] === '>') return actual > target;
+    if (operator[1] === '>=') return actual >= target;
+    if (operator[1] === '<') return actual < target;
+    if (operator[1] === '<=') return actual <= target;
+    return actual === target;
+  }
+
+  return normalizedValue.includes(normalizedFilter);
+}
+
+function formatDetailValue(value: unknown) {
+  if (Array.isArray(value) || (typeof value === 'object' && value !== null)) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return formatCellValue(value);
+    }
+  }
+
+  return formatCellValue(value);
+}
+
+type CellKind = 'null' | 'number' | 'date' | 'boolean' | 'json' | 'text';
+
+function resolveCellPresentation(value: unknown, subtitle?: string | null) {
+  const rawValue = formatCellValue(value);
+  const typeHint = (subtitle ?? '').toLowerCase();
+  const kind = inferCellKind(value, typeHint);
+  const displayValue = kind === 'date' ? formatDatePreview(value, rawValue) : rawValue;
+
+  return {
+    kind,
+    rawValue,
+    displayValue,
+    alignClass: kind === 'number' ? 'justify-end text-right tabular-nums' : '',
+    valueClass: [
+      kind === 'null' ? 'text-muted/50 italic' : '',
+      kind === 'number' ? 'tabular-nums text-cyan-100/95' : '',
+      kind === 'date' ? 'tabular-nums text-violet-100/95' : '',
+      kind === 'json' ? 'text-amber-100/95' : '',
+    ].filter(Boolean).join(' '),
+  };
+}
+
+function inferCellKind(value: unknown, typeHint: string): CellKind {
+  if (value === null || typeof value === 'undefined') {
+    return 'null';
+  }
+
+  if (typeof value === 'boolean' || /\b(bool|boolean)\b/.test(typeHint)) {
+    return 'boolean';
+  }
+
+  if (Array.isArray(value) || (typeof value === 'object' && value !== null) || /\b(json|jsonb|xml)\b/.test(typeHint)) {
+    return 'json';
+  }
+
+  if (/\b(date|time|timestamp|timestamptz)\b/.test(typeHint)) {
+    return 'date';
+  }
+
+  if (
+    typeof value === 'number'
+    || typeof value === 'bigint'
+    || /\b(number|numeric|decimal|integer|int|bigint|smallint|float|double|real|serial|money)\b/.test(typeHint)
+  ) {
+    return 'number';
+  }
+
+  return 'text';
+}
+
+function formatDatePreview(value: unknown, fallback: string) {
+  const raw = value instanceof Date ? value.toISOString() : fallback;
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const date = value instanceof Date ? value : new Date(normalized);
+
+  if (Number.isNaN(date.getTime())) {
+    return fallback;
+  }
+
+  const hasTime = /[ t]\d{1,2}:\d{2}/i.test(raw);
+  return hasTime
+    ? date.toLocaleString(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+    : date.toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+}
+
+function renderPresentedValue(presentation: ReturnType<typeof resolveCellPresentation>) {
+  if (presentation.kind === 'boolean') {
+    const isTrue = presentation.rawValue.toLowerCase() === 'true' || presentation.rawValue === '1';
+    return (
+      <span className={`inline-flex h-5 shrink-0 items-center rounded border px-1.5 text-[10px] font-semibold uppercase tracking-wide ${
+        isTrue
+          ? 'border-emerald-400/30 bg-emerald-400/12 text-emerald-200'
+          : 'border-border/70 bg-background/35 text-muted'
+      }`}>
+        {presentation.rawValue}
+      </span>
+    );
+  }
+
+  return (
+    <span className={`min-w-0 overflow-hidden text-ellipsis ${presentation.valueClass}`}>
+      {presentation.displayValue}
+    </span>
+  );
+}
+
+function shouldOfferDetail(presentation: ReturnType<typeof resolveCellPresentation>) {
+  return presentation.kind === 'json' || presentation.rawValue.length > 80 || presentation.rawValue.includes('\n');
+}
+
+function colorToRgba(color: string, alpha: number) {
+  const hex = color.trim().replace('#', '');
+  if (/^[0-9a-f]{6}$/i.test(hex)) {
+    const red = parseInt(hex.slice(0, 2), 16);
+    const green = parseInt(hex.slice(2, 4), 16);
+    const blue = parseInt(hex.slice(4, 6), 16);
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+  }
+
+  return `rgba(var(--bt-primary-rgb), ${alpha})`;
 }

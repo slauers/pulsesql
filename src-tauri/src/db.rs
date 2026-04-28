@@ -37,6 +37,10 @@ pub struct QueryResult {
     pub total_rows: Option<u64>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
+    #[serde(default)]
+    pub has_more: Option<bool>,
+    #[serde(default, skip_serializing)]
+    pub diagnostics: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -66,7 +70,9 @@ impl ManagedConnection {
         match self.pool {
             ConnectionPool::Postgres(pool) => pool.close().await,
             ConnectionPool::Mysql(pool) => pool.close().await,
-            ConnectionPool::Oracle(_) => {}
+            ConnectionPool::Oracle(handle) => {
+                let _ = oracle::close_connection(&handle).await;
+            }
         }
 
         if let Some(tunnel) = self.tunnel {
@@ -93,6 +99,20 @@ pub struct ExecuteQueryPayload {
     pub history_item_id: String,
     pub autocommit_enabled: bool,
     pub transaction_open: bool,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CountQueryPayload {
+    pub total_rows: u64,
+    pub execution_time: u64,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CancelQueryPayload {
+    pub execution_id: String,
+    pub cancelled: bool,
     pub diagnostics: Vec<String>,
 }
 
@@ -340,8 +360,31 @@ pub fn execute_query(
                 let row_count =
                     i64::try_from(result.result.total_rows.unwrap_or(result.result.rows.len() as u64))
                         .unwrap_or(i64::MAX);
+                let result_payload_bytes = serde_json::to_vec(&result.result)
+                    .map(|payload| payload.len())
+                    .unwrap_or_default();
+                let mut diagnostics = result.result.diagnostics.clone();
+                diagnostics.extend([
+                    format!("[db] resolve_connection_details: {resolve_ms}ms"),
+                    format!("[db] execute_query_on_managed_connection: {execute_ms}ms"),
+                    format!("[db] result rows_returned: {}", result.result.rows.len()),
+                    format!(
+                        "[db] result page: {}",
+                        result.result.page.map_or_else(|| "none".into(), |value| value.to_string())
+                    ),
+                    format!(
+                        "[db] result page_size: {}",
+                        result
+                            .result
+                            .page_size
+                            .map_or_else(|| "none".into(), |value| value.to_string())
+                    ),
+                    format!("[db] result payload_bytes: {result_payload_bytes}"),
+                    format!("[db] total execute_query command: {}ms", t_total.elapsed().as_millis()),
+                ]);
 
                 // Fire-and-forget: history write does not block the response to the frontend.
+                let history_started = Instant::now();
                 history.record_spawned(NewQueryHistoryItem {
                     id: history_item_id.clone(),
                     connection_id: conn_id,
@@ -357,17 +400,17 @@ pub fn execute_query(
                     error_message: None,
                     row_count: Some(row_count),
                 });
+                diagnostics.push(format!(
+                    "[db] history_enqueue_ms: {}",
+                    history_started.elapsed().as_millis()
+                ));
 
                 let payload = ExecuteQueryPayload {
                     result: result.result,
                     history_item_id,
                     autocommit_enabled: result.autocommit_enabled,
                     transaction_open: result.transaction_open,
-                    diagnostics: vec![
-                        format!("[db] resolve_connection_details: {resolve_ms}ms"),
-                        format!("[db] execute_query_on_managed_connection: {execute_ms}ms"),
-                        format!("[db] total execute_query command: {}ms", t_total.elapsed().as_millis()),
-                    ],
+                    diagnostics,
                 };
                 Ok(payload)
             }
@@ -390,6 +433,68 @@ pub fn execute_query(
                 Err(error)
             }
         }
+    })
+}
+
+#[tauri::command]
+pub fn count_query(
+    state: tauri::State<'_, DbState>,
+    conn_id: String,
+    query: String,
+) -> Result<CountQueryPayload, String> {
+    tauri::async_runtime::block_on(async {
+        let started_at = Instant::now();
+        let pool = {
+            let connections = state.connections.lock().await;
+            let connection = connections
+                .get(&conn_id)
+                .ok_or_else(|| "Connection not found".to_string())?;
+
+            if !connection.autocommit_enabled && !matches!(connection.pool, ConnectionPool::Oracle(_)) {
+                return Err("Background count is not available while autocommit is OFF.".to_string());
+            }
+
+            connection_pool_from_managed(connection)
+        };
+
+        let mut diagnostics = Vec::new();
+        let count_started = Instant::now();
+        let total_rows = match pool {
+            ConnectionPool::Postgres(pool) => postgres::count_query(&pool, &query).await?,
+            ConnectionPool::Mysql(pool) => mysql::count_query(&pool, &query).await?,
+            ConnectionPool::Oracle(handle) => {
+                let (total_rows, oracle_diagnostics) = oracle::count_query(&handle, &query).await?;
+                diagnostics.extend(oracle_diagnostics);
+                total_rows
+            }
+        };
+        diagnostics.push(format!(
+            "[db] count_query engine_ms: {}",
+            count_started.elapsed().as_millis()
+        ));
+        diagnostics.push(format!("[db] count_query total_rows: {total_rows}"));
+        diagnostics.push(format!(
+            "[db] count_query total command: {}ms",
+            started_at.elapsed().as_millis()
+        ));
+
+        Ok(CountQueryPayload {
+            total_rows,
+            execution_time: started_at.elapsed().as_millis() as u64,
+            diagnostics,
+        })
+    })
+}
+
+#[tauri::command]
+pub fn cancel_query(execution_id: String) -> Result<CancelQueryPayload, String> {
+    Ok(CancelQueryPayload {
+        execution_id: execution_id.clone(),
+        cancelled: true,
+        diagnostics: vec![
+            format!("[db] cancel_query execution_id: {execution_id}"),
+            "[db] cancel_query mode: frontend_result_ignore".into(),
+        ],
     })
 }
 
@@ -438,7 +543,7 @@ pub async fn get_server_time(
         ConnectionPool::Postgres(pool) => postgres::execute_query(&pool, query, None, None, None).await,
         ConnectionPool::Mysql(pool) => mysql::execute_query(&pool, query, None, None, None).await,
         ConnectionPool::Oracle(connection) => {
-            oracle::execute_query(&connection, query, None, None).await
+            oracle::execute_query(&connection, query, None, None, None).await
         }
     }?;
 
@@ -487,7 +592,7 @@ async fn execute_query_on_managed_connection(
                 mysql::execute_query(&pool, query, page, page_size, known_total_rows).await
             }
             ConnectionPool::Oracle(handle) => {
-                oracle::execute_query(&handle, query, page, page_size).await
+                oracle::execute_query(&handle, query, page, page_size, known_total_rows).await
             }
         }?;
 
@@ -557,7 +662,7 @@ async fn execute_manual_transaction_query(
                     mysql::execute_query(pool, query, page, page_size, known_total_rows).await
                 }
                 ConnectionPool::Oracle(handle) => {
-                    oracle::execute_query(handle, query, page, page_size).await
+                    oracle::execute_query(handle, query, page, page_size, known_total_rows).await
                 }
             },
         },
@@ -754,5 +859,7 @@ fn build_transaction_summary_result(summary: &str) -> QueryResult {
         total_rows: None,
         page: None,
         page_size: None,
+        has_more: None,
+        diagnostics: Vec::new(),
     }
 }

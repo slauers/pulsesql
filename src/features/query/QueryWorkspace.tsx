@@ -11,11 +11,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { createPortal, flushSync } from 'react-dom';
 import { ensureColumnsCached, ensureTablesCached, warmMetadataAfterConnect } from '../database/metadata-cache';
 import { useDatabaseSessionStore } from '../../store/databaseSession';
-import type { MetadataColumn } from '../database/types';
+import type { MetadataColumn, MetadataConnectionEntry } from '../database/types';
 import {
   Plus,
   X,
   Play,
+  Square,
   Clock3,
   AlignLeft,
   Sparkles,
@@ -56,6 +57,7 @@ interface QueryResult {
   total_rows?: number | null;
   page?: number | null;
   page_size?: number | null;
+  has_more?: boolean | null;
 }
 
 interface QueryColumnMeta {
@@ -75,6 +77,8 @@ interface QueryExecutionResult extends QueryResult {
   statement: string;
   title: string;
   pageCache?: Record<number, QueryResult>;
+  paginationStrategy?: 'offset' | 'keyset';
+  keysetCursors?: Record<number, unknown>;
 }
 
 interface ExecuteQueryPayload {
@@ -83,6 +87,18 @@ interface ExecuteQueryPayload {
   autocommit_enabled: boolean;
   transaction_open: boolean;
   diagnostics?: string[];
+}
+
+interface CountQueryPayload {
+  total_rows: number;
+  execution_time: number;
+  diagnostics?: string[];
+}
+
+interface PageCacheBucket {
+  pages: Record<number, QueryResult>;
+  touchedAt: number;
+  totalRows?: number | null;
 }
 
 const SEMANTIC_SUCCESS_DURATION_MS = 3600;
@@ -203,6 +219,7 @@ export default function QueryWorkspace() {
   const [focusNewRowToken, setFocusNewRowToken] = useState(0);
   const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
   const [gridFullscreen, setGridFullscreen] = useState(false);
+  const [resultsCollapsed, setResultsCollapsed] = useState(false);
   const [activePanel, setActivePanel] = useState<'results' | 'logs'>('results');
   const editErrorTimeoutRef = useRef<number | null>(null);
   const executeQueryRef = useRef<() => void>(() => {});
@@ -210,6 +227,7 @@ export default function QueryWorkspace() {
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const connectionMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const quickFilterInputRef = useRef<HTMLInputElement | null>(null);
   const tabDragRef = useRef<{ tabId: string; startX: number; dragging: boolean } | null>(null);
   const suppressTabClickRef = useRef(false);
   const lastCursorPositionRef = useRef<{ lineNumber: number; column: number } | null>(null);
@@ -217,6 +235,12 @@ export default function QueryWorkspace() {
   const suggestTimeoutRef = useRef<number | null>(null);
   const semanticResetTimeoutRef = useRef<number | null>(null);
   const pagePrefetchKeysRef = useRef<Set<string>>(new Set());
+  const countQueryKeysRef = useRef<Set<string>>(new Set());
+  const pageCacheRef = useRef<Map<string, PageCacheBucket>>(new Map());
+  const executionSeqRef = useRef(0);
+  const currentExecutionIdRef = useRef<string | null>(null);
+  const cancelledExecutionIdsRef = useRef<Set<string>>(new Set());
+  const [activeExecutionId, setActiveExecutionId] = useState<string | null>(null);
   const autocompleteContextRef = useRef<{
     connectionId?: string | null;
     activeSchema?: string | null;
@@ -382,11 +406,18 @@ export default function QueryWorkspace() {
       semanticResetTimeoutRef.current = null;
     }
 
+    const executionId = `exec-${Date.now()}-${executionSeqRef.current + 1}`;
+    executionSeqRef.current += 1;
+    currentExecutionIdRef.current = executionId;
+    cancelledExecutionIdsRef.current.delete(executionId);
+    setActiveExecutionId(executionId);
+
     flushSync(() => {
       setSemanticBackgroundState('running');
       setLoading(true);
       setTabError(activeTabId, null);
       setActivePanel('results');
+      setResultsCollapsed(false);
     });
     return window.performance.now();
   }, [activeTabId, setSemanticBackgroundState, setTabError]);
@@ -399,6 +430,173 @@ export default function QueryWorkspace() {
   const appendDiagnostics = useCallback((connectionId: string, diagnostics?: string[]) => {
     diagnostics?.forEach((entry) => appendLog(connectionId, entry));
   }, [appendLog]);
+
+  const isExecutionCancelled = useCallback((executionId: string | null) => (
+    executionId != null && cancelledExecutionIdsRef.current.has(executionId)
+  ), []);
+
+  const finishExecution = useCallback((executionId: string | null) => {
+    if (executionId && currentExecutionIdRef.current !== executionId) {
+      return;
+    }
+
+    currentExecutionIdRef.current = null;
+    setActiveExecutionId(null);
+    setLoading(false);
+  }, []);
+
+  const cancelActiveExecution = useCallback(() => {
+    const executionId = currentExecutionIdRef.current ?? activeExecutionId;
+    if (!executionId) {
+      return;
+    }
+
+    cancelledExecutionIdsRef.current.add(executionId);
+    void invoke('cancel_query', { executionId }).catch(() => null);
+    setSemanticBackgroundState('idle');
+    finishExecution(executionId);
+
+    if (resolvedConnectionId) {
+      appendLog(resolvedConnectionId, `${t('cancelled')}: ${executionId}`);
+    }
+  }, [activeExecutionId, appendLog, finishExecution, resolvedConnectionId, setSemanticBackgroundState, t]);
+
+  const readCachedPage = useCallback((
+    connectionId: string,
+    statement: string,
+    pageSize: number,
+    page: number,
+  ) => {
+    const key = buildResultPageCacheKey(connectionId, statement, pageSize);
+    const bucket = pageCacheRef.current.get(key);
+    if (!bucket) {
+      return null;
+    }
+
+    bucket.touchedAt = Date.now();
+    return bucket.pages[page] ?? null;
+  }, []);
+
+  const writeCachedPage = useCallback((
+    connectionId: string,
+    statement: string,
+    pageSize: number,
+    page: number,
+    result: QueryResult,
+  ) => {
+    const key = buildResultPageCacheKey(connectionId, statement, pageSize);
+    const current = pageCacheRef.current.get(key);
+    pageCacheRef.current.set(key, {
+      pages: {
+        ...(current?.pages ?? {}),
+        [page]: result,
+      },
+      touchedAt: Date.now(),
+      totalRows: result.total_rows ?? current?.totalRows ?? null,
+    });
+    pruneResultPageCache(pageCacheRef.current);
+  }, []);
+
+  const invalidatePageCacheForConnection = useCallback((connectionId: string) => {
+    for (const key of pageCacheRef.current.keys()) {
+      if (key.startsWith(`${connectionId}\u0000`)) {
+        pageCacheRef.current.delete(key);
+      }
+    }
+  }, []);
+
+  const countResultRows = useCallback(async ({
+    tabId,
+    resultIndex,
+    connectionId,
+    statement,
+    result,
+  }: {
+    tabId: string | null | undefined;
+    resultIndex: number;
+    connectionId: string;
+    statement: string;
+    result: QueryResult;
+  }) => {
+    if (!tabId || result.page == null || result.page_size == null || result.total_rows != null) {
+      return;
+    }
+
+    const key = `${tabId}:${resultIndex}:${statement}`;
+    if (countQueryKeysRef.current.has(key)) {
+      return;
+    }
+
+    countQueryKeysRef.current.add(key);
+    try {
+      const payload = await invoke<CountQueryPayload>('count_query', {
+        connId: connectionId,
+        query: statement,
+      });
+      appendDiagnostics(connectionId, payload.diagnostics);
+      const cacheKey = result.page_size != null
+        ? buildResultPageCacheKey(connectionId, statement, result.page_size)
+        : null;
+      if (cacheKey) {
+        const bucket = pageCacheRef.current.get(cacheKey);
+        if (bucket) {
+          const totalRows = payload.total_rows;
+          pageCacheRef.current.set(cacheKey, {
+            ...bucket,
+            touchedAt: Date.now(),
+            totalRows,
+            pages: Object.fromEntries(
+              Object.entries(bucket.pages).map(([page, pageResult]) => [
+                Number(page),
+                {
+                  ...pageResult,
+                  total_rows: totalRows,
+                  has_more: pageResult.page != null && pageResult.page_size != null
+                    ? pageResult.page * pageResult.page_size < totalRows
+                    : pageResult.has_more,
+                },
+              ]),
+            ),
+          });
+        }
+      }
+
+      setTabResults(tabId, (current) =>
+        current.map((item, index) => {
+          if (index !== resultIndex || item.statement !== statement) {
+            return item;
+          }
+
+          const totalRows = payload.total_rows;
+          const updatePage = (pageResult: QueryResult): QueryResult => ({
+            ...pageResult,
+            total_rows: totalRows,
+            has_more: pageResult.page != null && pageResult.page_size != null
+              ? pageResult.page * pageResult.page_size < totalRows
+              : pageResult.has_more,
+          });
+          const nextPageCache: Record<number, QueryResult> | undefined = item.pageCache
+            ? Object.fromEntries(
+                Object.entries(item.pageCache).map(([page, pageResult]) => [Number(page), updatePage(pageResult)]),
+              )
+            : item.pageCache;
+
+          return {
+            ...item,
+            total_rows: totalRows,
+            has_more: item.page != null && item.page_size != null
+              ? item.page * item.page_size < totalRows
+              : item.has_more,
+            pageCache: nextPageCache,
+          };
+        }),
+      );
+    } catch (error) {
+      appendLog(connectionId, `Erro ao contar linhas em background: ${extractErrorMessage(error).trim()}`);
+    } finally {
+      countQueryKeysRef.current.delete(key);
+    }
+  }, [appendDiagnostics, appendLog, setTabResults]);
 
   const prefetchNextResultPage = useCallback(async ({
     tabId,
@@ -413,13 +611,35 @@ export default function QueryWorkspace() {
     statement: string;
     result: QueryResult;
   }) => {
-    if (!tabId || result.page == null || result.page_size == null || result.total_rows == null) {
+    if (!tabId || result.page == null || result.page_size == null) {
       return;
     }
 
     const nextPage = result.page + 1;
-    const totalPagesForResult = Math.ceil(result.total_rows / Math.max(result.page_size, 1));
-    if (nextPage > totalPagesForResult) {
+    const totalPagesForResult = result.total_rows == null
+      ? null
+      : Math.ceil(result.total_rows / Math.max(result.page_size, 1));
+    if (totalPagesForResult == null ? result.has_more !== true : nextPage > totalPagesForResult) {
+      return;
+    }
+
+    const cachedPage = readCachedPage(connectionId, statement, result.page_size, nextPage);
+    if (cachedPage) {
+      setTabResults(tabId, (current) =>
+        current.map((item, index) => {
+          if (index !== resultIndex || item.statement !== statement) {
+            return item;
+          }
+
+          return {
+            ...item,
+            pageCache: {
+              ...(item.pageCache ?? {}),
+              [nextPage]: cachedPage,
+            },
+          };
+        }),
+      );
       return;
     }
 
@@ -435,9 +655,10 @@ export default function QueryWorkspace() {
         query: statement,
         page: nextPage,
         pageSize: result.page_size,
-        knownTotalRows: result.total_rows,
+        knownTotalRows: result.total_rows ?? undefined,
       });
       appendDiagnostics(connectionId, payload.diagnostics);
+      writeCachedPage(connectionId, statement, result.page_size, nextPage, payload.result);
 
       setTabResults(tabId, (current) =>
         current.map((item, index) => {
@@ -459,7 +680,7 @@ export default function QueryWorkspace() {
     } finally {
       pagePrefetchKeysRef.current.delete(key);
     }
-  }, [appendDiagnostics, appendLog, setTabResults]);
+  }, [appendDiagnostics, appendLog, readCachedPage, setTabResults, writeCachedPage]);
 
   const runQueryBatch = useCallback(async (queries: string[], connectionId: string, options?: { feedbackStartedAt?: number; tabId?: string | null }) => {
     const statements = queries.map((item) => item.trim()).filter(Boolean);
@@ -476,6 +697,7 @@ export default function QueryWorkspace() {
     const targetTabId = options?.tabId ?? activeTabId;
     
     const runningStartedAt = options?.feedbackStartedAt ?? startExecutionFeedback();
+    const executionId = currentExecutionIdRef.current;
     if (!options?.feedbackStartedAt) {
       await waitForNextPaint();
     }
@@ -491,14 +713,30 @@ export default function QueryWorkspace() {
           page: 1,
           pageSize: resultPageSize,
         });
+        if (isExecutionCancelled(executionId)) {
+          return;
+        }
         syncTransactionState(connectionId, payload);
         appendDiagnostics(connectionId, payload.diagnostics);
+
+        if (payload.result.page && payload.result.page_size) {
+          writeCachedPage(connectionId, statement, payload.result.page_size, payload.result.page, payload.result);
+        }
+        if (isMutatingStatement(statement)) {
+          invalidatePageCacheForConnection(connectionId);
+        }
+
+        const sourceTable = resolveSimpleSourceTable(statement, targetSchema ?? null);
+        const paginationStrategy = isSimpleTableSelectAll(statement) && resolveKeysetPaginationStrategy(sourceTable, metadataByConnection[connectionId], targetEngine) ? 'keyset' : 'offset';
+        const keysetCursors = buildKeysetCursors(payload.result, paginationStrategy, sourceTable, metadataByConnection[connectionId], targetEngine);
 
         nextResults.push({
           ...payload.result,
           statement,
           title: `Result ${index + 1}`,
           pageCache: payload.result.page ? { [payload.result.page]: payload.result } : undefined,
+          paginationStrategy,
+          keysetCursors,
         });
 
         void prefetchNextResultPage({
@@ -514,7 +752,6 @@ export default function QueryWorkspace() {
           `Query executada com sucesso (${payload.result.execution_time}ms): ${summarizeStatementForLog(statement)}`,
         );
 
-        const sourceTable = resolveSimpleSourceTable(statement, targetSchema ?? null);
         if (sourceTable?.tableName && targetEngine) {
           const schemaForFetch = sourceTable.schemaName ?? targetSchema ?? null;
           if (schemaForFetch) {
@@ -523,12 +760,31 @@ export default function QueryWorkspace() {
         }
       }
 
+      if (isExecutionCancelled(executionId)) {
+        return;
+      }
+
       setTabResults(targetTabId, nextResults);
       setTabActiveResultIndex(targetTabId, 0);
+      nextResults.forEach((result, index) => {
+        void countResultRows({
+          tabId: targetTabId,
+          resultIndex: index,
+          connectionId,
+          statement: result.statement,
+          result,
+        });
+      });
       await waitForMinimumRunning(runningStartedAt);
+      if (isExecutionCancelled(executionId)) {
+        return;
+      }
       setSemanticBackgroundState('success');
       scheduleSemanticReset(SEMANTIC_SUCCESS_DURATION_MS);
     } catch (e: any) {
+      if (isExecutionCancelled(executionId)) {
+        return;
+      }
       const nextError = buildQueryErrorPresentation({
         error: e,
         engine: targetEngine,
@@ -542,9 +798,9 @@ export default function QueryWorkspace() {
       setSemanticBackgroundState('error');
       scheduleSemanticReset(SEMANTIC_ERROR_DURATION_MS);
     } finally {
-      setLoading(false);
+      finishExecution(executionId);
     }
-  }, [activeSchemaByConnection, activeTabId, appendDiagnostics, appendLog, connections, metadataByConnection, prefetchNextResultPage, resultPageSize, scheduleSemanticReset, setSemanticBackgroundState, setTabActiveResultIndex, setTabError, setTabResults, startExecutionFeedback]);
+  }, [activeSchemaByConnection, activeTabId, appendDiagnostics, appendLog, connections, countResultRows, finishExecution, invalidatePageCacheForConnection, isExecutionCancelled, metadataByConnection, prefetchNextResultPage, resultPageSize, scheduleSemanticReset, setSemanticBackgroundState, setTabActiveResultIndex, setTabError, setTabResults, startExecutionFeedback, writeCachedPage]);
 
   const ensureExecutionConnectionReady = useCallback(async (connectionId: string) => {
     const connection = connections.find((item) => item.id === connectionId);
@@ -585,12 +841,17 @@ export default function QueryWorkspace() {
     }
 
     const runningStartedAt = startExecutionFeedback();
+    const executionId = currentExecutionIdRef.current;
     await waitForNextPaint();
 
     try {
       await ensureExecutionConnectionReady(resolvedConnectionId);
       await runQueryBatch(statements, resolvedConnectionId, { feedbackStartedAt: runningStartedAt, tabId: activeTabId });
     } catch (executionError) {
+      if (isExecutionCancelled(executionId)) {
+        finishExecution(executionId);
+        return;
+      }
       const connection = connections.find((item) => item.id === resolvedConnectionId) ?? null;
       appendLog(resolvedConnectionId, `Erro de query: ${extractErrorMessage(executionError).trim()}`);
       setTabError(
@@ -606,7 +867,7 @@ export default function QueryWorkspace() {
       await waitForMinimumRunning(runningStartedAt);
       setSemanticBackgroundState('error');
       scheduleSemanticReset(SEMANTIC_ERROR_DURATION_MS);
-      setLoading(false);
+      finishExecution(executionId);
     }
   }, [
     activeSchemaByConnection,
@@ -615,6 +876,8 @@ export default function QueryWorkspace() {
     connections,
     engine,
     ensureExecutionConnectionReady,
+    finishExecution,
+    isExecutionCancelled,
     metadataByConnection,
     resolvedConnectionId,
     runQueryBatch,
@@ -666,12 +929,17 @@ export default function QueryWorkspace() {
       : addTabWithContent(item.queryText, deriveHistoryTabTitle(item.queryText), item.connectionId);
 
     const runningStartedAt = startExecutionFeedback();
+    const executionId = currentExecutionIdRef.current;
     await waitForNextPaint();
 
     try {
       await ensureExecutionConnectionReady(connection.id);
       await runQueryBatch(splitSqlStatements(item.queryText), connection.id, { feedbackStartedAt: runningStartedAt, tabId: targetTabId });
     } catch (runError) {
+      if (isExecutionCancelled(executionId)) {
+        finishExecution(executionId);
+        return;
+      }
       setTabError(
         targetTabId,
         buildQueryErrorPresentation({
@@ -684,13 +952,15 @@ export default function QueryWorkspace() {
       await waitForMinimumRunning(runningStartedAt);
       setSemanticBackgroundState('error');
       scheduleSemanticReset(SEMANTIC_ERROR_DURATION_MS);
-      setLoading(false);
+      finishExecution(executionId);
     }
   }, [
     addTabWithContent,
     activeTabId,
     connections,
     ensureExecutionConnectionReady,
+    finishExecution,
+    isExecutionCancelled,
     replaceActiveTabContent,
     runQueryBatch,
     scheduleSemanticReset,
@@ -742,7 +1012,9 @@ export default function QueryWorkspace() {
       return;
     }
     const targetTabId = activeTabId;
-    const cachedPage = targetResult.pageCache?.[nextPage];
+    const effectivePageSize = targetResult.page_size ?? resultPageSize;
+    const cachedPage = targetResult.pageCache?.[nextPage]
+      ?? readCachedPage(resolvedConnectionId, targetResult.statement, effectivePageSize, nextPage);
     if (cachedPage) {
       setTabResults(targetTabId, (current) =>
         current.map((item, index) =>
@@ -767,6 +1039,19 @@ export default function QueryWorkspace() {
       return;
     }
 
+    const sourceTable = resolveSimpleSourceTable(targetResult.statement, schemaLabel);
+    const keysetQuery = buildKeysetPageQuery({
+      statement: targetResult.statement,
+      sourceTable,
+      metadata: resolvedConnectionId ? metadataByConnection[resolvedConnectionId] : undefined,
+      engine,
+      nextPage,
+      currentPage: targetResult.page ?? 1,
+      cursor: targetResult.keysetCursors?.[targetResult.page ?? 1],
+    });
+    const executedStatement = keysetQuery ?? targetResult.statement;
+    const requestedBackendPage = keysetQuery ? 1 : nextPage;
+
     setLoading(true);
     setTabError(targetTabId, null);
 
@@ -774,26 +1059,41 @@ export default function QueryWorkspace() {
       await ensureExecutionConnectionReady(resolvedConnectionId);
       const payload = await invoke<ExecuteQueryPayload>('execute_query', {
         connId: resolvedConnectionId,
-        query: targetResult.statement,
-        page: nextPage,
-        pageSize: targetResult.page_size ?? resultPageSize,
+        query: executedStatement,
+        page: requestedBackendPage,
+        pageSize: effectivePageSize,
         // Pass the already-known total so the backend skips an extra COUNT(*) query.
         knownTotalRows: targetResult.total_rows ?? undefined,
       });
       syncTransactionState(resolvedConnectionId, payload);
       appendDiagnostics(resolvedConnectionId, payload.diagnostics);
+      const pageResult = keysetQuery
+        ? {
+            ...payload.result,
+            page: nextPage,
+            page_size: effectivePageSize,
+            total_rows: targetResult.total_rows ?? payload.result.total_rows,
+          }
+        : payload.result;
+      writeCachedPage(resolvedConnectionId, targetResult.statement, effectivePageSize, nextPage, pageResult);
+      const nextKeysetCursors = {
+        ...(targetResult.keysetCursors ?? {}),
+        ...buildKeysetCursors(pageResult, keysetQuery ? 'keyset' : targetResult.paginationStrategy ?? 'offset', sourceTable, resolvedConnectionId ? metadataByConnection[resolvedConnectionId] : undefined, engine),
+      };
 
       setTabResults(targetTabId, (current) =>
         current.map((item, index) =>
           index === resultIndex
             ? {
-                ...payload.result,
+                ...pageResult,
                 statement: item.statement,
                 title: item.title,
                 pageCache: {
                   ...(item.pageCache ?? {}),
-                  [nextPage]: payload.result,
+                  [nextPage]: pageResult,
                 },
+                paginationStrategy: keysetQuery ? 'keyset' : item.paginationStrategy,
+                keysetCursors: nextKeysetCursors,
               }
             : item,
         ),
@@ -804,8 +1104,17 @@ export default function QueryWorkspace() {
         resultIndex,
         connectionId: resolvedConnectionId,
         statement: targetResult.statement,
-        result: payload.result,
+        result: pageResult,
       });
+      if (!keysetQuery) {
+        void countResultRows({
+          tabId: targetTabId,
+          resultIndex,
+          connectionId: resolvedConnectionId,
+          statement: targetResult.statement,
+          result: pageResult,
+        });
+      }
     } catch (pageError) {
       appendLog(resolvedConnectionId, `Erro ao carregar pagina: ${extractErrorMessage(pageError).trim()}`);
       setTabError(
@@ -821,7 +1130,7 @@ export default function QueryWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [activeTabId, appendDiagnostics, appendLog, ensureExecutionConnectionReady, engine, metadataByConnection, prefetchNextResultPage, resolvedConnectionId, resultPageSize, results, schemaLabel, setTabActiveResultIndex, setTabError, setTabResults]);
+  }, [activeTabId, appendDiagnostics, appendLog, countResultRows, ensureExecutionConnectionReady, engine, metadataByConnection, prefetchNextResultPage, readCachedPage, resolvedConnectionId, resultPageSize, results, schemaLabel, setTabActiveResultIndex, setTabError, setTabResults, writeCachedPage]);
 
   useEffect(() => {
     setPageSizeDraft(String(resultPageSize));
@@ -908,11 +1217,25 @@ export default function QueryWorkspace() {
   const cachedSourceColumns = resolvedConnectionId && activeSourceTable?.schemaName && activeSourceTable.tableName
     ? metadataByConnection[resolvedConnectionId]?.schemasByName[activeSourceTable.schemaName]?.tablesByName[activeSourceTable.tableName]?.columns
     : undefined;
-  const totalRows = activeResult?.total_rows ?? activeResult?.rows.length ?? 0;
+  const totalRowsKnown = activeResult?.total_rows != null;
+  const loadedRows = activeResult?.rows.length ?? 0;
+  const totalRows = activeResult?.total_rows ?? loadedRows;
   const currentPage = activeResult?.page ?? 1;
   const pageSize = activeResult?.page_size ?? resultPageSize;
-  const totalPages = Math.max(1, Math.ceil(totalRows / Math.max(pageSize, 1)));
   const canPaginate = hasGridResult && activeResult?.page != null && activeResult?.page_size != null;
+  const hasMorePages = activeResult?.has_more === true;
+  const totalPages = totalRowsKnown
+    ? Math.max(1, Math.ceil(totalRows / Math.max(pageSize, 1)))
+    : hasMorePages
+      ? currentPage + 1
+      : currentPage;
+  const canLoadNextPage = canPaginate && (totalRowsKnown ? currentPage < totalPages : hasMorePages);
+  const nextPageCached = Boolean(canPaginate && activeResult?.pageCache?.[currentPage + 1]);
+  const cachedPageCount = activeResult?.pageCache ? Object.keys(activeResult.pageCache).length : 0;
+  const paginationTotalLabel = totalRowsKnown ? String(totalPages) : hasMorePages ? '...' : String(currentPage);
+  const displayedTotalRows = totalRowsKnown
+    ? formatNumber(locale, totalRows)
+    : `${formatNumber(locale, loadedRows)}${hasMorePages ? '+' : ''}`;
   const rowNumberOffset = canPaginate ? (currentPage - 1) * pageSize : 0;
   const selectedDisplayRowIndex =
     selectedSourceRowIndex != null && activeResult
@@ -995,6 +1318,9 @@ export default function QueryWorkspace() {
       });
       syncTransactionState(resolvedConnectionId, payload);
       appendDiagnostics(resolvedConnectionId, payload.diagnostics);
+      if (payload.result.page && payload.result.page_size) {
+        writeCachedPage(resolvedConnectionId, activeResult.statement, payload.result.page_size, payload.result.page, payload.result);
+      }
 
       setTabResults(targetTabId, (current) =>
         current.map((item, index) =>
@@ -1008,6 +1334,13 @@ export default function QueryWorkspace() {
             : item,
         ),
       );
+      void countResultRows({
+        tabId: targetTabId,
+        resultIndex: activeResultIndex,
+        connectionId: resolvedConnectionId,
+        statement: activeResult.statement,
+        result: payload.result,
+      });
     } catch (pageSizeError) {
       appendLog(resolvedConnectionId, `Erro ao aplicar limite de linhas: ${extractErrorMessage(pageSizeError).trim()}`);
       setTabError(
@@ -1023,7 +1356,7 @@ export default function QueryWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [activeResult, activeResultIndex, activeTabId, appendDiagnostics, appendLog, ensureExecutionConnectionReady, engine, metadataByConnection, pageSizeDraft, resolvedConnectionId, resultPageSize, schemaLabel, setResultPageSize, setTabError, setTabResults]);
+  }, [activeResult, activeResultIndex, activeTabId, appendDiagnostics, appendLog, countResultRows, ensureExecutionConnectionReady, engine, metadataByConnection, pageSizeDraft, resolvedConnectionId, resultPageSize, schemaLabel, setResultPageSize, setTabError, setTabResults, writeCachedPage]);
 
   const handleCellChange = useCallback((
     colName: string,
@@ -1057,6 +1390,7 @@ export default function QueryWorkspace() {
     try {
       await ensureExecutionConnectionReady(resolvedConnectionId);
 
+      const pendingSql: string[] = [];
       for (const [row, changes] of pendingRowEdits.entries()) {
         if (!pkCols.length) continue;
         const sql = buildMultiColUpdateSql(
@@ -1067,24 +1401,30 @@ export default function QueryWorkspace() {
           pkCols,
           engine ?? 'postgres',
         );
-        const payload = await invoke<ExecuteQueryPayload>('execute_query', {
-          connId: resolvedConnectionId,
-          query: sql,
-          page: 1,
-          pageSize: 1,
-        });
-        syncTransactionState(resolvedConnectionId, payload);
-        appendDiagnostics(resolvedConnectionId, payload.diagnostics);
+        pendingSql.push(sql);
       }
 
       for (const newRow of pendingNewRows) {
-        const sql = buildInsertSql(
+        pendingSql.push(buildInsertSql(
           activeSourceTable.schemaName,
           activeSourceTable.tableName,
           newRow,
           activeResult.column_meta ?? [],
           engine ?? 'postgres',
-        );
+        ));
+      }
+
+      if (!pendingSql.length) {
+        return;
+      }
+
+      const preview = pendingSql.slice(0, 12).join('\n\n');
+      const suffix = pendingSql.length > 12 ? `\n\n... +${pendingSql.length - 12} comandos` : '';
+      if (!window.confirm(`Aplicar ${pendingSql.length} alteracao(oes) pendente(s)?\n\n${preview}${suffix}`)) {
+        return;
+      }
+
+      for (const sql of pendingSql) {
         const payload = await invoke<ExecuteQueryPayload>('execute_query', {
           connId: resolvedConnectionId,
           query: sql,
@@ -1114,6 +1454,7 @@ export default function QueryWorkspace() {
 
       setPendingRowEdits(new Map());
       setPendingNewRows([]);
+      invalidatePageCacheForConnection(resolvedConnectionId);
       setHistoryRefreshToken((current) => current + 1);
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1141,6 +1482,7 @@ export default function QueryWorkspace() {
     ensureExecutionConnectionReady,
     syncTransactionState,
     setTabResults,
+    invalidatePageCacheForConnection,
   ]);
 
   const handleRowSelect = useCallback((_rowIndex: number, row: Record<string, unknown>) => {
@@ -1200,6 +1542,7 @@ export default function QueryWorkspace() {
       });
       syncTransactionState(resolvedConnectionId, payload);
       appendDiagnostics(resolvedConnectionId, payload.diagnostics);
+      invalidatePageCacheForConnection(resolvedConnectionId);
 
       setHistoryRefreshToken((current) => current + 1);
       setTabResults(targetTabId, (current) =>
@@ -1240,6 +1583,7 @@ export default function QueryWorkspace() {
     resolvedConnectionId,
     selectedSourceRowIndex,
     setTabResults,
+    invalidatePageCacheForConnection,
   ]);
 
   const handleTransactionAction = useCallback(async (action: 'COMMIT' | 'ROLLBACK') => {
@@ -1405,15 +1749,13 @@ export default function QueryWorkspace() {
         </div>
 
         {activeResult && hasGridResult ? (
-          <div className="flex flex-1 items-center min-w-0">
-
-            {/* Container 1 — início: + e salvar */}
-            <div className="flex items-center gap-1 shrink-0">
+          <div className="flex flex-1 items-center gap-2 overflow-x-auto scrollbar-hide min-w-0">
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
               <button
                 type="button"
                 onClick={handleAddNewRow}
                 disabled={!canEditGrid || loading}
-                className="inline-flex items-center rounded-lg border border-border/70 px-2 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-35"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-35"
                 title={t('addRow')}
               >
                 <Plus size={13} />
@@ -1422,122 +1764,140 @@ export default function QueryWorkspace() {
                 type="button"
                 onClick={() => void handleSaveChanges()}
                 disabled={!hasPendingChanges || loading}
-                className={`inline-flex items-center rounded-lg border px-2 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-md text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
                   hasPendingChanges
-                    ? 'border-amber-400/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/18'
-                    : 'border-border/70 text-muted hover:bg-border/30 hover:text-text'
+                    ? 'bg-amber-400/12 text-amber-200 hover:bg-amber-400/18'
+                    : 'text-muted hover:bg-border/30 hover:text-text'
                 }`}
-                title={t('saveChanges')}
+                title={hasPendingChanges ? `${t('saveChanges')} (${pendingRowEdits.size + pendingNewRows.length})` : t('saveChanges')}
               >
                 <Save size={13} />
               </button>
+              {hasPendingChanges ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingRowEdits(new Map());
+                    setPendingNewRows([]);
+                    setSaveError(null);
+                  }}
+                  disabled={loading}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-35"
+                  title="Desfazer alteracoes pendentes"
+                >
+                  <RotateCcw size={13} />
+                </button>
+              ) : null}
             </div>
 
-            {/* Container 2 — centro: stats, transação, paginação, filtro, fullscreen, exports */}
-            <div className="flex flex-1 items-center justify-center gap-2 min-w-0 px-2">
-              <div className="hidden md:flex items-center gap-1.5 text-xs shrink-0" style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--bt-muted)' }}>
-                <>
-                  <span style={{ color: 'var(--bt-muted)' }}>✓</span>
-                  <span>
-                    {formatNumber(locale, filteredRows.length)}
-                    {' / '}
-                    {formatNumber(locale, quickFilter ? activeResult.rows.length : totalRows)}
-                    {quickFilter && totalRows !== activeResult.rows.length ? ` / ${formatNumber(locale, totalRows)}` : ''}
-                    {' '}
-                    {t('rowsLabel')}
-                  </span>
-                  {canPaginate ? (
-                    <>
-                      <span style={{ opacity: 0.4 }}>│</span>
-                      <span>{t('pageOf', { page: currentPage, total: totalPages })}</span>
-                    </>
-                  ) : null}
-                  <span style={{ opacity: 0.4 }}>│</span>
-                </>
-                <span style={{ color: 'var(--bt-muted)' }}>{activeResult.execution_time}ms</span>
-              </div>
-              {transactionOpen ? (
-                <>
-                  <span className="inline-flex items-center rounded-lg border border-sky-400/30 bg-sky-400/10 px-2.5 py-1.5 text-xs text-sky-200">
-                    {t('transactionOpen')}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void handleTransactionAction('COMMIT')}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/35 bg-emerald-400/12 px-2.5 py-1.5 text-xs text-emerald-200 transition-colors hover:bg-emerald-400/18"
-                  >
-                    {t('commitAction')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleTransactionAction('ROLLBACK')}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/25 bg-red-400/10 px-2.5 py-1.5 text-xs text-red-300 transition-colors hover:bg-red-400/16"
-                  >
-                    {t('rollbackAction')}
-                  </button>
-                </>
-              ) : null}
+            <div className="hidden lg:flex shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-background/18 px-2.5 py-1.5 text-xs text-muted" style={{ fontFamily: 'ui-monospace, monospace' }}>
+              <Check size={12} className="text-emerald-300/80" />
+              <span>
+                {formatNumber(locale, filteredRows.length)}
+                {' / '}
+                {quickFilter ? formatNumber(locale, activeResult.rows.length) : displayedTotalRows}
+                {quickFilter && (totalRowsKnown ? totalRows !== activeResult.rows.length : hasMorePages)
+                  ? ` / ${displayedTotalRows}`
+                  : ''}
+                {' '}
+                {t('rowsLabel')}
+              </span>
               {canPaginate ? (
-                <div className="flex items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
-                  <label className="inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-muted">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={pageSizeDraft}
-                      onChange={(event) => setPageSizeDraft(event.target.value.replace(/[^0-9]/g, ''))}
-                      onBlur={() => void applyPageSize()}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          void applyPageSize();
-                        }
-                      }}
-                      className="w-14 rounded border border-border/70 bg-background/35 px-1.5 py-1 text-right text-[11px] text-text outline-none focus:border-primary"
-                    />
-                    <span>{t('rowsLabel')}</span>
-                  </label>
-                  <button
-                    onClick={() => void loadResultPage(activeResultIndex, currentPage - 1)}
-                    disabled={loading || currentPage <= 1}
-                    className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                    aria-label={t('previousPage')}
-                  >
-                    <ChevronLeft size={14} />
-                  </button>
-                  <span className="px-1 text-[11px] text-muted">
-                    {currentPage}/{totalPages}
-                  </span>
-                  <button
-                    onClick={() => void loadResultPage(activeResultIndex, currentPage + 1)}
-                    disabled={loading || currentPage >= totalPages}
-                    className="inline-flex items-center rounded-md px-1.5 py-1 text-xs text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                    aria-label={t('nextPage')}
-                  >
-                    <ChevronRight size={14} />
-                  </button>
-                </div>
+                <>
+                  <span className="text-muted/35">|</span>
+                  <span>{t('pageOf', { page: currentPage, total: paginationTotalLabel })}</span>
+                </>
               ) : null}
-              <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5 min-w-[160px] md:min-w-[200px]">
-                <Search size={13} className="shrink-0 text-muted" />
-                <input
-                  value={quickFilterInput}
-                  onChange={(event) => setQuickFilterInput(event.target.value)}
-                  placeholder={t('quickFilter')}
-                  className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => setGridFullscreen((current) => !current)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text"
-                title={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
-              >
-                {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-                {fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
-              </button>
+              <span className="text-muted/35">|</span>
+              <span>{activeResult.execution_time}ms</span>
+            </div>
+
+            {transactionOpen ? (
+              <div className="flex shrink-0 items-center gap-1 rounded-lg border border-sky-400/25 bg-sky-400/8 px-1.5 py-1">
+                <span className="hidden xl:inline px-1 text-xs text-sky-200">
+                  {t('transactionOpen')}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleTransactionAction('COMMIT')}
+                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-emerald-200 transition-colors hover:bg-emerald-400/14"
+                >
+                  {t('commitAction')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleTransactionAction('ROLLBACK')}
+                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-red-300 transition-colors hover:bg-red-400/14"
+                >
+                  {t('rollbackAction')}
+                </button>
+              </div>
+            ) : null}
+
+            {canPaginate ? (
+              <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
+                <label className="inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-muted">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={pageSizeDraft}
+                    onChange={(event) => setPageSizeDraft(event.target.value.replace(/[^0-9]/g, ''))}
+                    onBlur={() => void applyPageSize()}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        void applyPageSize();
+                      }
+                    }}
+                    className="w-14 rounded border border-border/70 bg-background/35 px-1.5 py-1 text-right text-[11px] text-text outline-none focus:border-primary"
+                  />
+                  <span>{t('rowsLabel')}</span>
+                </label>
+                <button
+                  onClick={() => void loadResultPage(activeResultIndex, currentPage - 1)}
+                  disabled={loading || currentPage <= 1}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label={t('previousPage')}
+                  title={t('previousPage')}
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <span className="min-w-[52px] text-center text-[11px] text-muted">
+                  {currentPage}/{paginationTotalLabel}
+                </span>
+                <button
+                  onClick={() => void loadResultPage(activeResultIndex, currentPage + 1)}
+                  disabled={loading || !canLoadNextPage}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-border/30 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label={t('nextPage')}
+                  title={t('nextPage')}
+                >
+                  <ChevronRight size={14} />
+                </button>
+                {nextPageCached ? (
+                  <span
+                    className="h-1.5 w-1.5 rounded-full bg-emerald-300/80"
+                    title={`Proxima pagina em cache (${cachedPageCount})`}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+
+            <label className="flex min-w-[150px] max-w-[260px] flex-1 items-center gap-2 rounded-lg border border-border/70 bg-background/30 px-2.5 py-1.5">
+              <Search size={13} className="shrink-0 text-muted" />
+              <input
+                ref={quickFilterInputRef}
+                value={quickFilterInput}
+                onChange={(event) => setQuickFilterInput(event.target.value)}
+                placeholder={t('quickFilter')}
+                className="w-full bg-transparent text-xs text-text outline-none placeholder:text-muted"
+              />
+            </label>
+
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
               <button
                 onClick={() => {
-                  exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel));
+                  exportRowsAsCsv(activeResult.columns, filteredRows, buildExportBaseName(connectionLabel, 'filtered'));
                   if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
                   setExportedFormat('csv');
                   exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
@@ -1545,15 +1905,16 @@ export default function QueryWorkspace() {
                 className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
                   exportedFormat === 'csv'
                     ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
-                    : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                    : 'border-transparent text-muted hover:bg-border/30 hover:text-text'
                 }`}
+                title="Exportar CSV"
               >
                 {exportedFormat === 'csv' ? <Check size={13} /> : <Download size={13} />}
                 CSV
               </button>
               <button
                 onClick={() => {
-                  exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel));
+                  exportRowsAsJson(filteredRows, buildExportBaseName(connectionLabel, 'filtered'));
                   if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
                   setExportedFormat('json');
                   exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
@@ -1561,24 +1922,39 @@ export default function QueryWorkspace() {
                 className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
                   exportedFormat === 'json'
                     ? 'border-emerald-400/40 bg-emerald-400/12 text-emerald-200'
-                    : 'border-border text-muted hover:bg-border/30 hover:text-text'
+                    : 'border-transparent text-muted hover:bg-border/30 hover:text-text'
                 }`}
+                title="Exportar JSON"
               >
                 {exportedFormat === 'json' ? <Check size={13} /> : <FileJson size={13} />}
                 JSON
               </button>
-            </div>
-
-            {/* Container 3 — fim: lixeira colada na borda */}
-            <div className="shrink-0">
               <button
-                type="button"
-                onClick={() => void handleDeleteSelectedRow()}
-                disabled={selectedSourceRowIndex == null || loading}
-                className="inline-flex items-center rounded-lg border border-red-400/25 px-2 py-1.5 text-xs text-red-300/70 transition-colors hover:bg-red-400/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-35"
-                title={t('deleteSelectedRow')}
+                onClick={() => {
+                  exportRowsAsCsv(activeResult.columns, activeResult.rows, buildExportBaseName(connectionLabel, 'page'));
+                  if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
+                  setExportedFormat('csv');
+                  exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-transparent px-2.5 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text"
+                title="Exportar pagina atual em CSV"
               >
-                <Trash2 size={13} />
+                <Download size={13} />
+                Pagina
+              </button>
+              <button
+                onClick={() => {
+                  const loadedRows = collectLoadedPageRows(activeResult);
+                  exportRowsAsJsonLines(loadedRows, buildExportBaseName(connectionLabel, 'loaded-pages'));
+                  if (exportFeedbackRef.current) window.clearTimeout(exportFeedbackRef.current);
+                  setExportedFormat('json');
+                  exportFeedbackRef.current = window.setTimeout(() => setExportedFormat(null), 1500);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-transparent px-2.5 py-1.5 text-xs text-muted transition-colors hover:bg-border/30 hover:text-text"
+                title="Exportar paginas carregadas em JSON Lines"
+              >
+                <FileJson size={13} />
+                JSONL
               </button>
             </div>
 
@@ -1611,6 +1987,39 @@ export default function QueryWorkspace() {
             ) : null}
           </div>
         ) : null}
+
+        <div className="ml-auto flex shrink-0 items-center gap-1 rounded-lg border border-border/70 bg-background/24 px-1.5 py-1">
+          {activeResult && hasGridResult ? (
+            <button
+              type="button"
+              onClick={() => void handleDeleteSelectedRow()}
+              disabled={selectedSourceRowIndex == null || loading}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-red-300/70 transition-colors hover:bg-red-400/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-35"
+              title={t('deleteSelectedRow')}
+              aria-label={t('deleteSelectedRow')}
+            >
+              <Trash2 size={13} />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setResultsCollapsed(true)}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text"
+            title="Fechar grid"
+            aria-label="Fechar grid"
+          >
+            <X size={13} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setGridFullscreen((current) => !current)}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-border/30 hover:text-text"
+            title={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
+            aria-label={fullscreen ? t('exitFullscreenGrid') : t('maximizeGrid')}
+          >
+            {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+        </div>
       </div>
 
       {saveError ? (
@@ -1669,6 +2078,9 @@ export default function QueryWorkspace() {
                   rows={filteredRows}
                   rowNumberOffset={quickFilter ? 0 : rowNumberOffset}
                   density={density}
+                  layoutKey={buildGridLayoutKey(resolvedConnectionId, activeResult.statement, activeSourceTable)}
+                  onFocusQuickFilter={() => quickFilterInputRef.current?.focus()}
+                  accentColor={connectionColor}
                   onCellChange={canEditGrid ? handleCellChange : undefined}
                   pendingRowEdits={pendingRowEdits}
                   pendingNewRows={canEditGrid ? pendingNewRows : undefined}
@@ -1800,10 +2212,16 @@ export default function QueryWorkspace() {
               }}
             >
               <button
-                onClick={() => void executeQuery()}
-                disabled={loading || !activeTab || !resolvedConnectionId}
+                onClick={() => {
+                  if (loading && activeExecutionId) {
+                    cancelActiveExecution();
+                    return;
+                  }
+                  void executeQuery();
+                }}
+                disabled={(loading && !activeExecutionId) || (!loading && (!activeTab || !resolvedConnectionId))}
                 className={`flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-bold transition-all ${
-                  loading ? 'cursor-default opacity-100' : 'disabled:cursor-not-allowed disabled:opacity-40'
+                  loading && activeExecutionId ? 'cursor-pointer opacity-100' : 'disabled:cursor-not-allowed disabled:opacity-40'
                 }`}
                 style={{
                   background: connectionColor,
@@ -1814,10 +2232,10 @@ export default function QueryWorkspace() {
                 }}
               >
                 {loading
-                  ? <PulseLoader color="#041014" size="xs" surface="transparent" />
+                  ? <Square size={13} style={{ fill: '#041014', color: '#041014', opacity: 0.82 }} />
                   : <Play size={14} style={{ fill: '#041014', color: '#041014', opacity: 0.82 }} />
                 }
-                {loading ? t('statusRunning') : t('run')}
+                {loading ? (activeExecutionId ? t('cancelExecution') : t('statusRunning')) : t('run')}
                 <span style={{ opacity: 0.5, fontFamily: 'ui-monospace, monospace', fontSize: 10 }}>⌘↵</span>
               </button>
 
@@ -2067,7 +2485,7 @@ export default function QueryWorkspace() {
             );
           })()}
 
-          {!gridFullscreen ? (
+          {!gridFullscreen && !resultsCollapsed ? (
             <>
               <div
                 role="separator"
@@ -2083,6 +2501,15 @@ export default function QueryWorkspace() {
               </div>
               {renderResultsPanel(false)}
             </>
+          ) : null}
+          {!gridFullscreen && resultsCollapsed ? (
+            <button
+              type="button"
+              onClick={() => setResultsCollapsed(false)}
+              className="absolute bottom-3 right-3 z-20 rounded-lg border border-border bg-surface/95 px-3 py-1.5 text-xs text-muted shadow-lg hover:bg-border/30 hover:text-text"
+            >
+              Mostrar resultados
+            </button>
           ) : null}
         </div>
       </div>
@@ -2449,6 +2876,16 @@ function isUpdateWithoutWhere(sql: string) {
   return normalized.startsWith('UPDATE ') && !normalized.includes(' WHERE ');
 }
 
+function isMutatingStatement(sql: string) {
+  const normalized = stripSqlCommentsAndStrings(sql).replace(/\s+/g, ' ').trim().toUpperCase();
+  return /^(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|ALTER|DROP|CREATE|REPLACE)\b/.test(normalized);
+}
+
+function isSimpleTableSelectAll(sql: string) {
+  const normalized = stripSqlCommentsAndStrings(sql).replace(/\s+/g, ' ').trim();
+  return /^SELECT\s+\*\s+FROM\s+(?:"[^"]+"|`[^`]+`|[a-zA-Z0-9_$#]+)(?:\.(?:"[^"]+"|`[^`]+`|[a-zA-Z0-9_$#]+))?$/i.test(normalized);
+}
+
 function stripSqlCommentsAndStrings(sql: string) {
   let result = '';
   let inSingleQuote = false;
@@ -2713,6 +3150,129 @@ function applyQuickFilter(rows: any[], columns: string[], quickFilter: string) {
   );
 }
 
+function buildResultPageCacheKey(connectionId: string, statement: string, pageSize: number) {
+  return [
+    connectionId,
+    normalizeSqlForCache(statement),
+    String(pageSize),
+  ].join('\u0000');
+}
+
+function normalizeSqlForCache(statement: string) {
+  return statement.replace(/\s+/g, ' ').trim();
+}
+
+function pruneResultPageCache(cache: Map<string, PageCacheBucket>) {
+  const maxBuckets = 24;
+  const maxPages = 96;
+  const maxRows = 60_000;
+
+  let pageCount = 0;
+  let rowCount = 0;
+  for (const bucket of cache.values()) {
+    const pages = Object.values(bucket.pages);
+    pageCount += pages.length;
+    rowCount += pages.reduce((total, page) => total + page.rows.length, 0);
+  }
+
+  if (cache.size <= maxBuckets && pageCount <= maxPages && rowCount <= maxRows) {
+    return;
+  }
+
+  const entries = [...cache.entries()].sort((a, b) => a[1].touchedAt - b[1].touchedAt);
+  for (const [key, bucket] of entries) {
+    cache.delete(key);
+    pageCount -= Object.keys(bucket.pages).length;
+    rowCount -= Object.values(bucket.pages).reduce((total, page) => total + page.rows.length, 0);
+
+    if (cache.size <= maxBuckets && pageCount <= maxPages && rowCount <= maxRows) {
+      break;
+    }
+  }
+}
+
+function resolveKeysetPaginationStrategy(
+  sourceTable: ReturnType<typeof resolveSimpleSourceTable>,
+  metadataConnection: MetadataConnectionEntry | undefined,
+  engine: DatabaseEngine | undefined,
+) {
+  if (!sourceTable?.schemaName || !sourceTable.tableName || !metadataConnection || !engine) {
+    return null;
+  }
+
+  const table = metadataConnection.schemasByName[sourceTable.schemaName]?.tablesByName[sourceTable.tableName];
+  const primaryKeys = table?.columns?.filter((column) => column.isPrimaryKey === true) ?? [];
+  if (primaryKeys.length !== 1) {
+    return null;
+  }
+
+  return {
+    pkColumn: primaryKeys[0],
+  };
+}
+
+function buildKeysetCursors(
+  result: QueryResult,
+  strategy: 'offset' | 'keyset',
+  sourceTable: ReturnType<typeof resolveSimpleSourceTable>,
+  metadataConnection: MetadataConnectionEntry | undefined,
+  engine: DatabaseEngine | undefined,
+) {
+  if (strategy !== 'keyset' || result.page == null || !result.rows.length) {
+    return undefined;
+  }
+
+  const resolved = resolveKeysetPaginationStrategy(sourceTable, metadataConnection, engine);
+  if (!resolved) {
+    return undefined;
+  }
+
+  const lastRow = result.rows[result.rows.length - 1] as Record<string, unknown>;
+  return {
+    [result.page]: lastRow[resolved.pkColumn.columnName],
+  };
+}
+
+function buildKeysetPageQuery({
+  statement,
+  sourceTable,
+  metadata,
+  engine,
+  nextPage,
+  currentPage,
+  cursor,
+}: {
+  statement: string;
+  sourceTable: ReturnType<typeof resolveSimpleSourceTable>;
+  metadata: MetadataConnectionEntry | undefined;
+  engine: DatabaseEngine | undefined;
+  nextPage: number;
+  currentPage: number;
+  cursor: unknown;
+}) {
+  if (nextPage !== currentPage + 1 || cursor == null || !engine) {
+    return null;
+  }
+
+  if (!isSimpleTableSelectAll(statement)) {
+    return null;
+  }
+
+  const resolved = resolveKeysetPaginationStrategy(sourceTable, metadata, engine);
+  if (!resolved || !sourceTable?.tableName) {
+    return null;
+  }
+
+  const qi = (name: string) => quoteIdentifier(name, engine);
+  const tableRef = sourceTable.schemaName
+    ? `${qi(sourceTable.schemaName)}.${qi(sourceTable.tableName)}`
+    : qi(sourceTable.tableName);
+  const pk = qi(resolved.pkColumn.columnName);
+  const cursorValue = quoteValue(String(cursor), resolved.pkColumn.dataType, engine);
+
+  return `SELECT * FROM ${tableRef} WHERE ${pk} > ${cursorValue} ORDER BY ${pk} ASC`;
+}
+
 function exportRowsAsCsv(columns: string[], rows: any[], baseName: string) {
   const lines = [
     columns.map(escapeCsvValue).join(','),
@@ -2724,6 +3284,25 @@ function exportRowsAsCsv(columns: string[], rows: any[], baseName: string) {
 
 function exportRowsAsJson(rows: any[], baseName: string) {
   downloadTextFile(`${baseName}.json`, JSON.stringify(rows, null, 2), 'application/json;charset=utf-8;');
+}
+
+function exportRowsAsJsonLines(rows: any[], baseName: string) {
+  downloadTextFile(
+    `${baseName}.jsonl`,
+    rows.map((row) => JSON.stringify(row)).join('\n'),
+    'application/x-ndjson;charset=utf-8;',
+  );
+}
+
+function collectLoadedPageRows(result: QueryExecutionResult) {
+  const pages = result.pageCache
+    ? Object.entries(result.pageCache)
+        .map(([page, pageResult]) => [Number(page), pageResult] as const)
+        .sort((a, b) => a[0] - b[0])
+        .map(([, pageResult]) => pageResult.rows)
+    : [result.rows];
+
+  return pages.flat();
 }
 
 function downloadTextFile(filename: string, contents: string, contentType: string) {
@@ -2742,13 +3321,33 @@ function escapeCsvValue(value: unknown) {
   return `"${escaped}"`;
 }
 
-function buildExportBaseName(connectionLabel?: string) {
+function buildExportBaseName(connectionLabel?: string, scope = 'results') {
   const safeConnection = (connectionLabel || 'results')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
-  return `${safeConnection || 'results'}-${Date.now()}`;
+  return `${safeConnection || 'results'}-${scope}-${Date.now()}`;
+}
+
+function buildGridLayoutKey(
+  connectionId: string | null,
+  statement: string,
+  sourceTable: ReturnType<typeof resolveSimpleSourceTable>,
+) {
+  if (connectionId && sourceTable?.schemaName && sourceTable.tableName) {
+    return `${connectionId}:${sourceTable.schemaName}.${sourceTable.tableName}`;
+  }
+
+  return `query:${hashString(statement.replace(/\s+/g, ' ').trim())}`;
+}
+
+function hashString(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index++) {
+    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash).toString(36);
 }
 
 function summarizeStatementForLog(statement: string) {
