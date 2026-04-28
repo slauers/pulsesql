@@ -40,6 +40,8 @@ export default function ConfigurationDialog({
   const monacoThemeName = useUiPreferencesStore((state) => state.monacoThemeName);
   const density = useUiPreferencesStore((state) => state.density);
   const editorFontSize = useUiPreferencesStore((state) => state.editorFontSize);
+  const formatOnSave = useUiPreferencesStore((state) => state.formatOnSave);
+  const autoCloseBrackets = useUiPreferencesStore((state) => state.autoCloseBrackets);
   const sidebarWidth = useUiPreferencesStore((state) => state.sidebarWidth);
   const sidebarCollapsed = useUiPreferencesStore((state) => state.sidebarCollapsed);
   const logsExpandedByDefault = useUiPreferencesStore((state) => state.logsExpandedByDefault);
@@ -55,6 +57,8 @@ export default function ConfigurationDialog({
   const setMonacoThemeName = useUiPreferencesStore((state) => state.setMonacoThemeName);
   const setDensity = useUiPreferencesStore((state) => state.setDensity);
   const setEditorFontSize = useUiPreferencesStore((state) => state.setEditorFontSize);
+  const setFormatOnSave = useUiPreferencesStore((state) => state.setFormatOnSave);
+  const setAutoCloseBrackets = useUiPreferencesStore((state) => state.setAutoCloseBrackets);
   const setSidebarWidth = useUiPreferencesStore((state) => state.setSidebarWidth);
   const setSidebarCollapsed = useUiPreferencesStore((state) => state.setSidebarCollapsed);
   const setLogsExpandedByDefault = useUiPreferencesStore((state) => state.setLogsExpandedByDefault);
@@ -83,6 +87,8 @@ export default function ConfigurationDialog({
         monacoThemeName,
         density,
         editorFontSize,
+        formatOnSave,
+        autoCloseBrackets,
       },
       workbench: {
         sidebarWidth,
@@ -103,6 +109,8 @@ export default function ConfigurationDialog({
       commandPaletteShortcut,
       density,
       editorFontSize,
+      formatOnSave,
+      autoCloseBrackets,
       locale,
       monacoThemeName,
       favoriteConnectionId,
@@ -194,6 +202,8 @@ export default function ConfigurationDialog({
     setMonacoThemeName(nextConfig.ui.monacoThemeName);
     setDensity(nextConfig.ui.density);
     setEditorFontSize(nextConfig.ui.editorFontSize);
+    setFormatOnSave(nextConfig.ui.formatOnSave);
+    setAutoCloseBrackets(nextConfig.ui.autoCloseBrackets);
     setSidebarWidth(nextConfig.workbench.sidebarWidth);
     setSidebarCollapsed(nextConfig.workbench.sidebarCollapsed);
     setLogsExpandedByDefault(nextConfig.workbench.logsExpandedByDefault);
@@ -266,12 +276,14 @@ export default function ConfigurationDialog({
     { section: 'interface', label: t('language'), description: t('languageDescription'), key: 'language' },
     { section: 'interface', label: t('theme'), description: t('themeDescription'), key: 'theme' },
     { section: 'interface', label: t('density'), description: t('densityDescription'), key: 'density' },
-    { section: 'interface', label: t('rowsPerPage'), description: t('rowsPerPageDescription'), key: 'rowsPerPage' },
     { section: 'interface', label: t('semanticBackground'), description: t('semanticBackgroundDescription'), key: 'semanticBackground' },
     { section: 'interface', label: t('showServerTimeInStatusBar'), description: t('showServerTimeInStatusBarDescription'), key: 'showServerTime' },
     { section: 'interface', label: t('showAutocommitInStatusBar'), description: t('showAutocommitInStatusBarDescription'), key: 'showAutocommit' },
     { section: 'editor', label: t('monacoThemeName'), description: t('monacoThemeNameDescription'), key: 'monacoTheme' },
     { section: 'editor', label: t('editorFontSize'), description: t('editorFontSizeDescription'), key: 'editorFontSize' },
+    { section: 'editor', label: t('rowsPerPage'), description: t('rowsPerPageDescription'), key: 'rowsPerPage' },
+    { section: 'editor', label: t('formatOnSave'), description: t('formatOnSaveDescription'), key: 'formatOnSave' },
+    { section: 'editor', label: t('autoCloseBrackets'), description: t('autoCloseBracketsDescription'), key: 'autoCloseBrackets' },
     { section: 'workbench', label: t('sidebarWidth'), description: t('sidebarWidthDescription'), key: 'sidebarWidth' },
     { section: 'workbench', label: t('sidebarCollapsedOnStartup'), description: t('sidebarCollapsedOnStartupDescription'), key: 'sidebarCollapsed' },
     { section: 'workbench', label: t('logsExpandedByDefault'), description: t('logsExpandedByDefaultDescription'), key: 'logsExpanded' },
@@ -431,7 +443,7 @@ export default function ConfigurationDialog({
                   ) : (
                     <div className="space-y-5">
                       {/* Interface section */}
-                      {(!q || ['language','theme','density','semanticBackground','rowsPerPage','showServerTime','showAutocommit'].some(k => matchingKeys?.has(k))) && activeSection === 'interface' ? (
+                      {(!q || ['language','theme','density','semanticBackground','showServerTime','showAutocommit'].some(k => matchingKeys?.has(k))) && activeSection === 'interface' ? (
                         <SectionBlock title={t('interfaceSection')}>
                           {shouldShow('language') && (
                             <SettingRow label={t('language')} description={t('languageDescription')}>
@@ -484,23 +496,6 @@ export default function ConfigurationDialog({
                                   { value: 'comfortable', label: t('densityComfortable') },
                                   { value: 'spacious', label: t('densitySpacious') },
                                 ]}
-                              />
-                            </SettingRow>
-                          )}
-                          {shouldShow('rowsPerPage') && (
-                            <SettingRow label={t('rowsPerPage')} description={t('rowsPerPageDescription')}>
-                              <input
-                                type="number"
-                                min={1}
-                                max={1000}
-                                value={draft.ui.resultPageSize}
-                                onChange={(event) =>
-                                  setDraft((current) => ({
-                                    ...current,
-                                    ui: { ...current.ui, resultPageSize: normalizePageSize(Number(event.target.value)) },
-                                  }))
-                                }
-                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
                               />
                             </SettingRow>
                           )}
@@ -560,8 +555,14 @@ export default function ConfigurationDialog({
                       ) : null}
 
                       {/* Editor section */}
-                      {(!q || ['monacoTheme','editorFontSize'].some(k => matchingKeys?.has(k))) && activeSection === 'editor' ? (
+                      {(!q || ['monacoTheme','editorFontSize','rowsPerPage','formatOnSave','autoCloseBrackets'].some(k => matchingKeys?.has(k))) && activeSection === 'editor' ? (
                         <SectionBlock title={t('editorSection')}>
+                          {/* EDITOR sub-header */}
+                          {(shouldShow('monacoTheme') || shouldShow('editorFontSize') || shouldShow('rowsPerPage')) && (
+                            <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/50">
+                              {t('editorSection')}
+                            </div>
+                          )}
                           {shouldShow('monacoTheme') && (
                             <SettingRow label={t('monacoThemeName')} description={t('monacoThemeNameDescription')}>
                               <AppSelect
@@ -593,6 +594,62 @@ export default function ConfigurationDialog({
                                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
                               />
                             </SettingRow>
+                          )}
+                          {shouldShow('rowsPerPage') && (
+                            <SettingRow label={t('rowsPerPage')} description={t('rowsPerPageDescription')}>
+                              <input
+                                type="number"
+                                min={1}
+                                max={1000}
+                                value={draft.ui.resultPageSize}
+                                onChange={(event) =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    ui: { ...current.ui, resultPageSize: normalizePageSize(Number(event.target.value)) },
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text outline-none focus:border-primary"
+                              />
+                            </SettingRow>
+                          )}
+                          {/* BEHAVIOR sub-header */}
+                          {(shouldShow('formatOnSave') || shouldShow('autoCloseBrackets')) && (
+                            <div className="mt-2 border-t border-border/40 pt-3">
+                              <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/50">
+                                {t('behaviorSection')}
+                              </div>
+                              <div className="divide-y divide-border/30">
+                                {shouldShow('formatOnSave') && (
+                                  <ToggleRow
+                                    label={t('formatOnSave')}
+                                    description={t('formatOnSaveDescription')}
+                                    checked={draft.ui.formatOnSave}
+                                    color={cc}
+                                    onChange={(checked) =>
+                                      setDraft((current) => ({
+                                        ...current,
+                                        ui: { ...current.ui, formatOnSave: checked },
+                                      }))
+                                    }
+                                    badge="NEW"
+                                  />
+                                )}
+                                {shouldShow('autoCloseBrackets') && (
+                                  <ToggleRow
+                                    label={t('autoCloseBrackets')}
+                                    description={t('autoCloseBracketsDescription')}
+                                    checked={draft.ui.autoCloseBrackets}
+                                    color={cc}
+                                    onChange={(checked) =>
+                                      setDraft((current) => ({
+                                        ...current,
+                                        ui: { ...current.ui, autoCloseBrackets: checked },
+                                      }))
+                                    }
+                                  />
+                                )}
+                              </div>
+                            </div>
                           )}
                         </SectionBlock>
                       ) : null}
@@ -845,17 +902,26 @@ function ToggleRow({
   checked,
   onChange,
   color,
+  badge,
 }: {
   label: string;
   description: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   color: string;
+  badge?: string;
 }) {
   return (
     <label className="flex cursor-pointer items-center justify-between gap-4 py-3">
       <div>
-        <div className="text-sm font-medium text-text">{label}</div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-text">{label}</span>
+          {badge ? (
+            <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary">
+              {badge}
+            </span>
+          ) : null}
+        </div>
         <div className="text-xs text-muted">{description}</div>
       </div>
       <ToggleSwitch checked={checked} onChange={onChange} color={color} />
@@ -949,6 +1015,8 @@ function normalizeJsonConfig(input: unknown): SystemConfig {
       monacoThemeName: normalizeMonacoThemeName(ui.monacoThemeName),
       density: normalizeDensity(ui.density),
       editorFontSize: normalizeEditorFontSize(ui.editorFontSize),
+      formatOnSave: ui.formatOnSave === true,
+      autoCloseBrackets: ui.autoCloseBrackets !== false,
     },
     workbench: {
       sidebarWidth: normalizeSidebarWidth(workbench.sidebarWidth),

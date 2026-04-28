@@ -146,6 +146,8 @@ export default function QueryWorkspace() {
   const themeId = useUiPreferencesStore((state) => state.themeId);
   const monacoThemeName = useUiPreferencesStore((state) => state.monacoThemeName);
   const editorFontSize = useUiPreferencesStore((state) => state.editorFontSize);
+  const formatOnSave = useUiPreferencesStore((state) => state.formatOnSave);
+  const autoCloseBrackets = useUiPreferencesStore((state) => state.autoCloseBrackets);
   const density = useUiPreferencesStore((state) => state.density);
   const metadataByConnection = useDatabaseSessionStore((state) => state.metadataByConnection);
   const activeSchemaByConnection = useDatabaseSessionStore((state) => state.activeSchemaByConnection);
@@ -204,6 +206,7 @@ export default function QueryWorkspace() {
   const [activePanel, setActivePanel] = useState<'results' | 'logs'>('results');
   const editErrorTimeoutRef = useRef<number | null>(null);
   const executeQueryRef = useRef<() => void>(() => {});
+  const formatOnSaveRef = useRef(formatOnSave);
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const connectionMenuButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -823,6 +826,10 @@ export default function QueryWorkspace() {
   useEffect(() => {
     setPageSizeDraft(String(resultPageSize));
   }, [resultPageSize]);
+
+  useEffect(() => {
+    formatOnSaveRef.current = formatOnSave;
+  }, [formatOnSave]);
 
   useEffect(() => {
     executeQueryRef.current = () => {
@@ -1917,6 +1924,8 @@ export default function QueryWorkspace() {
                     scrollBeyondLastLine: false,
                     roundedSelection: false,
                     smoothScrolling: true,
+                    autoClosingBrackets: autoCloseBrackets ? 'always' : 'never',
+                    autoClosingQuotes: autoCloseBrackets ? 'always' : 'never',
                     overviewRulerBorder: false,
                     acceptSuggestionOnEnter: 'on',
                     quickSuggestionsDelay: 60,
@@ -2035,6 +2044,11 @@ export default function QueryWorkspace() {
                     });
                     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.NumpadEnter, () => {
                       executeQueryRef.current();
+                    });
+                    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                      if (formatOnSaveRef.current) {
+                        editor.getAction('editor.action.formatDocument')?.run();
+                      }
                     });
                   }}
                 />
