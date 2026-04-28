@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { CheckCircle, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeftRight, CheckCircle, Eye, EyeOff } from 'lucide-react';
 import { createDefaultConnectionForm, ENGINE_DEFINITIONS } from './connection-engines';
 import { CONNECTION_COLOR_PALETTE, ConnectionConfig, DatabaseEngine, OracleConnectionType, PostgresSslMode, SshAuthMethod, hexToRgba, useConnectionsStore } from '../../store/connections';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
@@ -484,130 +484,145 @@ export default function ConnectionForm({
               <span className="text-sm text-text">Auto-reconnect on open failure</span>
             </label>
           </div>
-          <div className="flex items-end">
-            <label
-              className="flex w-full cursor-pointer select-none items-center gap-2 rounded border px-3 py-2"
-              style={{ borderColor: ccBorder, background: ccBg }}
-            >
-              <input
-                type="checkbox"
-                checked={sshEnabled}
-                onChange={(event) => updateSshField('enabled', event.target.checked)}
-                style={{ accentColor: cc }}
-              />
-              <span className="text-sm font-medium" style={{ color: cc }}>Use SSH Tunnel</span>
-            </label>
-          </div>
         </div>
 
-        {sshEnabled && (
-          <div
-            className="animate-in fade-in slide-in-from-top-2 space-y-3 rounded border bg-surface/50 p-3"
-            style={{ borderColor: ccBorder }}
+        {/* ── SSH Tunnel section ── */}
+        <div className="rounded border" style={{ borderColor: ccBorder }}>
+          {/* Section label */}
+          <div className="flex items-center gap-2 px-3 pt-2.5 pb-0">
+            <div className="h-px flex-1" style={{ background: ccBorder }} />
+            <span className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: hexToRgba(cc, 0.55) }}>
+              SSH Tunnel
+            </span>
+            <div className="h-px flex-1" style={{ background: ccBorder }} />
+          </div>
+
+          {/* Toggle row */}
+          <button
+            type="button"
+            onClick={() => updateSshField('enabled', !sshEnabled)}
+            className="flex w-full items-center justify-between px-4 py-3 transition-colors"
+            style={{ background: sshEnabled ? ccBg : 'transparent' }}
           >
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-              <div className="md:col-span-3">
-                <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>SSH Host</label>
-                <input
-                  value={formData.ssh?.host}
-                  onChange={(event) => updateSshField('host', event.target.value)}
-                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none"
-                  placeholder="203.0.113.50"
-                  required={sshEnabled}
-                />
-              </div>
-              <div>
-                <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>SSH Port</label>
-                <input
-                  type="number"
-                  value={formData.ssh?.port}
-                  onChange={(event) => updateSshField('port', Number(event.target.value))}
-                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none"
-                  required={sshEnabled}
-                />
-              </div>
+            <div className="flex items-center gap-2.5">
+              <ArrowLeftRight size={14} style={{ color: cc }} />
+              <span className="text-sm font-semibold" style={{ color: cc }}>Use SSH Tunnel</span>
             </div>
+            <span
+              className="rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest"
+              style={{ color: cc, border: `1px solid ${ccBorder}`, background: hexToRgba(cc, 0.08) }}
+            >
+              {sshEnabled ? 'ENABLED' : 'DISABLED'}
+            </span>
+          </button>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div>
-                <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>SSH User</label>
-                <input
-                  value={formData.ssh?.user}
-                  onChange={(event) => updateSshField('user', event.target.value)}
-                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none"
-                  required={sshEnabled}
-                />
-              </div>
-              <div>
-                <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>Authentication Method</label>
-                <AppSelect
-                  value={sshAuthMethod}
-                  onChange={(value) => handleSshAuthMethodChange(value as SshAuthMethod)}
-                  options={[
-                    { value: 'password', label: 'Password' },
-                    { value: 'privateKey', label: 'Public Key (SSH key pair)' },
-                  ]}
-                />
-              </div>
-            </div>
-
-            {sshAuthMethod === 'password' ? (
-              <div>
-                <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>SSH Password</label>
-                <div className="relative">
+          {/* Fields */}
+          {sshEnabled && (
+            <div className="animate-in fade-in space-y-3 border-t px-4 pb-4 pt-3" style={{ borderColor: ccBorder }}>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                <div className="md:col-span-3">
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: hexToRgba(cc, 0.8) }}>SSH Host</label>
                   <input
-                    type={showSshPassword ? 'text' : 'password'}
-                    value={formData.ssh?.password}
-                    onChange={(event) => updateSshField('password', event.target.value)}
-                    className="w-full rounded border border-border bg-background px-3 py-1.5 pr-10 text-sm focus:outline-none"
-                    placeholder="Optional"
+                    value={formData.ssh?.host}
+                    onChange={(event) => updateSshField('host', event.target.value)}
+                    className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none"
+                    placeholder="ec2-3-89-226-227.compute-1.amazonaws.com"
+                    required={sshEnabled}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowSshPassword((current) => !current)}
-                    className="absolute inset-y-0 right-0 flex items-center px-3 text-muted hover:text-text"
-                    aria-label={showSshPassword ? 'Ocultar senha SSH' : 'Mostrar senha SSH'}
-                  >
-                    {showSshPassword ? <EyeOff size={15} /> : <Eye size={15} />}
-                  </button>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: hexToRgba(cc, 0.8) }}>SSH Port</label>
+                  <input
+                    type="number"
+                    value={formData.ssh?.port}
+                    onChange={(event) => updateSshField('port', Number(event.target.value))}
+                    className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none"
+                    required={sshEnabled}
+                  />
                 </div>
               </div>
-            ) : (
+
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
-                  <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>Private Key Path</label>
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: hexToRgba(cc, 0.8) }}>SSH User</label>
                   <input
-                    value={formData.ssh?.privateKeyPath}
-                    onChange={(event) => updateSshField('privateKeyPath', event.target.value)}
+                    value={formData.ssh?.user}
+                    onChange={(event) => updateSshField('user', event.target.value)}
                     className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none"
-                    placeholder="~/.ssh/id_rsa"
-                    required={sshAuthMethod === 'privateKey'}
+                    required={sshEnabled}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm mb-1" style={{ color: hexToRgba(cc, 0.8) }}>Passphrase</label>
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: hexToRgba(cc, 0.8) }}>Authentication Method</label>
+                  <AppSelect
+                    value={sshAuthMethod}
+                    onChange={(value) => handleSshAuthMethodChange(value as SshAuthMethod)}
+                    options={[
+                      { value: 'password', label: 'Password' },
+                      { value: 'privateKey', label: 'Public Key (SSH key pair)' },
+                    ]}
+                  />
+                </div>
+              </div>
+
+              {sshAuthMethod === 'password' ? (
+                <div>
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: hexToRgba(cc, 0.8) }}>SSH Password</label>
                   <div className="relative">
                     <input
-                      type={showPassphrase ? 'text' : 'password'}
-                      value={formData.ssh?.passphrase}
-                      onChange={(event) => updateSshField('passphrase', event.target.value)}
+                      type={showSshPassword ? 'text' : 'password'}
+                      value={formData.ssh?.password}
+                      onChange={(event) => updateSshField('password', event.target.value)}
                       className="w-full rounded border border-border bg-background px-3 py-1.5 pr-10 text-sm focus:outline-none"
                       placeholder="Optional"
                     />
                     <button
                       type="button"
-                      onClick={() => setShowPassphrase((current) => !current)}
+                      onClick={() => setShowSshPassword((current) => !current)}
                       className="absolute inset-y-0 right-0 flex items-center px-3 text-muted hover:text-text"
-                      aria-label={showPassphrase ? 'Ocultar passphrase' : 'Mostrar passphrase'}
+                      aria-label={showSshPassword ? 'Ocultar senha SSH' : 'Mostrar senha SSH'}
                     >
-                      {showPassphrase ? <EyeOff size={15} /> : <Eye size={15} />}
+                      {showSshPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              ) : (
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-medium mb-1.5" style={{ color: hexToRgba(cc, 0.8) }}>Private Key Path</label>
+                    <input
+                      value={formData.ssh?.privateKeyPath}
+                      onChange={(event) => updateSshField('privateKeyPath', event.target.value)}
+                      className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none"
+                      placeholder="~/.ssh/id_rsa"
+                      required={sshAuthMethod === 'privateKey'}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1.5" style={{ color: hexToRgba(cc, 0.8) }}>Passphrase</label>
+                    <div className="relative">
+                      <input
+                        type={showPassphrase ? 'text' : 'password'}
+                        value={formData.ssh?.passphrase}
+                        onChange={(event) => updateSshField('passphrase', event.target.value)}
+                        className="w-full rounded border border-border bg-background px-3 py-1.5 pr-10 text-sm focus:outline-none"
+                        placeholder="Optional"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassphrase((current) => !current)}
+                        className="absolute inset-y-0 right-0 flex items-center px-3 text-muted hover:text-text"
+                        aria-label={showPassphrase ? 'Ocultar passphrase' : 'Mostrar passphrase'}
+                      >
+                        {showPassphrase ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {testMessage ? (
           <div
