@@ -387,7 +387,7 @@ export default function ResultGrid({
                   const stagedValue = rowPendingEdits?.[col.name];
                   const hasStagedValue = col.name in (rowPendingEdits ?? {});
                   const val = hasStagedValue ? stagedValue : row[col.name];
-                  const displayValue = formatCellValue(val);
+                  const presentation = resolveCellPresentation(val, col.subtitle);
                   const cellKey = `${virtualRow.index}-${col.name}`;
                   const isCopied = copiedCell === cellKey;
                   const isEditing = activeEditCell === cellKey;
@@ -406,7 +406,7 @@ export default function ResultGrid({
                       onDoubleClick={() => {
                         if (!isNewRow) openEdit(cellKey, val);
                       }}
-                      className={`flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-r border-border/20 px-3.5 font-mono text-[13px] transition-colors ${
+                      className={`flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-r border-border/20 px-3.5 font-mono text-[13px] transition-colors ${presentation.alignClass} ${
                         isEditing
                           ? 'bg-primary/10 outline outline-1 outline-primary/60 p-0'
                           : hasStagedValue
@@ -420,7 +420,7 @@ export default function ResultGrid({
                                   : 'cursor-pointer text-ellipsis text-text/94'
                       }`}
                       style={{ width: `${resolvedWidths[col.name]}px`, minWidth: `${resolvedWidths[col.name]}px` }}
-                      title={displayValue}
+                      title={presentation.rawValue}
                     >
                       {isEditing ? (
                         <input
@@ -470,10 +470,12 @@ export default function ResultGrid({
                       ) : isCopied ? (
                         <>
                           <Check size={11} className="shrink-0 text-emerald-400" />
-                          <span className="overflow-hidden text-ellipsis">{val === null ? <span className="italic">null</span> : displayValue}</span>
+                          <span className={`min-w-0 overflow-hidden text-ellipsis ${presentation.valueClass}`}>
+                            {renderPresentedValue(presentation)}
+                          </span>
                         </>
                       ) : (
-                        val === null ? <span className="text-muted/50 italic">null</span> : displayValue
+                        renderPresentedValue(presentation)
                       )}
                     </div>
                   );
@@ -530,4 +532,101 @@ function formatCellValue(value: unknown) {
   }
 
   return String(value);
+}
+
+type CellKind = 'null' | 'number' | 'date' | 'boolean' | 'json' | 'text';
+
+function resolveCellPresentation(value: unknown, subtitle?: string | null) {
+  const rawValue = formatCellValue(value);
+  const typeHint = (subtitle ?? '').toLowerCase();
+  const kind = inferCellKind(value, typeHint);
+  const displayValue = kind === 'date' ? formatDatePreview(value, rawValue) : rawValue;
+
+  return {
+    kind,
+    rawValue,
+    displayValue,
+    alignClass: kind === 'number' ? 'justify-end text-right tabular-nums' : '',
+    valueClass: [
+      kind === 'null' ? 'text-muted/50 italic' : '',
+      kind === 'number' ? 'tabular-nums text-cyan-100/95' : '',
+      kind === 'date' ? 'tabular-nums text-violet-100/95' : '',
+      kind === 'json' ? 'text-amber-100/95' : '',
+    ].filter(Boolean).join(' '),
+  };
+}
+
+function inferCellKind(value: unknown, typeHint: string): CellKind {
+  if (value === null || typeof value === 'undefined') {
+    return 'null';
+  }
+
+  if (typeof value === 'boolean' || /\b(bool|boolean)\b/.test(typeHint)) {
+    return 'boolean';
+  }
+
+  if (Array.isArray(value) || (typeof value === 'object' && value !== null) || /\b(json|jsonb|xml)\b/.test(typeHint)) {
+    return 'json';
+  }
+
+  if (/\b(date|time|timestamp|timestamptz)\b/.test(typeHint)) {
+    return 'date';
+  }
+
+  if (
+    typeof value === 'number'
+    || typeof value === 'bigint'
+    || /\b(number|numeric|decimal|integer|int|bigint|smallint|float|double|real|serial|money)\b/.test(typeHint)
+  ) {
+    return 'number';
+  }
+
+  return 'text';
+}
+
+function formatDatePreview(value: unknown, fallback: string) {
+  const raw = value instanceof Date ? value.toISOString() : fallback;
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const date = value instanceof Date ? value : new Date(normalized);
+
+  if (Number.isNaN(date.getTime())) {
+    return fallback;
+  }
+
+  const hasTime = /[ t]\d{1,2}:\d{2}/i.test(raw);
+  return hasTime
+    ? date.toLocaleString(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+    : date.toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+}
+
+function renderPresentedValue(presentation: ReturnType<typeof resolveCellPresentation>) {
+  if (presentation.kind === 'boolean') {
+    const isTrue = presentation.rawValue.toLowerCase() === 'true' || presentation.rawValue === '1';
+    return (
+      <span className={`inline-flex h-5 shrink-0 items-center rounded border px-1.5 text-[10px] font-semibold uppercase tracking-wide ${
+        isTrue
+          ? 'border-emerald-400/30 bg-emerald-400/12 text-emerald-200'
+          : 'border-border/70 bg-background/35 text-muted'
+      }`}>
+        {presentation.rawValue}
+      </span>
+    );
+  }
+
+  return (
+    <span className={`min-w-0 overflow-hidden text-ellipsis ${presentation.valueClass}`}>
+      {presentation.displayValue}
+    </span>
+  );
 }
