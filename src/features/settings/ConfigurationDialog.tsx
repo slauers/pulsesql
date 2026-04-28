@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { createPortal } from 'react-dom';
-import { Download, Search, Settings2, SlidersHorizontal, FileJson, Upload, X } from 'lucide-react';
+import { Command, Download, FileJson, Grid2x2, Palette, PenLine, Search, Settings2, SlidersHorizontal, Upload, X, Zap } from 'lucide-react';
 import AppSelect from '../../components/ui/AppSelect';
 import { useUiPreferencesStore } from '../../store/uiPreferences';
 import { useConnectionsStore } from '../../store/connections';
@@ -246,13 +246,13 @@ export default function ConfigurationDialog({
 
   const t = (key: Parameters<typeof translate>[1]) => translate(locale, key);
 
-  const navItems: Array<{ id: ConfigSection; label: string; icon: string }> = [
-    { id: 'interface', label: t('interfaceSection'), icon: '🎨' },
-    { id: 'editor', label: t('editorSection'), icon: '✏️' },
-    { id: 'workbench', label: t('workbench'), icon: '⊞' },
-    { id: 'shortcuts', label: t('globalShortcuts'), icon: '⌘' },
-    { id: 'startup', label: t('startup'), icon: '⚡' },
-    { id: 'advanced', label: t('advancedSection'), icon: '⚙️' },
+  const navItems: Array<{ id: ConfigSection; label: string; Icon: React.ElementType }> = [
+    { id: 'interface', label: t('interfaceSection'), Icon: Palette },
+    { id: 'editor', label: t('editorSection'), Icon: PenLine },
+    { id: 'workbench', label: t('workbench'), Icon: Grid2x2 },
+    { id: 'shortcuts', label: t('globalShortcuts'), Icon: Command },
+    { id: 'startup', label: t('startup'), Icon: Zap },
+    { id: 'advanced', label: t('advancedSection'), Icon: SlidersHorizontal },
   ];
 
   // All settings rows with their section, label, and description for search filtering
@@ -294,12 +294,14 @@ export default function ConfigurationDialog({
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-text">
-              <Settings2 size={16} />
-              {t('configurationsTitle')}
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15" style={{ border: '1px solid var(--bt-primary)', opacity: 0.9 }}>
+              <Settings2 size={16} style={{ color: 'var(--bt-primary)' }} />
             </div>
-            <div className="text-xs text-muted">{t('configurationsSubtitle')}</div>
+            <div>
+              <div className="text-sm font-semibold text-text">{t('configurationsTitle')}</div>
+              <div className="text-xs text-muted">{t('configurationsSubtitle')}</div>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:bg-border/30 hover:text-text">
@@ -393,21 +395,28 @@ export default function ConfigurationDialog({
               {/* Left nav sidebar */}
               <div className="w-44 shrink-0 border-r border-border/60 overflow-y-auto py-3 px-2">
                 <nav className="space-y-0.5">
-                  {navItems.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => handleSectionChange(item.id)}
-                      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
-                        activeSection === item.id
-                          ? 'bg-background/60 text-text shadow-sm'
-                          : 'text-muted hover:bg-background/30 hover:text-text'
-                      }`}
-                    >
-                      <span className="shrink-0 opacity-70">{item.icon}</span>
-                      {item.label}
-                    </button>
-                  ))}
+                  {navItems.map((item) => {
+                    const active = activeSection === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleSectionChange(item.id)}
+                        className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                          active
+                            ? 'bg-background/60 text-text shadow-sm'
+                            : 'text-muted hover:bg-background/30 hover:text-text'
+                        }`}
+                      >
+                        <item.Icon
+                          size={13}
+                          className="shrink-0"
+                          style={{ color: active ? 'var(--bt-primary)' : undefined }}
+                        />
+                        {item.label}
+                      </button>
+                    );
+                  })}
                 </nav>
               </div>
 
@@ -496,11 +505,11 @@ export default function ConfigurationDialog({
                           )}
                           {/* Status Bar sub-section */}
                           {(shouldShow('semanticBackground') || shouldShow('showServerTime') || shouldShow('showAutocommit')) && (
-                            <div className="mt-2 rounded-lg border border-border/50 bg-background/18 p-3">
-                              <div className="mb-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/60">
+                            <div className="mt-2 border-t border-border/40 pt-3">
+                              <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/50">
                                 {t('statusBarSection')}
                               </div>
-                              <div className="space-y-2">
+                              <div className="divide-y divide-border/30">
                                 {shouldShow('semanticBackground') && (
                                   <ToggleRow
                                     label={t('semanticBackground')}
@@ -788,7 +797,7 @@ export default function ConfigurationDialog({
           <button
             type="button"
             onClick={activeTab === 'form' ? handleSaveForm : handleSaveJson}
-            className="rounded-lg border border-primary/40 bg-primary/12 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/18"
+            className="rounded-lg bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition-opacity"
           >
             {t('save')}
           </button>
@@ -799,12 +808,9 @@ export default function ConfigurationDialog({
   );
 }
 
-function SectionBlock({ title, children }: { title: string; children: React.ReactNode }) {
+function SectionBlock({ title: _title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-border/70 bg-background/24 p-4">
-      <div className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted">{title}</div>
-      <div className="space-y-4">{children}</div>
-    </section>
+    <section className="space-y-4">{children}</section>
   );
 }
 
@@ -818,11 +824,11 @@ function SettingRow({
   children: React.ReactNode;
 }) {
   return (
-    <label className="block rounded-lg border border-border/60 bg-background/24 px-3 py-3">
-      <div className="text-sm text-text">{label}</div>
+    <div className="block">
+      <div className="mb-0.5 text-sm font-medium text-text">{label}</div>
       <div className="mb-2 text-xs text-muted">{description}</div>
       {children}
-    </label>
+    </div>
   );
 }
 
@@ -838,9 +844,9 @@ function ToggleRow({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/24 px-3 py-3">
+    <label className="flex cursor-pointer items-center justify-between gap-4 py-3">
       <div>
-        <div className="text-sm text-text">{label}</div>
+        <div className="text-sm font-medium text-text">{label}</div>
         <div className="text-xs text-muted">{description}</div>
       </div>
       <ToggleSwitch checked={checked} onChange={onChange} />
