@@ -3,9 +3,14 @@
     "windows": [
       {
         "label": "main",
-        "titleBarStyle": "Transparent",
+        "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "backgroundColor": "#08111A"
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 20
+        },
+        "transparent": true,
+        "backgroundColor": "#00000000"
       }
     ]
   }

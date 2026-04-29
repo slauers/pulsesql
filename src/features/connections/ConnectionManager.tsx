@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
@@ -587,10 +587,14 @@ export default function ConnectionManager() {
       />
       <div className="relative z-10 flex min-h-0 flex-1 w-full">
         <div
-          className="shrink-0 border-r border-border/80 bg-surface/95 flex flex-col overflow-hidden"
-          style={{ width: `${effectiveSidebarWidth}px` }}
+          className="shrink-0 border-r border-border/70 flex flex-col overflow-hidden"
+          style={{
+            width: `${effectiveSidebarWidth}px`,
+            background: 'rgb(var(--bt-surface-rgb) / calc(var(--pulsesql-window-background-opacity) * 0.82))',
+            backdropFilter: 'blur(18px)',
+          }}
         >
-          <div className="border-b border-border/60 sticky top-0 bg-surface/95 z-10" style={{ padding: sidebarCollapsed ? '10px 8px' : '11px 14px 9px' }}>
+          <div className="border-b border-border/60 sticky top-0 z-10" style={{ padding: sidebarCollapsed ? '10px 8px' : '11px 14px 9px', background: 'rgb(var(--bt-surface-rgb) / calc(var(--pulsesql-window-background-opacity) * 0.88))', backdropFilter: 'blur(18px)' }}>
             {sidebarCollapsed ? (
               <div className="flex w-full items-center justify-center gap-1">
                 <button
@@ -871,20 +875,20 @@ export default function ConnectionManager() {
           />
         ) : null}
 
-        <div className="flex-1 bg-background flex flex-col min-w-0 min-h-0 overflow-hidden">
+        <div className="flex-1 bg-transparent flex flex-col min-w-0 min-h-0 overflow-hidden">
           <QueryWorkspace />
         </div>
 
         {showForm ? createPortal(
-          <div
-            className="fixed inset-0 z-[170] flex items-center justify-center bg-background/78 p-6 backdrop-blur-sm"
+	          <div
+	            className="pulsesql-overlay fixed inset-0 z-[170] flex items-center justify-center p-6"
             onMouseDown={() => {
               setShowForm(false);
               setEditingConnectionId(null);
             }}
           >
-            <div
-              className="relative flex h-full w-full max-h-[680px] max-w-[680px] flex-col overflow-hidden rounded-xl border border-border/70 bg-surface shadow-[0_32px_96px_rgba(0,0,0,0.55)]"
+	            <div
+	              className="pulsesql-dialog relative flex h-full w-full max-h-[680px] max-w-[680px] flex-col overflow-hidden rounded-xl border"
               onMouseDown={(e) => e.stopPropagation()}
             >
               <ConnectionForm
@@ -901,9 +905,13 @@ export default function ConnectionManager() {
       </div>
 
       {connectionContextMenu ? (
-        <div
-          className="fixed z-[130] min-w-[220px] rounded-lg border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
-          style={{ left: connectionContextMenu.x, top: connectionContextMenu.y }}
+	        <div
+	          className="pulsesql-menu fixed z-[130] min-w-[220px] rounded-lg border p-1"
+	          style={{
+	            left: connectionContextMenu.x,
+	            top: connectionContextMenu.y,
+	            '--pulsesql-accent': contextMenuConnection ? getConnectionColor(connections, contextMenuConnection.id) : undefined,
+	          } as CSSProperties}
           onMouseDown={(event) => event.stopPropagation()}
         >
           {/* Mini-header */}
@@ -938,9 +946,9 @@ export default function ConnectionManager() {
               }
             }}
             disabled={contextMenuState === 'connecting' || contextMenuState === 'reconnecting'}
-            className="mb-1 flex w-full items-center gap-2 rounded-lg border border-primary/35 bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/18 disabled:cursor-not-allowed disabled:opacity-45"
+            className="pulsesql-menu-primary-action mb-1 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45"
           >
-            <Plug size={14} className="text-primary" />
+            <Plug size={14} />
             <span>
               {contextMenuState === 'connected'
                 ? t('reconnectAction')
@@ -957,7 +965,7 @@ export default function ConnectionManager() {
               setConnectionContextMenu(null);
               setFavoriteConnection(isFavorite ? null : connId);
             }}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+            className="pulsesql-menu-item flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors"
           >
             <Star size={14} className={favoriteConnectionId === connectionContextMenu.connId ? 'fill-amber-300 text-amber-300' : 'text-muted'} />
             <span>{favoriteConnectionId === connectionContextMenu.connId ? t('unfavorite') : t('favoriteAndAutoOpen')}</span>
@@ -969,7 +977,7 @@ export default function ConnectionManager() {
               setEditingConnectionId(connectionContextMenu.connId);
               setShowForm(true);
             }}
-            className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+            className="pulsesql-menu-item flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm transition-colors"
           >
             <span className="flex items-center gap-2">
               <FileText size={14} className="text-muted" />
@@ -997,7 +1005,7 @@ export default function ConnectionManager() {
                 setShowForm(true);
               }
             }}
-            className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+            className="pulsesql-menu-item flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm transition-colors"
           >
             <span className="flex items-center gap-2">
               <Copy size={14} className="text-muted" />
@@ -1026,7 +1034,7 @@ export default function ConnectionManager() {
                 });
               }
             }}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+            className="pulsesql-menu-item flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors"
           >
             <Copy size={14} className="text-muted" />
             <span>{t('copyConnectionString')}</span>
@@ -1038,7 +1046,7 @@ export default function ConnectionManager() {
               setConnectionContextMenu(null);
               setExpandedLogsConnectionId(connId);
             }}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+            className="pulsesql-menu-item flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors"
           >
             <FileText size={14} className="text-muted" />
             <span>{t('technicalHistory')}</span>
@@ -1052,7 +1060,7 @@ export default function ConnectionManager() {
                 void disconnectConnection(conn);
               }
             }}
-            className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-text transition-colors hover:bg-background/55"
+            className="pulsesql-menu-item flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm transition-colors"
           >
             <span className="flex items-center gap-2">
               <PlugZap size={14} className="text-muted" />
@@ -1113,11 +1121,11 @@ export default function ConnectionManager() {
       />
 
       {exportModalOpen ? createPortal(
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+	        <div
+	          className="pulsesql-overlay fixed inset-0 z-[200] flex items-center justify-center"
           onMouseDown={(e) => { if (e.target === e.currentTarget) { setExportModalOpen(false); setExportSavedPath(null); } }}
         >
-          <div className="w-[400px] max-h-[80vh] flex flex-col rounded-xl border border-border/80 bg-surface shadow-2xl">
+	          <div className="pulsesql-dialog w-[400px] max-h-[80vh] flex flex-col rounded-xl border">
             <div className="px-5 py-4 border-b border-border/50">
               <h2 className="text-sm font-semibold text-text">{t('exportConnections')}</h2>
               <p className="text-xs text-muted/70 mt-0.5">Select which connections to include in the export file.</p>
@@ -1198,11 +1206,11 @@ export default function ConnectionManager() {
       ) : null}
 
       {removeConfirmConn ? createPortal(
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+	        <div
+	          className="pulsesql-overlay fixed inset-0 z-[200] flex items-center justify-center"
           onMouseDown={(e) => { if (e.target === e.currentTarget) setRemoveConfirmConn(null); }}
         >
-          <div className="w-[380px] rounded-xl border border-border/80 bg-surface shadow-2xl flex flex-col">
+	          <div className="pulsesql-dialog w-[380px] rounded-xl border flex flex-col">
             <div className="px-5 py-4 border-b border-border/50">
               <h2 className="text-sm font-semibold text-text">{t('remove')} connection</h2>
             </div>
@@ -1234,8 +1242,8 @@ export default function ConnectionManager() {
       ) : null}
 
       {contextMenuToast ? (
-        <div
-          className="fixed bottom-12 left-1/2 z-[250] -translate-x-1/2 rounded-lg border border-border/80 bg-surface/95 px-4 py-2 text-xs text-text shadow-[0_8px_32px_rgba(0,0,0,0.4)] backdrop-blur-xl"
+	        <div
+	          className="pulsesql-menu fixed bottom-12 left-1/2 z-[250] -translate-x-1/2 rounded-lg border px-4 py-2 text-xs"
           style={{ pointerEvents: 'none' }}
         >
           {contextMenuToast}
@@ -1245,7 +1253,8 @@ export default function ConnectionManager() {
       <div
         className="relative z-10 shrink-0 flex items-center border-t border-border/50 overflow-visible"
         style={{
-          background: 'var(--bt-background)',
+          background: 'rgb(var(--bt-background-rgb) / calc(var(--pulsesql-window-background-opacity) * 0.96))',
+          backdropFilter: 'blur(12px)',
           padding: '5px 14px 5px 10px',
           fontSize: 10.5,
           fontFamily: 'ui-monospace, "SF Mono", monospace',
@@ -1336,11 +1345,11 @@ export default function ConnectionManager() {
       </div>
 
       {changelogOpen ? createPortal(
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+	        <div
+	          className="pulsesql-overlay fixed inset-0 z-[200] flex items-center justify-center"
           onMouseDown={(e) => { if (e.target === e.currentTarget) setChangelogOpen(false); }}
         >
-          <div className="w-[520px] max-h-[75vh] flex flex-col rounded-xl border border-border/80 bg-surface shadow-2xl">
+	          <div className="pulsesql-dialog w-[520px] max-h-[75vh] flex flex-col rounded-xl border">
             <div className="px-5 py-4 border-b border-border/50 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-text">Release Notes</h2>
@@ -1516,14 +1525,14 @@ function LogsModal({
   copied?: boolean;
 }) {
   return createPortal(
-    <div
-      className="fixed inset-0 z-[140] flex items-center justify-center bg-background/72 p-6 backdrop-blur-sm"
-      onMouseDown={onClose}
-    >
-      <div
-        className="flex h-[78vh] w-full max-w-5xl flex-col rounded-lg border border-border bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
+	    <div
+	      className="pulsesql-overlay fixed inset-0 z-[140] flex items-center justify-center p-6"
+	      onMouseDown={onClose}
+	    >
+	      <div
+	        className="pulsesql-dialog flex h-[78vh] w-full max-w-5xl flex-col rounded-lg border"
+	        onMouseDown={(event) => event.stopPropagation()}
+	      >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <div className="text-sm font-semibold text-text">{translate(locale, 'logs')}</div>

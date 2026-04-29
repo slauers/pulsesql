@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ChevronDown,
@@ -343,9 +343,12 @@ export function DatabaseExplorer({
 
       {contextMenu
         ? createPortal(
-            <div
-              className="fixed z-[120] min-w-[190px] rounded-lg border border-border/70 bg-surface/90 p-1 shadow-[0_8px_32px_rgba(0,0,0,0.55),0_0_0_1px_rgba(71,196,232,0.06)] backdrop-blur-2xl"
-              style={buildMenuPosition(contextMenu.x, contextMenu.y, TABLE_MENU_WIDTH)}
+	            <div
+	              className="pulsesql-menu fixed z-[120] min-w-[190px] rounded-lg border p-1"
+	              style={{
+	                ...buildMenuPosition(contextMenu.x, contextMenu.y, TABLE_MENU_WIDTH),
+	                '--pulsesql-accent': connectionColor,
+	              } as CSSProperties}
               onMouseDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
@@ -359,7 +362,7 @@ export function DatabaseExplorer({
                       setContextMenu(null);
                       void openQueryFromExplorer(action.id, contextMenu.schema, contextMenu.table);
                     }}
-                    className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] text-text/90 transition-colors hover:bg-primary/10 hover:text-text"
+	                    className="pulsesql-menu-item flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors hover:bg-primary/10 hover:text-text"
                   >
                     <Icon size={13} className="text-muted shrink-0" />
                     <span>{action.label}</span>
@@ -373,9 +376,12 @@ export function DatabaseExplorer({
 
       {schemaContextMenu
         ? createPortal(
-            <div
-              className="fixed z-[120] min-w-[220px] rounded-lg border border-border/70 bg-surface/90 p-1 shadow-[0_8px_32px_rgba(0,0,0,0.55),0_0_0_1px_rgba(71,196,232,0.06)] backdrop-blur-2xl"
-              style={buildMenuPosition(schemaContextMenu.x, schemaContextMenu.y, SCHEMA_MENU_WIDTH)}
+	            <div
+	              className="pulsesql-menu fixed z-[120] min-w-[220px] rounded-lg border p-1"
+	              style={{
+	                ...buildMenuPosition(schemaContextMenu.x, schemaContextMenu.y, SCHEMA_MENU_WIDTH),
+	                '--pulsesql-accent': connectionColor,
+	              } as CSSProperties}
               onMouseDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
@@ -388,7 +394,7 @@ export function DatabaseExplorer({
                     setSchemaContextMenu(null);
                   }}
                   className={`flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors ${
-                    schema === resolvedSchema ? 'bg-primary/12 text-primary' : 'text-text/90 hover:bg-primary/10 hover:text-text'
+	                    schema === resolvedSchema ? 'bg-primary/12 text-primary' : 'pulsesql-menu-item hover:bg-primary/10 hover:text-text'
                   }`}
                 >
                   <Crosshair size={13} className="text-muted shrink-0" />
@@ -404,7 +410,7 @@ export function DatabaseExplorer({
               <button
                 type="button"
                 onClick={() => openCreateTableTemplate(schemaContextMenu.schema)}
-                className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] text-text/90 transition-colors hover:bg-primary/10 hover:text-text"
+	                className="pulsesql-menu-item flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors hover:bg-primary/10 hover:text-text"
               >
                 <Table2 size={13} className="text-muted shrink-0" />
                 <span>Criar tabela neste schema</span>
@@ -421,7 +427,7 @@ export function DatabaseExplorer({
                   setActiveSchema(connId, schemaContextMenu.schema);
                   setSchemaContextMenu(null);
                 }}
-                className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] text-text/90 transition-colors hover:bg-primary/10 hover:text-text"
+	                className="pulsesql-menu-item flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors hover:bg-primary/10 hover:text-text"
               >
                 <Pin size={13} className="text-muted shrink-0" />
                 <span>Tornar schema padrao</span>
@@ -653,14 +659,14 @@ function DescribeTableModal({
   }, []);
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[140] flex items-center justify-center bg-background/72 p-6 backdrop-blur-sm"
-      onMouseDown={onClose}
-    >
-      <div
-        className="w-full max-w-5xl rounded-lg border border-border bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
+	    <div
+	      className="pulsesql-overlay fixed inset-0 z-[140] flex items-center justify-center p-6"
+	      onMouseDown={onClose}
+	    >
+	      <div
+	        className="pulsesql-dialog w-full max-w-5xl rounded-lg border"
+	        onMouseDown={(event) => event.stopPropagation()}
+	      >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <div className="text-sm font-semibold text-text">Describe table</div>

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import PulseLoader from '../../components/ui/PulseLoader';
 import type * as Monaco from 'monaco-editor';
 import Editor from '@monaco-editor/react';
@@ -313,6 +313,10 @@ export default function QueryWorkspace() {
       engine,
     };
   }, [resolvedConnectionId, engine, schemaLabel]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty('--pulsesql-active-accent', connectionColor);
+  }, [connectionColor]);
 
   useEffect(() => {
     if (!resolvedConnectionId || !engine || !schemaLabel || runtimeStatus !== 'connected') {
@@ -1734,11 +1738,11 @@ export default function QueryWorkspace() {
           ? 'h-full min-h-0 border'
           : 'min-h-[190px] max-h-[58%] shrink-0 flex-grow-0 border-t max-[720px]:h-[40%]'
       }`}
-      style={fullscreen ? { background: 'rgba(var(--bt-background-rgb), 0.92)' } : { height: `${resultsHeight}%`, background: 'rgba(var(--bt-background-rgb), 0.92)' }}
+      style={fullscreen ? { background: 'rgba(var(--bt-background-rgb), 0.62)', backdropFilter: 'blur(14px)' } : { height: `${resultsHeight}%`, background: 'rgba(var(--bt-background-rgb), 0.62)', backdropFilter: 'blur(14px)' }}
     >
       <div
         className="flex items-center gap-2 border-b border-border/80 px-3 overflow-hidden"
-        style={{ background: 'rgba(var(--bt-surface-rgb), 0.64)', paddingTop: 8, paddingBottom: 8 }}
+        style={{ background: 'rgba(var(--bt-surface-rgb), 0.48)', paddingTop: 8, paddingBottom: 8, backdropFilter: 'blur(16px)' }}
       >
         {/* Pill tabs */}
         <div style={{ display: 'flex', gap: 2, padding: 2, background: 'rgba(var(--bt-background-rgb), 0.72)', borderRadius: 7, border: '1px solid var(--bt-border)', flexShrink: 0 }}>
@@ -2158,7 +2162,8 @@ export default function QueryWorkspace() {
             <div
               className="flex items-stretch border-b border-border/80"
               style={{
-                background: 'rgba(var(--bt-background-rgb), 0.96)',
+                background: 'rgb(var(--bt-background-rgb) / calc(var(--pulsesql-editor-bg-opacity) * 0.90))',
+                backdropFilter: 'blur(18px)',
               }}
             >
               <div className="flex flex-1 min-w-0 items-stretch overflow-x-auto scrollbar-hide">
@@ -2244,8 +2249,9 @@ export default function QueryWorkspace() {
             <div
               className="flex flex-wrap items-center gap-2 px-3 py-2.5"
               style={{
-                background: 'rgba(var(--bt-surface-rgb), 0.72)',
+                background: 'rgba(var(--bt-surface-rgb), 0.58)',
                 borderBottom: '1px solid var(--bt-border)',
+                backdropFilter: 'blur(16px)',
               }}
             >
               <button
@@ -2343,11 +2349,12 @@ export default function QueryWorkspace() {
             style={{
               borderLeft: `2px solid ${editorGlow.borderColor}`,
               boxShadow: editorGlow.boxShadow,
+              background: 'rgba(var(--bt-background-rgb), 0.18)',
               transition: 'box-shadow 400ms ease, border-left-color 300ms ease',
             }}
           >
             {activeTab ? (
-              <div className="flex-1 min-h-[220px] overflow-hidden bg-background/30">
+              <div className="flex-1 min-h-[220px] overflow-hidden bg-transparent">
                 <Editor
                   height="100%"
                   language="sql"
@@ -2400,17 +2407,43 @@ export default function QueryWorkspace() {
                     },
                   }}
                   onMount={(editor, monaco) => {
-                    editorRef.current = editor;
-                    monacoRef.current = monaco;
-                    monaco.editor.setTheme(ensureConfiguredMonacoTheme(monaco, monacoThemeName, themeId));
-                    // Tauri WKWebView blocks navigator.clipboard; intercept copy/cut/paste
-                    // via onKeyDown and use the official Tauri clipboard plugin.
-                    editor.onKeyDown((e) => {
+	                    editorRef.current = editor;
+	                    monacoRef.current = monaco;
+	                    monaco.editor.setTheme(ensureConfiguredMonacoTheme(monaco, monacoThemeName, themeId));
+	                    const triggerAutocomplete = () => {
+	                      editor.focus();
+	                      editor.trigger('pulsesql', 'editor.action.triggerSuggest', {});
+	                    };
+	                    const editorDomNode = editor.getDomNode();
+	                    const handleAutocompleteKeydown = (event: KeyboardEvent) => {
+	                      const isSpace =
+	                        event.code === 'Space' ||
+	                        event.key === ' ' ||
+	                        event.key === 'Spacebar';
+	                      if (!isSpace || (!event.ctrlKey && !event.metaKey && !event.altKey)) {
+	                        return;
+	                      }
+
+	                      event.preventDefault();
+	                      event.stopPropagation();
+	                      triggerAutocomplete();
+	                    };
+	                    editorDomNode?.addEventListener('keydown', handleAutocompleteKeydown, true);
+	                    editor.onDidDispose(() => {
+	                      editorDomNode?.removeEventListener('keydown', handleAutocompleteKeydown, true);
+	                    });
+	                    // Tauri WKWebView blocks navigator.clipboard; intercept copy/cut/paste
+	                    // via onKeyDown and use the official Tauri clipboard plugin.
+	                    editor.onKeyDown((e) => {
                       const model = editor.getModel();
                       const sel = editor.getSelection();
                       if (!model || !sel) return;
 
-                      if (e.keyCode === monaco.KeyCode.KeyC && (e.ctrlKey || e.metaKey)) {
+	                      if (e.keyCode === monaco.KeyCode.Space && (e.ctrlKey || e.metaKey || e.altKey)) {
+	                        e.preventDefault();
+	                        e.stopPropagation();
+	                        triggerAutocomplete();
+                      } else if (e.keyCode === monaco.KeyCode.KeyC && (e.ctrlKey || e.metaKey)) {
                         e.preventDefault();
                         e.stopPropagation();
                         const text = sel.isEmpty()
@@ -2450,7 +2483,15 @@ export default function QueryWorkspace() {
                     autocompleteDisposableRef.current?.dispose();
                     autocompleteDisposableRef.current = registerSqlAutocomplete(monaco, () => autocompleteContextRef.current);
                     lastCursorPositionRef.current = editor.getPosition();
-                    editor.onDidChangeModelContent(() => {
+                    editor.onDidChangeModelContent((event) => {
+                      const isSingleTyping =
+                        event.changes.length === 1 &&
+                        event.changes[0]?.rangeLength === 0 &&
+                        event.changes[0]?.text.length <= 1;
+                      if (!isSingleTyping) {
+                        return;
+                      }
+
                       const position = editor.getPosition();
                       const model = editor.getModel();
                       if (!position || !model) {
@@ -2465,13 +2506,13 @@ export default function QueryWorkspace() {
                       });
 
                       if (isTableSuggestionContext(sqlBeforeCursor)) {
-                        if (suggestTimeoutRef.current) {
-                          window.clearTimeout(suggestTimeoutRef.current);
-                        }
+	                        if (suggestTimeoutRef.current) {
+	                          window.clearTimeout(suggestTimeoutRef.current);
+	                        }
 
-                        suggestTimeoutRef.current = window.setTimeout(() => {
-                          editor.trigger('pulsesql', 'editor.action.triggerSuggest', {});
-                        }, 90);
+	                        suggestTimeoutRef.current = window.setTimeout(() => {
+	                          triggerAutocomplete();
+	                        }, 20);
                       }
                     });
                     editor.onDidChangeCursorPosition((event) => {
@@ -2491,11 +2532,21 @@ export default function QueryWorkspace() {
                       keybindings: [
                         monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space,
                         monaco.KeyMod.WinCtrl | monaco.KeyCode.Space,
-                      ],
-                      run: () => {
-                        editor.trigger('pulsesql', 'editor.action.triggerSuggest', {});
-                      },
-                    });
+	                        monaco.KeyMod.Alt | monaco.KeyCode.Space,
+	                      ],
+	                      run: () => {
+	                        triggerAutocomplete();
+	                      },
+	                    });
+                    [
+                      monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space,
+                      monaco.KeyMod.WinCtrl | monaco.KeyCode.Space,
+                      monaco.KeyMod.Alt | monaco.KeyCode.Space,
+	                    ].forEach((keybinding) => {
+	                      editor.addCommand(keybinding, () => {
+	                        triggerAutocomplete();
+	                      });
+	                    });
                     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.NumpadEnter, () => {
                       executeQueryRef.current();
                     });
@@ -2563,11 +2614,12 @@ export default function QueryWorkspace() {
       />
 
       {tabContextMenu ? createPortal(
-        <TabContextMenu
-          x={tabContextMenu.x}
-          y={tabContextMenu.y}
-          tabId={tabContextMenu.tabId}
-          tabs={tabs}
+	        <TabContextMenu
+	          x={tabContextMenu.x}
+	          y={tabContextMenu.y}
+	          tabId={tabContextMenu.tabId}
+	          accentColor={connectionColor}
+	          tabs={tabs}
           connectionId={resolvedConnectionId}
           onClose={() => setTabContextMenu(null)}
           onNewTab={() => addTab(resolvedConnectionId)}
@@ -2584,14 +2636,15 @@ export default function QueryWorkspace() {
 
       {gridFullscreen
         ? createPortal(
-            <div
-              className="fixed inset-0 z-[155] flex items-center justify-center bg-background/76 p-6 backdrop-blur-sm"
-              onMouseDown={() => setGridFullscreen(false)}
-            >
-              <div
-                className="flex h-[86vh] w-full max-w-[96vw] flex-col rounded-lg border border-border bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
-                onMouseDown={(event) => event.stopPropagation()}
-              >
+	            <div
+	              className="pulsesql-overlay fixed inset-0 z-[155] flex items-center justify-center p-6"
+	              onMouseDown={() => setGridFullscreen(false)}
+	            >
+	              <div
+	                className="pulsesql-dialog flex h-[86vh] w-full max-w-[96vw] flex-col rounded-lg border"
+	                style={{ '--pulsesql-accent': connectionColor } as CSSProperties}
+	                onMouseDown={(event) => event.stopPropagation()}
+	              >
                 <div className="flex items-center justify-between border-b border-border px-5 py-4">
                   <div>
                     <div className="text-sm font-semibold text-text">{t('resultGridFullscreen')}</div>
@@ -2634,16 +2687,21 @@ export default function QueryWorkspace() {
 
       {connectionMenuOpen && connectionMenuPosition
         ? createPortal(
-            <div
-              className="fixed z-[150] rounded-lg border border-border/80 bg-surface/95 p-1 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl"
-              style={{ left: connectionMenuPosition.x, top: connectionMenuPosition.y, width: CONNECTION_MENU_WIDTH }}
+	            <div
+	              className="pulsesql-menu fixed z-[150] rounded-lg border p-1"
+	              style={{
+	                left: connectionMenuPosition.x,
+	                top: connectionMenuPosition.y,
+	                width: CONNECTION_MENU_WIDTH,
+	                '--pulsesql-accent': connectionColor,
+	              } as CSSProperties}
               onMouseDown={(event) => event.stopPropagation()}
             >
               <button
                 type="button"
                 onClick={() => handleConnectionChange('')}
                 className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
-                  !resolvedConnectionId ? 'bg-background/55 text-primary' : 'text-text hover:bg-background/55'
+	                  !resolvedConnectionId ? 'bg-background/55 text-primary' : 'pulsesql-menu-item hover:bg-background/55'
                 }`}
               >
                 <span className="text-muted">{t('noActiveConnection')}</span>
@@ -2659,7 +2717,7 @@ export default function QueryWorkspace() {
                     type="button"
                     onClick={() => handleConnectionChange(connection.id)}
                     className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
-                      isCurrent ? 'bg-background/55 text-primary' : 'text-text hover:bg-background/55'
+	                      isCurrent ? 'bg-background/55 text-primary' : 'pulsesql-menu-item hover:bg-background/55'
                     }`}
                   >
                     <div className={`h-2.5 w-2.5 shrink-0 rounded-full ${
@@ -2764,14 +2822,15 @@ function DangerousUpdateModal({
   onConfirm: () => void;
 }) {
   return createPortal(
-    <div
-      className="fixed inset-0 z-[160] flex items-center justify-center bg-background/76 p-6 backdrop-blur-sm"
-      onMouseDown={onCancel}
-    >
-      <div
-        className="w-full max-w-md rounded-lg border border-amber-400/30 bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
+	    <div
+	      className="pulsesql-overlay fixed inset-0 z-[160] flex items-center justify-center p-6"
+	      onMouseDown={onCancel}
+	    >
+	      <div
+	        className="pulsesql-dialog w-full max-w-md rounded-lg border"
+	        style={{ '--pulsesql-accent': '#f59e0b' } as CSSProperties}
+	        onMouseDown={(event) => event.stopPropagation()}
+	      >
         <div className="border-b border-border px-5 py-4">
           <div className="text-sm font-semibold text-text">{translate(locale, 'confirmUpdateWithoutWhere')}</div>
           <div className="mt-1 text-xs text-muted">
@@ -3536,10 +3595,11 @@ function buildEditorGlow(state: string, color: string): { boxShadow: string; bor
 }
 
 interface TabContextMenuProps {
-  x: number;
-  y: number;
-  tabId: string;
-  tabs: QueryTab[];
+	  x: number;
+	  y: number;
+	  tabId: string;
+	  accentColor: string;
+	  tabs: QueryTab[];
   connectionId: string | null;
   onClose: () => void;
   onNewTab: () => void;
@@ -3550,10 +3610,11 @@ interface TabContextMenuProps {
 }
 
 function TabContextMenu({
-  x,
-  y,
-  tabId,
-  tabs,
+	  x,
+	  y,
+	  tabId,
+	  accentColor,
+	  tabs,
   onClose,
   onNewTab,
   onDuplicateTab,
@@ -3585,21 +3646,29 @@ function TabContextMenu({
     <button
       type="button"
       onMouseDown={(e) => { e.stopPropagation(); }}
-      onClick={() => { action(); onClose(); }}
-      disabled={disabled}
-      className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-left text-xs text-text hover:bg-border/40 disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      {label}
-    </button>
-  );
+	      onClick={() => { action(); onClose(); }}
+	      disabled={disabled}
+	      className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-left text-xs font-medium hover:bg-border/55 disabled:cursor-not-allowed disabled:opacity-40"
+	      style={{
+	        color: 'rgba(var(--bt-text-rgb), 0.96)',
+	        textShadow: '0 1px 10px rgba(0,0,0,0.42)',
+	      }}
+	    >
+	      {label}
+	    </button>
+	  );
 
   return (
-    <div
-      ref={ref}
-      className="fixed z-[200] w-52 overflow-hidden rounded-xl border border-border/80 bg-surface/98 py-1 shadow-[0_16px_48px_rgba(0,0,0,0.45)] backdrop-blur-sm"
-      style={{ top: menuY, left: menuX }}
-      onMouseDown={(e) => e.stopPropagation()}
-    >
+	    <div
+	      ref={ref}
+		      className="pulsesql-menu fixed z-[200] w-52 overflow-hidden rounded-xl border py-1"
+		      style={{
+		        top: menuY,
+		        left: menuX,
+		        '--pulsesql-accent': accentColor,
+		      } as CSSProperties}
+	      onMouseDown={(e) => e.stopPropagation()}
+	    >
       {item('Nova Aba', onNewTab)}
       {item('Duplicar Aba', () => onDuplicateTab(tabId))}
       <div className="my-1 border-t border-border/50" />

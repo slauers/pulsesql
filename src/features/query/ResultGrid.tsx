@@ -464,7 +464,7 @@ export default function ResultGrid({
       ref={parentRef}
       tabIndex={0}
       onKeyDown={handleGridKeyDown}
-      className="h-full w-full overflow-auto bg-transparent relative outline-none"
+      className="pulsesql-result-grid h-full w-full overflow-auto bg-transparent relative outline-none"
     >
       {!allRows.length ? (
         <div className="h-full flex items-center justify-center text-sm text-muted/60">
@@ -480,10 +480,10 @@ export default function ResultGrid({
         }}
       >
         <div
-          className="sticky top-0 z-10 border-b border-border/80 bg-surface/95 text-[11px] text-muted backdrop-blur"
+          className="sticky top-0 z-10 border-b border-border/70 text-[11px] text-muted backdrop-blur"
           style={{ height: headerHeight, width: `${totalGridWidth}px` }}
         >
-          <div className="sticky left-0 z-30 flex h-full w-12 shrink-0 select-none items-center justify-center border-r border-border/35 bg-surface/95 px-2 py-2 text-center opacity-85">
+          <div className="sticky left-0 z-30 flex h-full w-12 shrink-0 select-none items-center justify-center border-r border-border/30 px-2 py-2 text-center opacity-85" style={{ background: 'rgba(var(--bt-surface-rgb), 0.68)' }}>
             #
           </div>
           {[...pinnedVisibleColumns, ...virtualColumns.map((item) => scrollVisibleColumns[item.index]).filter(Boolean)].map((col) => {
@@ -497,8 +497,8 @@ export default function ResultGrid({
             return (
               <div
                 key={col.name}
-                className={`absolute top-0 h-full border-r border-border/35 bg-surface/95 ${pinnedColumns.has(col.name) ? 'sticky z-20' : ''}`}
-                style={{ left, width: `${resolvedWidths[col.name]}px` }}
+                className={`absolute top-0 h-full border-r border-border/30 ${pinnedColumns.has(col.name) ? 'sticky z-20' : ''}`}
+                style={{ left, width: `${resolvedWidths[col.name]}px`, background: 'rgba(var(--bt-surface-rgb), 0.68)' }}
               >
                 <div
                   className="flex h-full cursor-pointer select-none items-center gap-1.5 overflow-hidden whitespace-nowrap px-3 py-1.5 leading-tight text-ellipsis hover:bg-background/28"
@@ -573,7 +573,7 @@ export default function ResultGrid({
             const isNewRow = virtualRow.index >= filteredRows.length;
             const rowPendingEdits = isNewRow ? null : (pendingRowEdits?.get(row) ?? null);
             const isDirtyRow = !isNewRow && rowPendingEdits != null;
-            const rowTone = virtualRow.index % 2 === 0 ? 'rgba(var(--bt-background-rgb), 0.28)' : 'rgba(var(--bt-surface-rgb), 0.10)';
+            const rowTone = virtualRow.index % 2 === 0 ? 'rgba(var(--bt-background-rgb), 0.16)' : 'rgba(var(--bt-surface-rgb), 0.06)';
             const isThisRowLocked = lockedRowIndex === virtualRow.index;
             const isSelectedRow = selectedRowIndex === virtualRow.index;
             const isHoveredRow = hoveredRowIndex === virtualRow.index;
@@ -763,7 +763,7 @@ export default function ResultGrid({
         </div>
       </div>
       {detailContext ? (
-        <div className="absolute bottom-3 right-3 z-20 flex max-h-[min(70%,420px)] w-[min(520px,calc(100%-24px))] flex-col overflow-hidden rounded-lg border border-border bg-surface text-xs text-text shadow-2xl">
+	        <div className="pulsesql-dialog absolute bottom-3 right-3 z-20 flex max-h-[min(70%,420px)] w-[min(520px,calc(100%-24px))] flex-col overflow-hidden rounded-lg border text-xs">
           <div className="flex items-start gap-3 border-b border-border/70 px-3 py-2.5">
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-1.5">
@@ -824,8 +824,8 @@ export default function ResultGrid({
         </div>
       ) : null}
       {columnMenu && activeMenuColumn ? (
-        <div
-          className="fixed z-50 w-64 rounded-lg border border-border bg-surface p-2 text-xs text-text shadow-2xl"
+	        <div
+	          className="pulsesql-menu fixed z-50 w-64 rounded-lg border p-2 text-xs"
           style={{ left: columnMenu.x, top: columnMenu.y }}
           onMouseDown={(event) => event.stopPropagation()}
         >

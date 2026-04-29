@@ -82,11 +82,11 @@ export default function QueryHistoryDrawer({
 
   return (
     <>
-      {open ? <div className="absolute inset-0 z-20 bg-[#02050B]/60" onClick={onClose} /> : null}
-      <aside
-        className={`absolute right-0 top-0 z-30 h-full w-full max-w-[430px] border-l border-border/70 bg-surface/96 backdrop-blur-xl transition-transform duration-200 ${
-          open ? 'translate-x-0' : 'translate-x-full'
-        }`}
+	      {open ? <div className="pulsesql-overlay absolute inset-0 z-20" onClick={onClose} /> : null}
+	      <aside
+	        className={`pulsesql-dialog absolute right-0 top-0 z-30 h-full w-full max-w-[430px] border-l transition-transform duration-200 ${
+	          open ? 'translate-x-0' : 'translate-x-full'
+	        }`}
         style={{ maxWidth: `${drawerWidth}px` }}
       >
         <div

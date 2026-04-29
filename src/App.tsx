@@ -8,7 +8,7 @@ import tauriConfig from '../src-tauri/tauri.conf.json';
 import ConnectionManager from './features/connections/ConnectionManager';
 import ConfigurationDialog from './features/settings/ConfigurationDialog';
 import { useQueriesStore } from './store/queries';
-import { useConnectionsStore } from './store/connections';
+import { useConnectionsStore, getConnectionColor } from './store/connections';
 import { useConnectionRuntimeStore } from './store/connectionRuntime';
 import { useDatabaseSessionStore } from './store/databaseSession';
 import { useUiPreferencesStore } from './store/uiPreferences';
@@ -32,6 +32,12 @@ function App() {
   const semanticBackgroundEnabled = useUiPreferencesStore((state) => state.semanticBackgroundEnabled);
   const setSemanticBackgroundEnabled = useUiPreferencesStore((state) => state.setSemanticBackgroundEnabled);
   const semanticBackgroundState = useUiPreferencesStore((state) => state.semanticBackgroundState);
+  const transparencySystemUIEnabled = useUiPreferencesStore((state) => state.transparencySystemUIEnabled);
+  const transparencySystemUI = useUiPreferencesStore((state) => state.transparencySystemUI);
+  const transparencyEditorEnabled = useUiPreferencesStore((state) => state.transparencyEditorEnabled);
+  const transparencyEditor = useUiPreferencesStore((state) => state.transparencyEditor);
+  const transparencyGridEnabled = useUiPreferencesStore((state) => state.transparencyGridEnabled);
+  const transparencyGrid = useUiPreferencesStore((state) => state.transparencyGrid);
   const locale = useUiPreferencesStore((state) => state.locale);
   const themeId = useUiPreferencesStore((state) => state.themeId);
   const density = useUiPreferencesStore((state) => state.density);
@@ -58,6 +64,11 @@ function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [pendingUpdate, setPendingUpdate] = useState<UpdateInfo | null>(null);
   const activeTheme = useMemo(() => getThemeById(themeId), [themeId]);
+  const activeAccentColor = useMemo(() => {
+    const activeTab = tabs.find((t) => t.id === activeTabId);
+    const visualConnId = activeTab?.connectionId ?? activeConnectionId;
+    return getConnectionColor(connections, visualConnId);
+  }, [connections, tabs, activeTabId, activeConnectionId]);
 
   const handlersRef = useRef({
     addTab,
@@ -75,6 +86,33 @@ function App() {
       try { await getCurrentWindow().close(); } catch { window.close(); }
     },
   });
+
+  useEffect(() => {
+    const preventNativeContextMenu = (event: MouseEvent) => {
+      if (!allowsNativeTextSelection(event.target)) {
+        window.getSelection()?.removeAllRanges();
+      }
+
+      event.preventDefault();
+    };
+
+    const preventNativeTextSelection = (event: Event) => {
+      if (allowsNativeTextSelection(event.target)) {
+        return;
+      }
+
+      event.preventDefault();
+      window.getSelection()?.removeAllRanges();
+    };
+
+    window.addEventListener('contextmenu', preventNativeContextMenu, true);
+    window.addEventListener('selectstart', preventNativeTextSelection, true);
+
+    return () => {
+      window.removeEventListener('contextmenu', preventNativeContextMenu, true);
+      window.removeEventListener('selectstart', preventNativeTextSelection, true);
+    };
+  }, []);
 
   useEffect(() => {
     const handleClipboardShortcut = (event: KeyboardEvent) => {
@@ -157,6 +195,18 @@ function App() {
     root.style.setProperty('--bt-glass-panel', activeTheme.colors.glassPanel);
     root.style.setProperty('--bt-color-scheme', activeTheme.mode);
   }, [activeTheme, density]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty('--pulsesql-active-accent', activeAccentColor);
+  }, [activeAccentColor]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--pulsesql-window-background-opacity', String(transparencySystemUIEnabled ? transparencySystemUI : 1));
+    root.style.setProperty('--pulsesql-frame-background-opacity', String(transparencySystemUIEnabled ? Math.min(1, transparencySystemUI + 0.02) : 1));
+    root.style.setProperty('--pulsesql-editor-bg-opacity', String(transparencyEditorEnabled ? transparencyEditor : 1));
+    root.style.setProperty('--pulsesql-grid-bg-opacity', String(transparencyGridEnabled ? transparencyGrid : 1));
+  }, [transparencySystemUIEnabled, transparencySystemUI, transparencyEditorEnabled, transparencyEditor, transparencyGridEnabled, transparencyGrid]);
 
   useEffect(() => {
     if (LOCK_SPLASH_FOR_DEV) {
@@ -353,8 +403,8 @@ function App() {
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [
     activeTabId, addTab, addTabWithContent, closeQueryTabShortcut, closeTab,
     commandPaletteShortcut, duplicateTabShortcut, formatQueryShortcut,
@@ -548,11 +598,11 @@ function InfoDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[170] flex items-center justify-center bg-background/78 p-6 backdrop-blur-sm"
+      className="pulsesql-overlay fixed inset-0 z-[170] flex items-center justify-center p-6"
       onMouseDown={onClose}
     >
       <div
-        className="w-full max-w-xl rounded-lg border border-border bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
+        className="pulsesql-dialog w-full max-w-xl rounded-lg border"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="border-b border-border px-5 py-4">
@@ -620,9 +670,9 @@ function CommandPalette({
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[175] bg-background/72 backdrop-blur-sm" onMouseDown={onClose}>
+    <div className="pulsesql-overlay fixed inset-0 z-[175]" onMouseDown={onClose}>
       <div className="mx-auto mt-[12vh] w-full max-w-2xl px-6" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="overflow-hidden rounded-2xl border border-border/80 bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]">
+        <div className="pulsesql-dialog overflow-hidden rounded-2xl border">
           <div className="border-b border-border/70 px-4 py-3">
             <input
               ref={inputRef}
@@ -787,7 +837,67 @@ function matchesShortcut(event: KeyboardEvent, shortcut: string) {
   // Alt — must match exactly
   if (modifiers.has('alt') ? !event.altKey : event.altKey) return false;
 
-  return event.key.toLowerCase() === mainKey.toLowerCase();
+  return keyMatchesShortcut(event, mainKey);
+}
+
+function keyMatchesShortcut(event: KeyboardEvent, shortcutKey: string) {
+  const normalizedShortcutKey = shortcutKey.toLowerCase();
+  const eventKey = event.key.toLowerCase();
+  const codeKey = normalizeKeyboardCode(event.code);
+
+  return eventKey === normalizedShortcutKey || codeKey === normalizedShortcutKey;
+}
+
+function normalizeKeyboardCode(code: string) {
+  if (/^Key[A-Z]$/.test(code)) {
+    return code.slice(3).toLowerCase();
+  }
+
+  if (/^Digit[0-9]$/.test(code)) {
+    return code.slice(5).toLowerCase();
+  }
+
+  switch (code) {
+    case 'Space':
+      return 'space';
+    case 'Enter':
+    case 'NumpadEnter':
+      return 'enter';
+    case 'Escape':
+      return 'escape';
+    case 'ArrowLeft':
+      return 'arrowleft';
+    case 'ArrowRight':
+      return 'arrowright';
+    case 'ArrowUp':
+      return 'arrowup';
+    case 'ArrowDown':
+      return 'arrowdown';
+    case 'BracketLeft':
+      return '[';
+    case 'BracketRight':
+      return ']';
+    case 'Slash':
+      return '/';
+    case 'Backslash':
+      return '\\';
+    case 'Minus':
+      return '-';
+    case 'Equal':
+      return '=';
+    default:
+      return code.toLowerCase();
+  }
+}
+
+function allowsNativeTextSelection(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return Boolean(target.closest(
+    'input, textarea, [contenteditable="true"], .monaco-editor, [data-allow-native-selection="true"]',
+  ));
 }
 
 type ClipboardEditable = {
