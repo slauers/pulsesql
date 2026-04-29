@@ -139,7 +139,7 @@ export async function ensureTablesCached(
           useConnectionRuntimeStore
             .getState()
             .appendLog(connectionId, `Table metadata for ${schemaName} loaded from local cache (${localTables.length} tables).`);
-          // Prefetch columns from SQLite/remote in background for autocomplete
+          // Hydrate already persisted columns without hitting the remote database.
           void prefetchColumnsBackground(connectionId, engine, schemaName, localTables);
           return localTables;
         }
@@ -169,7 +169,7 @@ export async function ensureTablesCached(
         phase: 'idle',
       });
 
-      // Prefetch columns from remote in background for autocomplete
+      // Hydrate already persisted columns without hitting the remote database.
       void prefetchColumnsBackground(connectionId, engine, schemaName, tables);
 
       return tables;
@@ -296,6 +296,38 @@ async function loadColumns(
   }
 }
 
+async function loadColumnsFromLocalCache(
+  connectionId: string,
+  engine: DatabaseEngine,
+  schemaName: string,
+  tableName: string,
+): Promise<MetadataColumn[]> {
+  const cachedColumns = useDatabaseSessionStore
+    .getState()
+    .metadataByConnection[connectionId]?.schemasByName[schemaName]
+    ?.tablesByName[tableName]?.columns;
+  if (cachedColumns?.length) {
+    return cachedColumns;
+  }
+
+  try {
+    const localColumns = await invoke<ColumnDef[]>('get_local_columns', {
+      configId: connectionId,
+      schemaName,
+      tableName,
+    });
+    if (!localColumns.length) {
+      return [];
+    }
+
+    const normalized = localColumns.map(normalizeColumnDef);
+    useDatabaseSessionStore.getState().cacheColumns(connectionId, engine, schemaName, tableName, normalized);
+    return normalized;
+  } catch {
+    return [];
+  }
+}
+
 export function invalidateMetadataCache(connectionId: string) {
   useDatabaseSessionStore.getState().invalidateConnection(connectionId);
   // Clear SQLite cache (fire-and-forget)
@@ -363,7 +395,7 @@ async function prefetchColumnsBackground(
     await Promise.all(
       batch.map(async (tableName) => {
         try {
-          await ensureColumnsCached(connectionId, engine, schemaName, tableName);
+          await loadColumnsFromLocalCache(connectionId, engine, schemaName, tableName);
         } catch (error) {
           useConnectionRuntimeStore
             .getState()

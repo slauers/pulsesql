@@ -13,6 +13,14 @@ export interface SystemConfig {
     formatOnSave: boolean;
     autoCloseBrackets: boolean;
   };
+  transparency: {
+    systemUIEnabled: boolean;
+    systemUI: number;
+    editorEnabled: boolean;
+    editor: number;
+    gridEnabled: boolean;
+    grid: number;
+  };
   workbench: {
     sidebarWidth: number;
     sidebarCollapsed: boolean;
@@ -76,7 +84,7 @@ export function updateSystemConfig(updater: (current: SystemConfig) => SystemCon
 
 export function defaultSystemConfig(): SystemConfig {
   return {
-    version: 4,
+    version: 5,
     ui: {
       locale: 'pt-BR',
       semanticBackgroundEnabled: true,
@@ -111,6 +119,14 @@ export function defaultSystemConfig(): SystemConfig {
     startup: {
       favoriteConnectionId: null,
     },
+    transparency: {
+      systemUIEnabled: true,
+      systemUI: 0.88,
+      editorEnabled: true,
+      editor: 0.82,
+      gridEnabled: true,
+      grid: 0.72,
+    },
   };
 }
 
@@ -123,9 +139,11 @@ function normalizeSystemConfig(input: unknown): SystemConfig {
     raw.shortcuts && typeof raw.shortcuts === 'object' ? (raw.shortcuts as Record<string, unknown>) : {};
   const startup =
     raw.startup && typeof raw.startup === 'object' ? (raw.startup as Record<string, unknown>) : {};
+  const transparency =
+    raw.transparency && typeof raw.transparency === 'object' ? (raw.transparency as Record<string, unknown>) : {};
 
   return {
-    version: typeof raw.version === 'number' ? raw.version : 4,
+    version: typeof raw.version === 'number' ? raw.version : 5,
     ui: {
       locale: normalizeLocale(ui.locale),
       semanticBackgroundEnabled: ui.semanticBackgroundEnabled !== false,
@@ -163,7 +181,23 @@ function normalizeSystemConfig(input: unknown): SystemConfig {
           ? startup.favoriteConnectionId
           : null,
     },
+    transparency: {
+      systemUIEnabled: transparency.systemUIEnabled !== false,
+      systemUI: normalizeOpacity(transparency.systemUI, 0.88),
+      editorEnabled: transparency.editorEnabled !== false,
+      editor: normalizeOpacity(transparency.editor, 0.82),
+      gridEnabled: transparency.gridEnabled !== false,
+      grid: normalizeOpacity(transparency.grid, 0.72),
+    },
   };
+}
+
+function normalizeOpacity(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.min(1, Math.max(0.2, Math.round(value * 100) / 100));
+  }
+
+  return fallback;
 }
 
 function readLegacyUiPreferences(defaults: SystemConfig['ui']): SystemConfig['ui'] {

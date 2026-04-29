@@ -21,6 +21,18 @@ interface UiPreferencesState {
   sidebarWidth: number;
   sidebarCollapsed: boolean;
   logsExpandedByDefault: boolean;
+  transparencySystemUIEnabled: boolean;
+  transparencySystemUI: number;
+  transparencyEditorEnabled: boolean;
+  transparencyEditor: number;
+  transparencyGridEnabled: boolean;
+  transparencyGrid: number;
+  setTransparencySystemUIEnabled: (enabled: boolean) => void;
+  setTransparencySystemUI: (value: number) => void;
+  setTransparencyEditorEnabled: (enabled: boolean) => void;
+  setTransparencyEditor: (value: number) => void;
+  setTransparencyGridEnabled: (enabled: boolean) => void;
+  setTransparencyGrid: (value: number) => void;
   commandPaletteShortcut: string;
   newQueryTabShortcut: string;
   closeQueryTabShortcut: string;
@@ -77,6 +89,12 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
   sidebarWidth: systemConfig.workbench.sidebarWidth,
   sidebarCollapsed: systemConfig.workbench.sidebarCollapsed,
   logsExpandedByDefault: systemConfig.workbench.logsExpandedByDefault,
+  transparencySystemUIEnabled: systemConfig.transparency.systemUIEnabled,
+  transparencySystemUI: systemConfig.transparency.systemUI,
+  transparencyEditorEnabled: systemConfig.transparency.editorEnabled,
+  transparencyEditor: systemConfig.transparency.editor,
+  transparencyGridEnabled: systemConfig.transparency.gridEnabled,
+  transparencyGrid: systemConfig.transparency.grid,
   commandPaletteShortcut: systemConfig.shortcuts.commandPalette,
   newQueryTabShortcut: systemConfig.shortcuts.newQueryTab,
   closeQueryTabShortcut: systemConfig.shortcuts.closeQueryTab,
@@ -348,6 +366,57 @@ export const useUiPreferencesStore = create<UiPreferencesState>((set) => ({
         shortcuts: { ...current.shortcuts, formatQuery: normalized },
       }));
       return { formatQueryShortcut: normalized };
+    }),
+  setTransparencySystemUIEnabled: (enabled) =>
+    set(() => {
+      updateSystemConfig((current) => ({
+        ...current,
+        transparency: { ...current.transparency, systemUIEnabled: enabled },
+      }));
+      return { transparencySystemUIEnabled: enabled };
+    }),
+  setTransparencySystemUI: (value) =>
+    set(() => {
+      const v = Math.min(1, Math.max(0.2, Math.round(value * 100) / 100));
+      updateSystemConfig((current) => ({
+        ...current,
+        transparency: { ...current.transparency, systemUI: v },
+      }));
+      return { transparencySystemUI: v };
+    }),
+  setTransparencyEditorEnabled: (enabled) =>
+    set(() => {
+      updateSystemConfig((current) => ({
+        ...current,
+        transparency: { ...current.transparency, editorEnabled: enabled },
+      }));
+      return { transparencyEditorEnabled: enabled };
+    }),
+  setTransparencyEditor: (value) =>
+    set(() => {
+      const v = Math.min(1, Math.max(0.2, Math.round(value * 100) / 100));
+      updateSystemConfig((current) => ({
+        ...current,
+        transparency: { ...current.transparency, editor: v },
+      }));
+      return { transparencyEditor: v };
+    }),
+  setTransparencyGridEnabled: (enabled) =>
+    set(() => {
+      updateSystemConfig((current) => ({
+        ...current,
+        transparency: { ...current.transparency, gridEnabled: enabled },
+      }));
+      return { transparencyGridEnabled: enabled };
+    }),
+  setTransparencyGrid: (value) =>
+    set(() => {
+      const v = Math.min(1, Math.max(0.2, Math.round(value * 100) / 100));
+      updateSystemConfig((current) => ({
+        ...current,
+        transparency: { ...current.transparency, grid: v },
+      }));
+      return { transparencyGrid: v };
     }),
 }));
 

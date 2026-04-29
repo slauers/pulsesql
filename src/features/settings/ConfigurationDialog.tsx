@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { createPortal } from 'react-dom';
@@ -81,6 +82,18 @@ export default function ConfigurationDialog({
   const setToggleSidebarShortcut = useUiPreferencesStore((state) => state.setToggleSidebarShortcut);
   const setToggleResultGridShortcut = useUiPreferencesStore((state) => state.setToggleResultGridShortcut);
   const setFormatQueryShortcut = useUiPreferencesStore((state) => state.setFormatQueryShortcut);
+  const transparencySystemUIEnabled = useUiPreferencesStore((state) => state.transparencySystemUIEnabled);
+  const transparencySystemUI = useUiPreferencesStore((state) => state.transparencySystemUI);
+  const transparencyEditorEnabled = useUiPreferencesStore((state) => state.transparencyEditorEnabled);
+  const transparencyEditor = useUiPreferencesStore((state) => state.transparencyEditor);
+  const transparencyGridEnabled = useUiPreferencesStore((state) => state.transparencyGridEnabled);
+  const transparencyGrid = useUiPreferencesStore((state) => state.transparencyGrid);
+  const setTransparencySystemUIEnabled = useUiPreferencesStore((state) => state.setTransparencySystemUIEnabled);
+  const setTransparencySystemUI = useUiPreferencesStore((state) => state.setTransparencySystemUI);
+  const setTransparencyEditorEnabled = useUiPreferencesStore((state) => state.setTransparencyEditorEnabled);
+  const setTransparencyEditor = useUiPreferencesStore((state) => state.setTransparencyEditor);
+  const setTransparencyGridEnabled = useUiPreferencesStore((state) => state.setTransparencyGridEnabled);
+  const setTransparencyGrid = useUiPreferencesStore((state) => state.setTransparencyGrid);
   const connections = useConnectionsStore((state) => state.connections);
   const activeConnectionId = useConnectionsStore((state) => state.activeConnectionId);
   const favoriteConnectionId = useConnectionsStore((state) => state.favoriteConnectionId);
@@ -92,7 +105,7 @@ export default function ConfigurationDialog({
 
   const currentConfig = useMemo<SystemConfig>(
     () => ({
-      version: 4,
+      version: 5,
       ui: {
         locale,
         semanticBackgroundEnabled,
@@ -127,6 +140,14 @@ export default function ConfigurationDialog({
       startup: {
         favoriteConnectionId,
       },
+      transparency: {
+        systemUIEnabled: transparencySystemUIEnabled,
+        systemUI: transparencySystemUI,
+        editorEnabled: transparencyEditorEnabled,
+        editor: transparencyEditor,
+        gridEnabled: transparencyGridEnabled,
+        grid: transparencyGrid,
+      },
     }),
     [
       closeQueryTabShortcut,
@@ -155,6 +176,12 @@ export default function ConfigurationDialog({
       themeId,
       toggleResultGridShortcut,
       toggleSidebarShortcut,
+      transparencySystemUIEnabled,
+      transparencySystemUI,
+      transparencyEditorEnabled,
+      transparencyEditor,
+      transparencyGridEnabled,
+      transparencyGrid,
     ],
   );
 
@@ -251,6 +278,12 @@ export default function ConfigurationDialog({
     setToggleResultGridShortcut(nextConfig.shortcuts.toggleResultGrid);
     setFormatQueryShortcut(nextConfig.shortcuts.formatQuery);
     setFavoriteConnection(nextConfig.startup.favoriteConnectionId);
+    setTransparencySystemUIEnabled(nextConfig.transparency.systemUIEnabled);
+    setTransparencySystemUI(nextConfig.transparency.systemUI);
+    setTransparencyEditorEnabled(nextConfig.transparency.editorEnabled);
+    setTransparencyEditor(nextConfig.transparency.editor);
+    setTransparencyGridEnabled(nextConfig.transparency.gridEnabled);
+    setTransparencyGrid(nextConfig.transparency.grid);
   };
 
   const handleSaveForm = () => {
@@ -349,14 +382,15 @@ export default function ConfigurationDialog({
   const shouldShow = (key: string) => !matchingKeys || matchingKeys.has(key);
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[170] flex items-center justify-center bg-background/78 p-6 backdrop-blur-sm"
-      onMouseDown={onClose}
-    >
-      <div
-        className="flex h-[82vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-surface/95 shadow-[0_32px_120px_rgba(0,0,0,0.52)]"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
+	    <div
+	      className="pulsesql-overlay fixed inset-0 z-[170] flex items-center justify-center p-6"
+	      onMouseDown={onClose}
+	    >
+	      <div
+	        className="pulsesql-dialog flex h-[82vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border"
+	        style={{ '--pulsesql-accent': cc } as React.CSSProperties}
+	        onMouseDown={(event) => event.stopPropagation()}
+	      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
@@ -819,8 +853,91 @@ export default function ConfigurationDialog({
                       {/* Advanced section */}
                       {activeSection === 'advanced' && !q ? (
                         <SectionBlock title={t('advancedSection')}>
-                          <div className="rounded-lg border border-border/60 bg-background/24 px-3 py-4 text-sm text-muted/70">
-                            Advanced settings are available via the JSON tab.
+                          <div className="space-y-1">
+                            <div className="mb-3 text-xs text-muted/70">
+                              Controla a opacidade dos painéis da interface. Requer janela transparente habilitada no sistema operacional.
+                            </div>
+                            {(
+                              [
+                                {
+                                  label: 'System UI',
+                                  description: 'Fundo geral da janela e painel lateral',
+                                  enabled: transparencySystemUIEnabled,
+                                  value: transparencySystemUI,
+                                  onToggle: setTransparencySystemUIEnabled,
+                                  onChange: setTransparencySystemUI,
+                                },
+                                {
+                                  label: 'SQL Editor',
+                                  description: 'Área do editor e abas de query',
+                                  enabled: transparencyEditorEnabled,
+                                  value: transparencyEditor,
+                                  onToggle: setTransparencyEditorEnabled,
+                                  onChange: setTransparencyEditor,
+                                },
+                                {
+                                  label: 'Result Grid',
+                                  description: 'Tabela de resultados',
+                                  enabled: transparencyGridEnabled,
+                                  value: transparencyGrid,
+                                  onToggle: setTransparencyGridEnabled,
+                                  onChange: setTransparencyGrid,
+                                },
+                              ] as Array<{
+                                label: string;
+                                description: string;
+                                enabled: boolean;
+                                value: number;
+                                onToggle: (v: boolean) => void;
+                                onChange: (v: number) => void;
+                              }>
+                            ).map((row) => (
+                              <div
+                                key={row.label}
+                                className="flex items-center gap-3 rounded-lg border border-border/50 bg-background/20 px-3 py-2.5"
+                              >
+                                <label className="flex cursor-pointer items-center gap-2 shrink-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={row.enabled}
+                                    onChange={(e) => row.onToggle(e.target.checked)}
+                                    className="h-3.5 w-3.5 cursor-pointer"
+                                    style={{ accentColor: cc }}
+                                  />
+                                  <span
+                                    className="min-w-[84px] text-xs font-semibold text-text"
+                                    style={{ opacity: row.enabled ? 1 : 0.5 }}
+                                  >
+                                    {row.label}
+                                  </span>
+                                </label>
+                                <div className="flex flex-1 items-center gap-2 min-w-0">
+                                  <input
+                                    type="range"
+                                    min={20}
+                                    max={100}
+                                    step={2}
+                                    value={Math.round(row.value * 100)}
+                                    disabled={!row.enabled}
+                                    onChange={(e) => row.onChange(Number(e.target.value) / 100)}
+                                    className="h-1.5 flex-1 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+                                    style={{ accentColor: cc }}
+                                  />
+                                  <span
+                                    className="w-9 shrink-0 text-right font-mono text-[11px] text-muted"
+                                    style={{ opacity: row.enabled ? 1 : 0.4 }}
+                                  >
+                                    {Math.round(row.value * 100)}%
+                                  </span>
+                                </div>
+                                <span
+                                  className="hidden w-32 shrink-0 text-[10px] text-muted/60 xl:block"
+                                  style={{ opacity: row.enabled ? 1 : 0.4 }}
+                                >
+                                  {row.description}
+                                </span>
+                              </div>
+                            ))}
                           </div>
                         </SectionBlock>
                       ) : null}
@@ -1044,9 +1161,11 @@ function normalizeJsonConfig(input: unknown): SystemConfig {
     raw.shortcuts && typeof raw.shortcuts === 'object' ? (raw.shortcuts as Record<string, unknown>) : {};
   const startup =
     raw.startup && typeof raw.startup === 'object' ? (raw.startup as Record<string, unknown>) : {};
+  const transparency =
+    raw.transparency && typeof raw.transparency === 'object' ? (raw.transparency as Record<string, unknown>) : {};
 
   return {
-    version: 4,
+    version: 5,
     ui: {
       locale: ui.locale === 'en-US' ? 'en-US' : 'pt-BR',
       semanticBackgroundEnabled: ui.semanticBackgroundEnabled !== false,
@@ -1084,7 +1203,23 @@ function normalizeJsonConfig(input: unknown): SystemConfig {
           ? startup.favoriteConnectionId
           : null,
     },
+    transparency: {
+      systemUIEnabled: transparency.systemUIEnabled !== false,
+      systemUI: normalizeOpacity(transparency.systemUI, 0.88),
+      editorEnabled: transparency.editorEnabled !== false,
+      editor: normalizeOpacity(transparency.editor, 0.82),
+      gridEnabled: transparency.gridEnabled !== false,
+      grid: normalizeOpacity(transparency.grid, 0.72),
+    },
   };
+}
+
+function normalizeOpacity(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.min(1, Math.max(0.2, Math.round(value * 100) / 100));
+  }
+
+  return fallback;
 }
 
 function normalizePageSize(value: unknown) {
